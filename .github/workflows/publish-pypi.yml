@@ -18,9 +18,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install build tools
-        run: |
-          python -m pip install --upgrade pip setuptools
-          pip install build
+        run: pip install build
 
       - name: Build package
         run: python -m build
