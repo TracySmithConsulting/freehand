@@ -1,0 +1,65 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Initialize database
+        run: |
+          python -c "
+          import sys; sys.path.insert(0, '.')
+          from core.database import init_db
+          init_db()
+          "
+
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -v --tb=short
+        if: false  # Tests directory not yet created; run inline tests instead
+
+      - name: Run integration tests
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          from server import app
+          from fastapi.testclient import TestClient
+          c = TestClient(app)
+          passed = 0
+          failed = 0
+          def check(name, actual, expected):
+              nonlocal passed, failed
+              if actual == expected:
+                  passed += 1
+              else:
+                  failed += 1
+                  print(f'FAIL {name}: expected {expected}, got {actual}')
+          check('GET /', c.get('/').status_code, 200)
+          check('GET /api/agents', c.get('/api/agents').status_code, 200)
+          check('POST /api/agent/command', c.post('/api/agent/command', json={'command': 'test'}).status_code, 200)
+          check('GET /api/integrations', c.get('/api/integrations').status_code, 200)
+          check('GET /api/settings', c.get('/api/settings').status_code, 200)
+          print(f'Results: {passed} passed, {failed} failed')
+          sys.exit(1 if failed else 0)
+          "

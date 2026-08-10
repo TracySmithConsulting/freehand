@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FreeHand</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+      font-size: 1rem;
+      line-height: 1.6;
+      color: #1a1a1a;
+      background: #f5f5f5;
+      padding: 0;
+    }
+
+    a {
+      color: #0055cc;
+      text-decoration: underline;
+    }
+
+    a:focus, button:focus, input:focus, textarea:focus, select:focus {
+      outline: 3px solid #0055cc;
+      outline-offset: 2px;
+    }
+
+    header {
+      background: #1a1a2e;
+      color: #fff;
+      padding: 1rem;
+    }
+
+    header h1 {
+      font-size: 1.5rem;
+    }
+
+    nav[aria-label="Main navigation"] {
+      background: #16213e;
+      padding: 0.5rem;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    nav ul {
+      list-style: none;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .agent-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+
+    .agent-badge-detected {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .agent-badge-imported {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .agent-card {
+      border: 1px solid #eee;
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+    }
+
+    .agent-card h3 {
+      font-size: 1rem;
+      margin-bottom: 0.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .agent-card .agent-path {
+      font-size: 0.8rem;
+      color: #888;
+      margin-bottom: 0.5rem;
+    }
+
+    .agent-card .agent-meta {
+      font-size: 0.85rem;
+      color: #666;
+    }
+
+    .agent-card .agent-actions {
+      margin-top: 0.75rem;
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .agent-import-section {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: #f8f9fa;
+      border-radius: 4px;
+      border: 1px solid #e9ecef;
+    }
+
+    .agent-import-section h4 {
+      font-size: 0.9rem;
+      margin-bottom: 0.5rem;
+      color: #495057;
+    }
+
+    .imported-list {
+      margin-top: 0.5rem;
+    }
+
+    .imported-item {
+      font-size: 0.85rem;
+      color: #155724;
+      padding: 0.25rem 0;
+      border-bottom: 1px solid #eee;
+    }
+
+    .tier-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-left: auto;
+    }
+
+    .tier-autonomous {
+      background: #d1ecf1;
+      color: #0c5460;
+    }
+
+    .tier-semi-autonomous {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .tier-god-mode {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    nav a {
+      color: #e0e0e0;
+      text-decoration: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      display: block;
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+    }
+
+    nav a:hover, nav a:focus {
+      background: #0f3460;
+      color: #fff;
+    }
+
+    main {
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+
+    section {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    h2 {
+      font-size: 1.25rem;
+      margin-bottom: 1rem;
+      color: #1a1a2e;
+      border-bottom: 2px solid #0f3460;
+      padding-bottom: 0.5rem;
+    }
+
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      color: #333;
+    }
+
+    input[type="text"],
+    input[type="url"],
+    input[type="password"],
+    textarea,
+    select {
+      width: 100%;
+      padding: 0.75rem;
+      border: 2px solid #ccc;
+      border-radius: 4px;
+      font-size: 1rem;
+      font-family: inherit;
+      min-height: 44px;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 150px;
+    }
+
+    button {
+      background: #0f3460;
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 4px;
+      font-size: 1rem;
+      cursor: pointer;
+      min-height: 44px;
+      min-width: 44px;
+    }
+
+    button:hover, button:focus {
+      background: #16213e;
+    }
+
+    button[type="submit"] {
+      background: #1a8c4a;
+    }
+
+    button[type="submit"]:hover, button[type="submit"]:focus {
+      background: #14693a;
+    }
+
+    button.danger {
+      background: #c0392b;
+    }
+
+    button.danger:hover, button.danger:focus {
+      background: #962d22;
+    }
+
+    button.secondary {
+      background: #6c757d;
+    }
+
+    button.secondary:hover, button.secondary:focus {
+      background: #545b62;
+    }
+
+    fieldset {
+      border: 2px solid #ddd;
+      border-radius: 4px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    legend {
+      font-weight: 600;
+      padding: 0 0.5rem;
+      color: #1a1a2e;
+    }
+
+    .form-group {
+      margin-bottom: 1rem;
+    }
+
+    .hint {
+      font-size: 0.875rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    .error {
+      color: #c0392b;
+      font-size: 0.875rem;
+      margin-top: 0.25rem;
+      display: none;
+    }
+
+    .error.visible {
+      display: block;
+    }
+
+    .status-region {
+      position: fixed;
+      bottom: 1rem;
+      left: 1rem;
+      right: 1rem;
+      background: #1a1a2e;
+      color: #fff;
+      padding: 0.75rem 1rem;
+      border-radius: 4px;
+      z-index: 200;
+      display: none;
+    }
+
+    .status-region.visible {
+      display: block;
+    }
+
+    .status-region.success {
+      background: #1a8c4a;
+    }
+
+    .status-region.error {
+      background: #c0392b;
+    }
+
+    .task-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      padding: 0.75rem;
+      border-bottom: 1px solid #eee;
+      gap: 0.5rem;
+    }
+
+    .task-item:last-child {
+      border-bottom: none;
+    }
+
+    .task-info {
+      flex: 1;
+    }
+
+    .task-title {
+      font-weight: 600;
+    }
+
+    .task-meta {
+      font-size: 0.875rem;
+      color: #666;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .badge-pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+
+    .badge-active {
+      background: #d4edda;
+      color: #155724;
+    }
+
+    .badge-completed {
+      background: #d1ecf1;
+      color: #0c5460;
+    }
+
+    .badge-failed {
+      background: #f8d7da;
+      color: #721c24;
+    }
+
+    .approval-item {
+      padding: 0.75rem;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+    }
+
+    .approval-actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .approval-actions button {
+      padding: 0.5rem 1rem;
+      font-size: 0.875rem;
+    }
+
+    .empty-state {
+      color: #666;
+      text-align: center;
+      padding: 2rem;
+    }
+
+    .hotkey-hint {
+      font-size: 0.75rem;
+      color: #888;
+      float: right;
+      font-family: monospace;
+    }
+
+    /* Connection cards */
+    .connection-group {
+      margin-bottom: 1.5rem;
+    }
+
+    .connection-group h3 {
+      font-size: 1rem;
+      color: #1a1a2e;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .connection-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+      gap: 1rem;
+    }
+
+    .connection-card.connected {
+      border-left: 3px solid #1a8c4a;
+    }
+
+    .connection-card.expired {
+      border-left: 3px solid #f39c12;
+    }
+
+    .connection-card.error {
+      border-left: 3px solid #c0392b;
+    }
+
+    .connection-info {
+      flex: 1;
+    }
+
+    .connection-label {
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+
+    .connection-meta {
+      font-size: 0.75rem;
+      color: #666;
+      margin-top: 0.25rem;
+    }
+
+    .connection-actions {
+      display: flex;
+      gap: 0.5rem;
+    }
+
+    .connection-actions button {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    .connect-btn {
+      background: #0f3460;
+      color: #fff;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      cursor: pointer;
+    }
+
+    .connect-btn:hover {
+      background: #16213e;
+    }
+
+    .add-account-btn {
+      background: transparent;
+      color: #0f3460;
+      border: 1px dashed #0f3460;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      width: 100%;
+      margin-top: 0.5rem;
+    }
+
+    .add-account-btn:hover {
+      background: #f0f4f8;
+    }
+
+    .provider-section {
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      overflow: hidden;
+    }
+
+    .provider-header {
+      background: #f8f9fa;
+      padding: 0.75rem 1rem;
+      font-weight: 600;
+      color: #1a1a2e;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .provider-body {
+      padding: 1rem;
+    }
+
+    .credential-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      .credential-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 480px) {
+      nav ul {
+        flex-direction: column;
+      }
+
+      nav a {
+        min-height: 48px;
+      }
+
+      section {
+        padding: 1rem;
+      }
+
+      .task-item {
+        flex-direction: column;
+      }
+
+      .approval-actions {
+        flex-direction: column;
+        width: 100%;
+      }
+
+      .approval-actions button {
+        width: 100%;
+      }
+
+      .connection-card {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .connection-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>FreeHand</h1>
+    <div id="tier-display" aria-live="polite"></div>
+  </header>
+
+  <nav aria-label="Main navigation">
+    <ul>
+          <li><a href="#command">Command</a></li>
+          <li><a href="#scribble">Scribble</a></li>
+          <li><a href="#tasks">Tasks</a></li>
+          <li><a href="#connections">Connections</a></li>
+          <li><a href="#agents">Agents</a></li>
+          <li><a href="#settings">Settings</a></li>
+          <li><a href="#gateways">Gateways</a></li>
+    </ul>
+  </nav>
+
+  <main>
+    <!-- Command Box -->
+    <section id="command" aria-labelledby="cmd-heading">
+      <h2 id="cmd-heading">
+        Command Box
+        <span class="hotkey-hint" aria-hidden="true">Alt+C</span>
+      </h2>
+      <form id="command-form" novalidate>
+        <div class="form-group">
+          <label for="command-input">Agent Prompt</label>
+          <input
+            type="text"
+            id="command-input"
+            name="command"
+            placeholder="Enter a command for the agent..."
+            autocomplete="off"
+            aria-describedby="command-error"
+          >
+          <p class="error" id="command-error" role="alert"></p>
+        </div>
+        <button type="submit">Send Command</button>
+      </form>
+      <div id="command-response" aria-live="polite" class="hint" style="margin-top: 0.5rem;"></div>
+      <div id="agent-response" aria-live="polite" style="margin-top:0.5rem;"></div>
+    </section>
+
+    <!-- Scribble Pad -->
+    <section id="scribble" aria-labelledby="scrib-heading">
+      <h2 id="scrib-heading">
+        Scribble Pad
+        <span class="hotkey-hint" aria-hidden="true">Alt+S</span>
+      </h2>
+      <p class="hint">Ctrl+Enter to save. Full replace mode.</p>
+      <form id="scribble-form" novalidate>
+        <div class="form-group">
+          <label for="scribble-content">Working Memory</label>
+          <textarea
+            id="scribble-content"
+            name="content"
+            rows="12"
+            wrap="soft"
+            aria-describedby="scribble-error"
+          ></textarea>
+          <p class="error" id="scribble-error" role="alert"></p>
+        </div>
+        <button type="submit">Save Scribble</button>
+      </form>
+    </section>
+
+    <!-- Task Scheduler -->
+    <section id="tasks" aria-labelledby="task-heading">
+      <h2 id="task-heading">Task Scheduler</h2>
+      <div id="task-list" aria-live="polite">
+        <p class="empty-state">Loading tasks...</p>
+      </div>
+      <form id="task-form" novalidate style="margin-top: 1rem; border-top: 2px solid #eee; padding-top: 1rem;">
+        <h3>Add New Task</h3>
+        <div class="form-group">
+          <label for="task-title">Title</label>
+          <input
+            type="text"
+            id="task-title"
+            name="title"
+            placeholder="Task title..."
+            required
+            aria-describedby="task-title-error"
+          >
+          <p class="error" id="task-title-error" role="alert"></p>
+        </div>
+        <div class="form-group">
+          <label for="task-cron">Cron Schedule</label>
+          <input
+            type="text"
+            id="task-cron"
+            name="cron_schedule"
+            placeholder="e.g. 0 9 * * * (daily at 9 AM)"
+            required
+            aria-describedby="task-cron-error"
+          >
+          <p class="hint">Standard cron format: minute hour day month weekday</p>
+          <p class="error" id="task-cron-error" role="alert"></p>
+        </div>
+        <button type="submit">Add Task</button>
+      </form>
+    </section>
+
+    <!-- Connections Panel -->
+    <section id="connections" aria-labelledby="conn-heading">
+      <h2 id="conn-heading">
+        Connections
+        <span class="hotkey-hint" aria-hidden="true">Alt+K</span>
+      </h2>
+      <div id="connections-list" aria-live="polite">
+        <p class="empty-state">Loading connections...</p>
+      </div>
+    </section>
+
+    <!-- Agents Import Panel -->
+    <section id="agents" aria-labelledby="agents-heading">
+      <h2 id="agents-heading">Agents</h2>
+      <div id="agents-status" aria-live="polite">
+        <p class="empty-state">Loading agent status...</p>
+      </div>
+      <div id="agents-imports" aria-live="polite" style="margin-top:1rem;"></div>
+    </section>
+
+    <!-- Settings & Approvals -->
+    <section id="settings" aria-labelledby="set-heading">
+      <h2 id="set-heading">
+        Settings & Approvals
+        <span class="hotkey-hint" aria-hidden="true">Alt+A</span>
+      </h2>
+
+      <fieldset>
+        <legend>Permission Tier</legend>
+        <form id="tier-form" novalidate>
+          <div class="form-group">
+            <label for="tier-select">Access Level</label>
+            <select id="tier-select" name="tier" aria-describedby="tier-hint">
+              <option value="autonomous">Autonomous — Read + Vault writes only</option>
+              <option value="semi_autonomous">Semi-Autonomous — Requires approval for external actions</option>
+              <option value="god_mode">God Mode — Full system access</option>
+            </select>
+            <p class="hint" id="tier-hint">Tighter restrictions for remote/Tailscale access.</p>
+          </div>
+          <button type="submit">Save Tier</button>
+        </form>
+      </fieldset>
+
+      <fieldset>
+        <legend>API Keys & OmniRoute</legend>
+        <form id="settings-form" novalidate>
+          <div class="form-group">
+            <label for="api-key">API Key</label>
+            <input
+              type="password"
+              id="api-key"
+              name="api_key"
+              placeholder="Enter API key..."
+              autocomplete="current-password"
+              aria-describedby="api-key-error"
+            >
+            <p class="error" id="api-key-error" role="alert"></p>
+          </div>
+          <div class="form-group">
+            <label for="omniroute">OmniRoute Endpoint</label>
+            <input
+              type="url"
+              id="omniroute"
+              name="omniroute"
+              placeholder="https://api.example.com"
+              aria-describedby="omniroute-error"
+            >
+            <p class="error" id="omniroute-error" role="alert"></p>
+          </div>
+          <button type="submit">Save Settings</button>
+        </form>
+      </fieldset>
+
+      <!-- OAuth App Credentials -->
+      <fieldset>
+        <legend>OAuth App Credentials</legend>
+        <p class="hint" style="margin-bottom: 1rem;">Enter your OAuth app credentials below. You'll need to register apps at each provider's developer console. See the setup guide for instructions.</p>
+        <div class="credential-row">
+          <div class="form-group">
+            <label for="google-client-id">Google Client ID</label>
+            <input type="text" id="google-client-id" placeholder="xxxxx.apps.googleusercontent.com">
+            <p class="hint">Create at console.developers.google.com</p>
+          </div>
+          <div class="form-group">
+            <label for="google-client-secret">Google Client Secret</label>
+            <input type="password" id="google-client-secret" placeholder="GOCSPX-...">
+          </div>
+        </div>
+        <div class="credential-row">
+          <div class="form-group">
+            <label for="microsoft-client-id">Microsoft Client ID</label>
+            <input type="text" id="microsoft-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            <p class="hint">Create at entra.microsoft.com</p>
+          </div>
+          <div class="form-group">
+            <label for="microsoft-client-secret">Microsoft Client Secret</label>
+            <input type="password" id="microsoft-client-secret" placeholder="Enter secret...">
+          </div>
+        </div>
+        <div class="credential-row">
+          <div class="form-group">
+            <label for="microsoft-tenant">Microsoft Tenant</label>
+            <input type="text" id="microsoft-tenant" placeholder="common">
+            <p class="hint">Use "common" for personal + work accounts</p>
+          </div>
+          <div class="form-group">
+            <label for="zoom-client-id">Zoom Client ID</label>
+            <input type="text" id="zoom-client-id" placeholder="Enter Zoom client ID">
+            <p class="hint">Create an OAuth App (not Server-to-Server) at zoom.us</p>
+          </div>
+        </div>
+        <div class="credential-row">
+          <div class="form-group">
+            <label for="zoom-client-secret">Zoom Client Secret</label>
+            <input type="password" id="zoom-client-secret" placeholder="Enter Zoom client secret">
+          </div>
+          <div class="form-group">
+            <label for="meta-facebook-app-id">Facebook App ID</label>
+            <input type="text" id="meta-facebook-app-id" placeholder="Enter Facebook App ID">
+            <p class="hint">Create at developers.facebook.com</p>
+          </div>
+        </div>
+        <div class="credential-row">
+          <div class="form-group">
+            <label for="meta-facebook-app-secret">Facebook App Secret</label>
+            <input type="password" id="meta-facebook-app-secret" placeholder="Enter Facebook App Secret">
+          </div>
+          <div class="form-group">
+            <label for="meta-instagram-app-id">Instagram App ID</label>
+            <input type="text" id="meta-instagram-app-id" placeholder="Enter Instagram App ID">
+            <p class="hint">Separate app from Facebook</p>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="meta-instagram-app-secret">Instagram App Secret</label>
+          <input type="password" id="meta-instagram-app-secret" placeholder="Enter Instagram App Secret">
+        </div>
+        <button type="button" id="oauth-save-btn">Save OAuth Credentials</button>
+      </fieldset>
+
+      <!-- LLM Settings -->
+      <fieldset>
+        <legend>LLM Configuration</legend>
+        <p class="hint" style="margin-bottom:1rem;">Configure the AI model FreeHand uses. Supports OpenAI, Google Gemini, and any OpenAI-compatible API.</p>
+        <div class="credential-row">
+          <div class="form-group">
+            <label for="llm-provider">Provider</label>
+            <select id="llm-provider">
+              <option value="openai">OpenAI</option>
+              <option value="google">Google Gemini</option>
+              <option value="openai_compatible">OpenAI Compatible (custom)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="llm-model">Model</label>
+            <input type="text" id="llm-model" placeholder="gpt-4o-mini">
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="llm-api-key">API Key</label>
+          <input type="password" id="llm-api-key" placeholder="sk-... or AIza...">
+        </div>
+        <div class="form-group">
+          <label for="llm-base-url">Base URL (optional)</label>
+          <input type="url" id="llm-base-url" placeholder="https://api.openai.com/v1">
+          <p class="hint">Leave empty for default. Use for custom endpoints or proxies.</p>
+        </div>
+        <button type="button" id="llm-save-btn">Save LLM Settings</button>
+      </fieldset>
+
+      <!-- Remote Gateways -->
+      <section id="gateways" aria-labelledby="gw-heading">
+        <h2 id="gw-heading">Remote Gateways</h2>
+        <div id="gateway-status" aria-live="polite">
+          <p class="empty-state">Loading gateway status...</p>
+        </div>
+
+        <fieldset>
+          <legend>Telegram</legend>
+          <div class="form-group">
+            <label for="tg-token">Bot Token</label>
+            <input type="password" id="tg-token" placeholder="123456:ABC-DEF..." autocomplete="current-password">
+          </div>
+          <div class="form-group">
+            <label for="tg-whitelist">Allowed Chat IDs (comma-separated)</label>
+            <input type="text" id="tg-whitelist" placeholder="123456789, 987654321">
+            <p class="hint">Leave empty to allow all chats. Add specific chat IDs for security.</p>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>Slack</legend>
+          <div class="form-group">
+            <label for="slack-signing">Signing Secret</label>
+            <input type="password" id="slack-signing" placeholder="xoxb-...">
+          </div>
+          <div class="form-group">
+            <label for="slack-token">Bot Token</label>
+            <input type="password" id="slack-token" placeholder="xoxb-..." autocomplete="current-password">
+            <p class="hint">Install the bot to your workspace via api.slack.com/apps</p>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>WhatsApp</legend>
+          <div class="form-group">
+            <label for="wa-phone">Pairing Phone Number</label>
+            <input type="text" id="wa-phone" placeholder="+1234567890">
+            <p class="hint">Enter your phone number with country code. An 8-digit code will be generated.</p>
+          </div>
+          <button type="button" id="wa-pair-btn">Generate Pairing Code</button>
+          <p class="hint" id="wa-code-hint" style="margin-top:0.5rem; font-weight:600;"></p>
+        </fieldset>
+
+        <button type="button" id="gateway-save-btn">Save Gateway Settings</button>
+      </section>
+
+      <div id="approvals-section">
+        <h3>Pending Approvals</h3>
+        <div id="approvals-list" aria-live="polite">
+          <p class="empty-state">No pending approvals</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Live region for status updates -->
+  <div
+    id="status-region"
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+    class="status-region"
+  ></div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      // ---- Status Region ----
+      const statusRegion = document.getElementById('status-region');
+      let statusTimeout = null;
+
+      function showStatus(message, type) {
+        statusRegion.textContent = message;
+        statusRegion.className = 'status-region visible ' + (type || '');
+        clearTimeout(statusTimeout);
+        statusTimeout = setTimeout(function() {
+          statusRegion.classList.remove('visible');
+        }, 3000);
+      }
+
+      // ---- Error Helpers ----
+      function showError(elementId, message) {
+        var el = document.getElementById(elementId);
+        if (el) {
+          el.textContent = message;
+          el.classList.add('visible');
+        }
+      }
+
+      function clearError(elementId) {
+        var el = document.getElementById(elementId);
+        if (el) {
+          el.textContent = '';
+          el.classList.remove('visible');
+        }
+      }
+
+      // ---- Hotkeys ----
+      document.addEventListener('keydown', function(e) {
+        if (e.altKey) {
+          var key = e.key.toLowerCase();
+          if (key === 'c') {
+            e.preventDefault();
+            document.getElementById('command-input').focus();
+          } else if (key === 's') {
+            e.preventDefault();
+            document.getElementById('scribble-content').focus();
+          } else if (key === 'a') {
+            e.preventDefault();
+            document.getElementById('settings').scrollIntoView({ behavior: 'smooth' });
+            document.getElementById('api-key').focus();
+          } else if (key === 'k') {
+            e.preventDefault();
+            document.getElementById('connections').scrollIntoView({ behavior: 'smooth' });
+          }
+        }
+
+        // Ctrl+Enter in scribble to save
+        if (e.ctrlKey && e.key === 'Enter' && document.activeElement.id === 'scribble-content') {
+          e.preventDefault();
+          document.getElementById('scribble-form').dispatchEvent(new Event('submit', { cancelable: true }));
+        }
+      });
+
+      // ---- Command Form ----
+      var commandForm = document.getElementById('command-form');
+      commandForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('command-error');
+
+        var input = document.getElementById('command-input');
+        var value = input.value.trim();
+        if (!value) {
+          showError('command-error', 'Please enter a command.');
+          input.focus();
+          return;
+        }
+
+        var responseEl = document.getElementById('command-response');
+        responseEl.textContent = 'Sending: ' + value;
+
+        fetch('/api/agent/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ command: value })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          var responseEl = document.getElementById('agent-response');
+          if (data.text) {
+            responseEl.innerHTML = '<div style="background:#f0f4f8;padding:0.75rem;border-radius:4px;margin-top:0.5rem;">' + escapeHtml(data.text) + '</div>';
+          }
+          if (data.tools_used && data.tools_used.length > 0) {
+            var toolHtml = '<details style="margin-top:0.5rem;"><summary style="cursor:pointer;color:#666;font-size:0.875rem;">Tools used (' + data.tools_used.length + ')</summary><ul style="margin-top:0.25rem;padding-left:1.25rem;font-size:0.875rem;">';
+            data.tools_used.forEach(function(tc) {
+              toolHtml += '<li><strong>' + escapeHtml(tc.name) + '</strong>: ' + escapeHtml((tc.result || '').substring(0, 100)) + (tc.result && tc.result.length > 100 ? '...' : '') + '</li>';
+            });
+            toolHtml += '</ul></details>';
+            responseEl.innerHTML += toolHtml;
+          }
+          if (data.error) {
+            responseEl.innerHTML += '<div style="color:#c0392b;font-size:0.875rem;margin-top:0.5rem;">Error: ' + escapeHtml(data.error) + '</div>';
+          }
+          showStatus('Agent responded.', 'success');
+          input.value = '';
+        })
+        .catch(function(err) {
+          responseEl.textContent = 'Error: ' + err.message;
+          showStatus('Command failed: ' + err.message, 'error');
+        });
+      });
+
+      // ---- Scribble Form ----
+      var scribbleForm = document.getElementById('scribble-form');
+      var scribbleContent = document.getElementById('scribble-content');
+
+      // Load existing content
+      fetch('/api/scribble')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.content) {
+            scribbleContent.value = data.content;
+          }
+        })
+        .catch(function() {
+          // Silently fail - empty textarea is fine
+        });
+
+      scribbleForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('scribble-error');
+
+        var content = scribbleContent.value;
+        if (!content.trim()) {
+          showError('scribble-error', 'Scribble content cannot be empty.');
+          scribbleContent.focus();
+          return;
+        }
+
+        fetch('/api/scribble', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: content })
+        })
+        .then(function(res) {
+          if (!res.ok) throw new Error('Failed to save');
+          showStatus('Scribble saved successfully.', 'success');
+        })
+        .catch(function(err) {
+          showError('scribble-error', err.message);
+          showStatus('Failed to save scribble.', 'error');
+        });
+      });
+
+      // ---- Task Form ----
+      var taskForm = document.getElementById('task-form');
+
+      taskForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('task-title-error');
+        clearError('task-cron-error');
+
+        var title = document.getElementById('task-title').value.trim();
+        var cron = document.getElementById('task-cron').value.trim();
+        var valid = true;
+
+        if (!title) {
+          showError('task-title-error', 'Title is required.');
+          valid = false;
+        }
+        if (!cron) {
+          showError('task-cron-error', 'Cron schedule is required.');
+          valid = false;
+        }
+        if (!valid) return;
+
+        fetch('/api/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: title, cron_schedule: cron })
+        })
+        .then(function(res) {
+          if (!res.ok) throw new Error('Failed to add task');
+          showStatus('Task added: ' + title, 'success');
+          document.getElementById('task-title').value = '';
+          document.getElementById('task-cron').value = '';
+          loadTasks();
+        })
+        .catch(function(err) {
+          showStatus('Failed to add task: ' + err.message, 'error');
+        });
+      });
+
+      function loadTasks() {
+        var listEl = document.getElementById('task-list');
+        listEl.innerHTML = '<p class="empty-state">Loading...</p>';
+
+        fetch('/api/tasks')
+          .then(function(res) { return res.json(); })
+          .then(function(tasks) {
+            if (!tasks.length) {
+              listEl.innerHTML = '<p class="empty-state">No tasks scheduled</p>';
+              return;
+            }
+            listEl.innerHTML = '';
+            tasks.forEach(function(task) {
+              var div = document.createElement('div');
+              div.className = 'task-item';
+              div.innerHTML =
+                '<div class="task-info">' +
+                  '<span class="task-title">' + escapeHtml(task.title) + '</span>' +
+                  ' <span class="badge badge-' + escapeHtml(task.status) + '">' + escapeHtml(task.status) + '</span>' +
+                  '<div class="task-meta">Cron: ' + escapeHtml(task.cron_schedule) + '</div>' +
+                  (task.last_run ? '<div class="task-meta">Last run: ' + escapeHtml(task.last_run) + '</div>' : '') +
+                  (task.next_run ? '<div class="task-meta">Next: ' + escapeHtml(task.next_run) + '</div>' : '') +
+                '</div>' +
+                '<button class="danger" onclick="deleteTask(' + task.id + ')" aria-label="Delete task ' + escapeHtml(task.title) + '">Delete</button>';
+              listEl.appendChild(div);
+            });
+          })
+          .catch(function() {
+            listEl.innerHTML = '<p class="empty-state">Failed to load tasks</p>';
+          });
+      }
+
+      window.deleteTask = function(id) {
+        if (!confirm('Delete this task?')) return;
+        fetch('/api/tasks/' + id, { method: 'DELETE' })
+          .then(function() {
+            showStatus('Task deleted.', 'success');
+            loadTasks();
+          })
+          .catch(function() {
+            showStatus('Failed to delete task.', 'error');
+          });
+      };
+
+      // ---- Settings Form ----
+      var settingsForm = document.getElementById('settings-form');
+
+      // Load settings
+      fetch('/api/settings')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.api_key) document.getElementById('api-key').value = data.api_key;
+          if (data.omniroute) document.getElementById('omniroute').value = data.omniroute;
+        })
+        .catch(function() {});
+
+      settingsForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('api-key-error');
+        clearError('omniroute-error');
+
+        var apiKey = document.getElementById('api-key').value.trim();
+        var omniroute = document.getElementById('omniroute').value.trim();
+        var valid = true;
+
+        if (apiKey && apiKey.length < 8) {
+          showError('api-key-error', 'API key must be at least 8 characters.');
+          valid = false;
+        }
+        if (omniroute && !isValidUrl(omniroute)) {
+          showError('omniroute-error', 'Please enter a valid URL.');
+          valid = false;
+        }
+        if (!valid) return;
+
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: apiKey, omniroute: omniroute })
+        })
+        .then(function() {
+          showStatus('Settings saved.', 'success');
+        })
+        .catch(function() {
+          showStatus('Failed to save settings.', 'error');
+        });
+      });
+
+      // ---- OAuth Settings ----
+      var oauthFields = [
+        { id: 'google-client-id', key: 'google.client_id' },
+        { id: 'google-client-secret', key: 'google.client_secret' },
+        { id: 'microsoft-client-id', key: 'microsoft.client_id' },
+        { id: 'microsoft-client-secret', key: 'microsoft.client_secret' },
+        { id: 'microsoft-tenant', key: 'microsoft.tenant' },
+        { id: 'zoom-client-id', key: 'zoom.client_id' },
+        { id: 'zoom-client-secret', key: 'zoom.client_secret' },
+        { id: 'meta-facebook-app-id', key: 'meta.facebook.app_id' },
+        { id: 'meta-facebook-app-secret', key: 'meta.facebook.app_secret' },
+        { id: 'meta-instagram-app-id', key: 'meta.instagram.app_id' },
+        { id: 'meta-instagram-app-secret', key: 'meta.instagram.app_secret' },
+      ];
+
+      // Load OAuth settings
+      fetch('/api/settings')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          var oauth = data.oauth || {};
+          var providers = oauth.providers || {};
+          oauthFields.forEach(function(field) {
+            var el = document.getElementById(field.id);
+            if (!el) return;
+            var parts = field.key.split('.');
+            var val = providers;
+            parts.forEach(function(p) { val = val ? val[p] : ''; });
+            if (val) el.value = val;
+          });
+        })
+        .catch(function() {});
+
+      document.getElementById('oauth-save-btn').addEventListener('click', function() {
+        var providers = {};
+        oauthFields.forEach(function(field) {
+          var el = document.getElementById(field.id);
+          if (!el || !el.value.trim()) return;
+          var parts = field.key.split('.');
+          var target = providers;
+          parts.forEach(function(p, i) {
+            if (i === parts.length - 1) {
+              target[p] = el.value.trim();
+            } else {
+              target[p] = target[p] || {};
+              target = target[p];
+            }
+          });
+        });
+
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ oauth: { providers: providers } })
+        })
+        .then(function() {
+          showStatus('OAuth credentials saved.', 'success');
+        })
+        .catch(function() {
+          showStatus('Failed to save OAuth credentials.', 'error');
+        });
+      });
+
+      // ---- LLM Settings ----
+      fetch('/api/settings')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          var llm = data.llm || {};
+          document.getElementById('llm-provider').value = llm.provider || 'openai';
+          document.getElementById('llm-model').value = llm.model || 'gpt-4o-mini';
+          document.getElementById('llm-api-key').value = llm.api_key || '';
+          document.getElementById('llm-base-url').value = llm.base_url || '';
+        })
+        .catch(function() {});
+
+      document.getElementById('llm-save-btn').addEventListener('click', function() {
+        var llmConfig = {
+          provider: document.getElementById('llm-provider').value,
+          model: document.getElementById('llm-model').value.trim(),
+          api_key: document.getElementById('llm-api-key').value.trim(),
+          base_url: document.getElementById('llm-base-url').value.trim(),
+        };
+        fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ llm: llmConfig })
+        })
+        .then(function() {
+          showStatus('LLM settings saved.', 'success');
+        })
+        .catch(function() {
+          showStatus('Failed to save LLM settings.', 'error');
+        });
+      });
+
+      // ---- Connections ----
+      function loadConnections() {
+        var listEl = document.getElementById('connections-list');
+        listEl.innerHTML = '<p class="empty-state">Loading...</p>';
+
+        fetch('/api/integrations')
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            var connections = data.connections || [];
+            var available = data.available_services || [];
+
+            if (!connections.length) {
+              listEl.innerHTML = '<p class="empty-state">No connections yet. Connect your accounts below.</p>';
+              return;
+            }
+
+            listEl.innerHTML = '';
+            var providers = {
+              'google': { name: 'Google Workspace', icon: 'G', sub: 'Gmail, Calendar, Sheets, Meet' },
+              'microsoft': { name: 'Microsoft 365', icon: 'M', sub: 'Outlook, Teams, Calendar' },
+              'zoom': { name: 'Zoom', icon: 'Z', sub: 'Meetings, Recordings, Chat' },
+              'facebook': { name: 'Facebook', icon: 'f', sub: 'Pages, Posts, Messages' },
+              'instagram': { name: 'Instagram', icon: 'I', sub: 'Posts, Stories, DMs' },
+              'github': { name: 'GitHub', icon: 'GH', sub: 'Repos, Issues, Gists' },
+              'email': { name: 'Email', icon: '@', sub: 'IMAP/SMTP (custom domains)' },
+            };
+
+            var grouped = {};
+            connections.forEach(function(conn) {
+              var svc = conn.service;
+              if (!grouped[svc]) grouped[svc] = [];
+              grouped[svc].push(conn);
+            });
+
+            Object.keys(grouped).forEach(function(svc) {
+              var info = providers[svc] || { name: svc, icon: '?', sub: '' };
+              var groupDiv = document.createElement('div');
+              groupDiv.className = 'connection-group';
+              groupDiv.innerHTML = '<h3>' + escapeHtml(info.icon) + ' ' + escapeHtml(info.name) + '<span style="font-weight:400;font-size:0.8rem;color:#666;"> — ' + escapeHtml(info.sub) + '</span></h3>';
+              var bodyDiv = document.createElement('div');
+              bodyDiv.className = 'provider-body';
+
+              grouped[svc].forEach(function(conn) {
+                var card = document.createElement('div');
+                card.className = 'connection-card connected';
+                var expDate = conn.expires_at ? new Date(conn.expires_at) : null;
+                var now = new Date();
+                var isExpired = expDate && expDate < now;
+                var timeLeft = '';
+                if (expDate && !isExpired) {
+                  var mins = Math.round((expDate - now) / 60000);
+                  if (mins < 60) {
+                    timeLeft = 'Expires in ' + mins + 'm';
+                  } else {
+                    timeLeft = 'Expires in ' + Math.round(mins / 60) + 'h';
+                  }
+                } else if (isExpired) {
+                  timeLeft = 'Expired';
+                }
+                card.className = isExpired ? 'connection-card expired' : 'connection-card connected';
+
+                var userLabel = conn.email ? escapeHtml(conn.email) : escapeHtml(conn.label);
+                var scopes = (conn.scopes || []).slice(0, 3).join(', ');
+                if ((conn.scopes || []).length > 3) scopes += '...';
+
+                card.innerHTML =
+                  '<div class="connection-info">' +
+                    '<span class="connection-label">' + escapeHtml(conn.label) + '</span>' +
+                    '<div class="connection-meta">' + (isExpired ? '<span style="color:#c0392b;">' + timeLeft + '</span>' : timeLeft) + ' · ' + escapeHtml(conn.connected_at) + '</div>' +
+                    '<div class="connection-meta">' + escapeHtml(userLabel) + '</div>' +
+                    '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' +
+                  '</div>' +
+                  '<div class="connection-actions">' +
+                    '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Test</button>' +
+                    '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Disconnect</button>' +
+                  '</div>';
+                bodyDiv.appendChild(card);
+              });
+
+              // Add account button (for multi-account services)
+              if (['google', 'microsoft', 'zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
+                var addBtn = document.createElement('button');
+                addBtn.className = 'add-account-btn';
+                addBtn.textContent = '+ Add Account';
+                addBtn.onclick = function() { showAddAccountModal(svc); };
+                bodyDiv.appendChild(addBtn);
+              }
+
+              groupDiv.appendChild(bodyDiv);
+              listEl.appendChild(groupDiv);
+            });
+
+            // Show available but not connected services
+            var connected = new Set(connections.map(function(c) { return c.service; }));
+            var remaining = available.filter(function(s) { return !connected.has(s); });
+            if (remaining.length) {
+              var emptyGroup = document.createElement('div');
+              emptyGroup.className = 'connection-group';
+              emptyGroup.innerHTML = '<h3>Available Services</h3>';
+              var emptyBody = document.createElement('div');
+              emptyBody.className = 'provider-body';
+              remaining.forEach(function(svc) {
+                var info = providers[svc] || { name: svc, icon: '?', sub: '' };
+                var btn = document.createElement('button');
+                btn.className = 'connect-btn';
+                btn.textContent = 'Connect ' + info.name;
+                btn.onclick = function() { connectService(svc); };
+                emptyBody.appendChild(btn);
+                emptyBody.appendChild(document.createElement('br'));
+              });
+              emptyGroup.appendChild(emptyBody);
+              listEl.appendChild(emptyGroup);
+            }
+          })
+          .catch(function() {
+            listEl.innerHTML = '<p class="empty-state">Failed to load connections</p>';
+          });
+      }
+
+      function connectService(service) {
+        window.open('/api/integrations/' + service + '/authorize?label=default', '_blank', 'width=600,height=700');
+      }
+
+      function showAddAccountModal(service) {
+        var label = prompt('Enter a label for this account (e.g. "Work", "Personal"):');
+        if (!label) return;
+        label = label.trim() || 'default';
+        window.open('/api/integrations/' + service + '/authorize?label=' + encodeURIComponent(label), '_blank', 'width=600,height=700');
+      }
+
+      window.disconnectService = function(service, label) {
+        if (!confirm('Disconnect ' + service + ' (' + label + ')?')) return;
+        fetch('/api/integrations/' + service + '/disconnect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: label })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function() {
+          showStatus('Disconnected: ' + service + ' (' + label + ')', 'success');
+          loadConnections();
+        })
+        .catch(function() {
+          showStatus('Failed to disconnect.', 'error');
+        });
+      };
+
+      window.testConnection = function(service, label) {
+        fetch('/api/integrations/' + service + '/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: label })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.valid) {
+            showStatus(service + ' (' + label + ') is valid.', 'success');
+          } else {
+            showStatus(service + ' (' + label + ') connection is invalid — reconnect needed.', 'error');
+          }
+        })
+        .catch(function() {
+          showStatus('Test failed.', 'error');
+        });
+      };
+
+      // ---- Approvals ----
+      function loadApprovals() {
+        var listEl = document.getElementById('approvals-list');
+        listEl.innerHTML = '<p class="empty-state">Loading...</p>';
+
+        fetch('/api/approvals')
+          .then(function(res) { return res.json(); })
+          .then(function(approvals) {
+            if (!approvals.length) {
+              listEl.innerHTML = '<p class="empty-state">No pending approvals</p>';
+              return;
+            }
+            listEl.innerHTML = '';
+            approvals.forEach(function(approval) {
+              var div = document.createElement('div');
+              div.className = 'approval-item';
+              div.innerHTML =
+                '<strong>' + escapeHtml(approval.action_type) + '</strong>' +
+                '<p>' + escapeHtml(approval.description) + '</p>' +
+                '<small>Created: ' + escapeHtml(approval.created_at) + '</small>' +
+                '<div class="approval-actions">' +
+                  '<button onclick="handleApproval(' + approval.id + ', \'approve\')">Approve</button>' +
+                  '<button class="danger" onclick="handleApproval(' + approval.id + ', \'reject\')">Reject</button>' +
+                '</div>';
+              listEl.appendChild(div);
+            });
+          })
+          .catch(function() {
+            listEl.innerHTML = '<p class="empty-state">Failed to load approvals</p>';
+          });
+      }
+
+      window.handleApproval = function(id, action) {
+        fetch('/api/approvals/' + id + '/' + action, { method: 'POST' })
+          .then(function() {
+            showStatus('Approval ' + action + 'd.', 'success');
+            loadApprovals();
+          })
+          .catch(function() {
+            showStatus('Failed to process approval.', 'error');
+          });
+      };
+
+      // ---- Helpers ----
+      function escapeHtml(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+      }
+
+      function isValidUrl(str) {
+        try {
+          new URL(str);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+
+      // ---- Gateway Status & Controls ----
+      function loadGatewayStatus() {
+        fetch('/api/gateway/status')
+          .then(function(res) { return res.json(); })
+          .then(function(status) {
+            var el = document.getElementById('gateway-status');
+            var html = '<table style="width:100%;border-collapse:collapse;">';
+            html += '<tr><td style="padding:0.25rem 0;">Tier:</td><td><span class="badge badge-' + status.tier.replace(/_/g, '-') + '">' + status.tier + '</span></td></tr>';
+            html += '<tr><td style="padding:0.25rem 0;">Pending approvals:</td><td>' + status.pending_approvals + '</td></tr>';
+            html += '<tr><td style="padding:0.25rem 0;">Telegram:</td><td>' + (status.telegram.configured ? '<span class="badge badge-active">configured</span>' : '<span class="badge badge-pending">not configured</span>') + '</td></tr>';
+            html += '<tr><td style="padding:0.25rem 0;">Slack:</td><td>' + (status.slack.configured ? '<span class="badge badge-active">configured</span>' : '<span class="badge badge-pending">not configured</span>') + '</td></tr>';
+            html += '<tr><td style="padding:0.25rem 0;">WhatsApp:</td><td>' + (status.whatsapp.auth_exists ? '<span class="badge badge-active">linked</span>' : '<span class="badge badge-pending">not linked</span>') + '</td></tr>';
+            html += '</table>';
+            el.innerHTML = html;
+
+            // Populate form fields
+            fetch('/api/settings')
+              .then(function(res) { return res.json(); })
+              .then(function(s) {
+                document.getElementById('tg-token').value = s.telegram_bot_token || '';
+                document.getElementById('tg-whitelist').value = (s.telegram_chat_whitelist || []).join(', ');
+                document.getElementById('slack-signing').value = s.slack_signing_secret || '';
+                document.getElementById('slack-token').value = s.slack_bot_token || '';
+              })
+              .catch(function() {});
+          })
+          .catch(function() {
+            document.getElementById('gateway-status').innerHTML = '<p class="empty-state">Failed to load gateway status</p>';
+          });
+      }
+
+      document.getElementById('gateway-save-btn').addEventListener('click', function() {
+        var data = {
+          telegram_bot_token: document.getElementById('tg-token').value.trim(),
+          telegram_chat_whitelist: document.getElementById('tg-whitelist').value.trim().split(',').filter(function(x) { return x.trim(); }).map(function(x) { return x.trim(); }),
+          slack_signing_secret: document.getElementById('slack-signing').value.trim(),
+          slack_bot_token: document.getElementById('slack-token').value.trim(),
+        };
+        fetch('/api/gateway/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        })
+        .then(function(res) { return res.json(); })
+        .then(function() {
+          showStatus('Gateway settings saved.', 'success');
+          loadGatewayStatus();
+        })
+        .catch(function() {
+          showStatus('Failed to save gateway settings.', 'error');
+        });
+      });
+
+      document.getElementById('wa-pair-btn').addEventListener('click', function() {
+        var phone = document.getElementById('wa-phone').value.trim();
+        if (!phone) {
+          showStatus('Enter a phone number first.', 'error');
+          return;
+        }
+        var hint = document.getElementById('wa-code-hint');
+        hint.textContent = 'Generating pairing code...';
+        fetch('/api/gateway/whatsapp/pair', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone: phone })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.code) {
+            hint.textContent = 'Pairing code: ' + data.code + ' — Enter this in WhatsApp on your phone.';
+            hint.style.color = '#1a8c4a';
+          } else {
+            hint.textContent = 'Error: ' + (data.error || 'unknown');
+            hint.style.color = '#c0392b';
+          }
+        })
+        .catch(function() {
+          hint.textContent = 'Failed to connect to bridge. Is the bridge running?';
+          hint.style.color = '#c0392b';
+        });
+      });
+
+      // ---- Tier Form ----
+      var tierSelect = document.getElementById('tier-select');
+
+      function loadTier() {
+        fetch('/api/security/tier')
+          .then(function(res) { return res.json(); })
+          .then(function(data) {
+            tierSelect.value = data.tier || 'semi_autonomous';
+            updateTierBadge(data.tier);
+          })
+          .catch(function() {});
+      }
+
+      function updateTierBadge(tier) {
+        var el = document.getElementById('tier-display');
+        if (!el) return;
+        var cls = 'tier-' + (tier || 'semi-autonomous').replace(/_/g, '-');
+        var label = (tier || 'semi_autonomous').replace(/_/g, ' ');
+        el.innerHTML = '<span class="tier-badge ' + cls + '" aria-label="Current tier: ' + label + '">' + label + '</span>';
+      }
+
+      document.getElementById('tier-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        var tier = tierSelect.value;
+        fetch('/api/security/tier', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tier: tier })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          showStatus('Tier set to: ' + data.tier, 'success');
+          updateTierBadge(data.tier);
+        })
+        .catch(function() {
+          showStatus('Failed to save tier.', 'error');
+        });
+      });
+
+      // ---- SSE: Real-time approval notifications ----
+      function connectSSE() {
+        var evtSource = new EventSource('/api/approvals/stream');
+        evtSource.addEventListener('approval_pending', function(e) {
+          var data = JSON.parse(e.data);
+          showStatus('Approval needed: ' + data.action_type + ' — ' + data.description, 'success');
+          loadApprovals();
+        });
+        evtSource.onerror = function() {
+          // Reconnect on error (automatic for EventSource)
+        };
+      }
+
+      // ---- Agents Panel ----
+      function loadAgents() {
+        var el = document.getElementById('agents-status');
+        var importEl = document.getElementById('agents-imports');
+        el.innerHTML = '<p class="empty-state">Loading...</p>';
+        importEl.innerHTML = '';
+
+        Promise.all([
+          fetch('/api/agents').then(function(r) { return r.json(); }),
+          fetch('/api/agents/imported').then(function(r) { return r.json(); }),
+        ])
+        .then(function(results) {
+          var agents = results[0] || [];
+          var status = results[1] || {};
+          var importedAgents = status.agents || [];
+
+          if (!agents.length) {
+            el.innerHTML = '<p class="empty-state">No other AI agents detected. FreeHand works standalone.</p>';
+            return;
+          }
+
+          el.innerHTML = '';
+          agents.forEach(function(a) {
+            var isImported = importedAgents.indexOf(a.name) !== -1;
+            var card = document.createElement('div');
+            card.className = 'agent-card';
+            var stateLabel = a.has_state_db ? ' | Has state.db' : '';
+            var importBadge = isImported
+              ? '<span class="agent-badge agent-badge-imported">imported</span>'
+              : '<span class="agent-badge agent-badge-detected">detected</span>';
+            card.innerHTML =
+              '<h3>' + escapeHtml(a.display_name) + ' ' + importBadge + '</h3>' +
+              '<div class="agent-path">' + escapeHtml(a.path) + '</div>' +
+              '<div class="agent-meta">Files: ' + a.file_count + ' | Skills: 20 | State DB: ' + (a.has_state_db ? 'yes' : 'no') + stateLabel + '</div>' +
+              '<div class="agent-actions">' +
+                (isImported
+                  ? '<button class="secondary" onclick="reimportAgent(\'' + a.name + '\')">Re-import</button>' +
+                    '<button class="danger" onclick="removeAgent(\'' + a.name + '\')">Remove</button>'
+                  : '<button onclick="previewAgent(\'' + a.name + '\')">Preview</button>' +
+                    '<button onclick="importAgent(\'' + a.name + '\')">Import</button>' +
+                    (a.has_state_db ? '<button class="secondary" onclick="importAgent(\'' + a.name + '\', true)">Import + state</button>' : '')
+                ) +
+              '</div>';
+            el.appendChild(card);
+          });
+
+          if (status.imports && status.imports.length > 0) {
+            var summary = document.createElement('div');
+            summary.className = 'agent-import-section';
+            summary.innerHTML = '<h4>Import Summary</h4>' +
+              '<div>Total: ' + status.total_files + ' files, ' + status.total_skills + ' skills across ' + status.total_imports + ' import(s)</div>';
+            importEl.appendChild(summary);
+          }
+        })
+        .catch(function() {
+          el.innerHTML = '<p class="empty-state">Failed to load agent status</p>';
+        });
+      }
+
+      window.importAgent = function(name, includeState) {
+        includeState = includeState || false;
+        var btn = event.target;
+        btn.textContent = 'Importing...';
+        btn.disabled = true;
+        fetch('/api/agents/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: name, include_state: includeState, overwrite: true }),
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          if (data.errors && data.errors.length > 0) {
+            showStatus(name + ' import had errors: ' + data.errors[0], 'error');
+          } else {
+            showStatus(name + ' imported: ' + data.files_imported + ' files, ' + data.skills_imported + ' skills', 'success');
+          }
+          btn.textContent = 'Import';
+          btn.disabled = false;
+          loadAgents();
+        })
+        .catch(function() {
+          showStatus('Import failed.', 'error');
+          btn.textContent = 'Import';
+          btn.disabled = false;
+        });
+      };
+
+      window.previewAgent = function(name) {
+        fetch('/api/agents/import/preview', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: name }),
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          var msg = name + ' — ' + (data.files || []).length + ' files, ' + (data.skills || []).length + ' skills';
+          if (data.state_extraction) {
+            msg += ' | State: ' + data.state_extraction.tables_to_extract + ' tables';
+          }
+          showStatus(msg, 'success');
+        })
+        .catch(function() {
+          showStatus('Preview failed.', 'error');
+        });
+      };
+
+      window.reimportAgent = function(name) {
+        importAgent(name, false);
+      };
+
+      window.removeAgent = function(name) {
+        if (!confirm('Remove all imports for ' + name + '?')) return;
+        fetch('/api/agents/import/' + name, { method: 'DELETE' })
+        .then(function() {
+          showStatus(name + ' imports removed.', 'success');
+          loadAgents();
+        })
+        .catch(function() {
+          showStatus('Remove failed.', 'error');
+        });
+      };
+
+      // ---- Init ----
+      loadTasks();
+      loadApprovals();
+      loadTier();
+      loadConnections();
+      loadGatewayStatus();
+      loadAgents();
+      connectSSE();
+    })();
+  </script>
+</body>
+</html>

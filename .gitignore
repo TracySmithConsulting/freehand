@@ -1,0 +1,69 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+venv/
+env/
+ENV/
+.venv
+
+# Node
+node_modules/
+bridge/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# FreeHand local data
+agent.db
+agent.db-shm
+agent.db-wal
+vault/
+!.env.example
+
+# Secrets
+.env
+.env.local
+.vault/encryption.key
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+tests/__pycache__/
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
+# Build
+*.spec.py
+dist/
+*.tar.gz
