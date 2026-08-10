@@ -35,27 +35,4 @@ jobs:
           "
 
       - name: Run core tests
-        run: |
-          python -c "
-          import sys
-          sys.path.insert(0, '.')
-          from server import app
-          from fastapi.testclient import TestClient
-          c = TestClient(app)
-          r = {'p': 0, 'f': 0}
-          def check(name, actual, expected):
-              if actual == expected:
-                  r['p'] += 1
-              else:
-                  r['f'] += 1
-                  print(f'  FAIL  {name} -- expected {expected}, got {actual}')
-          check('GET /', c.get('/').status_code, 200)
-          check('GET /api/agents', c.get('/api/agents').status_code, 200)
-          check('POST /api/agent/command', c.post('/api/agent/command', json={'command': 'test'}).status_code, 200)
-          check('GET /api/integrations', c.get('/api/integrations').status_code, 200)
-          check('GET /api/settings', c.get('/api/settings').status_code, 200)
-          check('GET /api/gateway/status', c.get('/api/gateway/status').status_code, 200)
-          check('GET /api/v1/status', c.get('/api/v1/status').status_code, 200)
-          print(f"{r['p']} passed, {r['f']} failed")
-          sys.exit(1 if r['f'] else 0)
-          "
+        run: python test_all.py
