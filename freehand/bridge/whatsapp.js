@@ -2,6 +2,9 @@ require('dotenv').config();
 const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const fs = require('fs');
 const path = require('path');
+const pino = require('pino');
+
+const logger = pino({ timestamp: () => ',"time":"' + new Date().toJSON() + '"' });
 
 const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
 const QUEUE_FILE = path.join(__dirname, 'message_queue.json');
@@ -41,7 +44,7 @@ async function connectToWhatsApp() {
         printQRInTerminal: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: true,
-        logger: require('@whiskeysockets/baileys').LoggerLevel.warn,
+        logger: logger,
     });
 
     sock.ev.on('creds.update', saveCreds);
