@@ -64,13 +64,13 @@ Issues = "https://github.com/TracySmithConsulting/freehand/issues"
 Changelog = "https://github.com/TracySmithConsulting/freehand/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
-include = ["core*"]
+include = ["core*", "freehand*"]
 
 [tool.setuptools]
 py-modules = ["cli", "server"]
 
 [tool.setuptools.package-data]
-freehand = ["static/*", "static/*/*", "bridge/*"]
+freehand = ["static/*", "static/*/*", "bridge/*", "bridge/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

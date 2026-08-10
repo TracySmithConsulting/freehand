@@ -7,6 +7,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import sys
+from importlib import resources as importlib_resources
 
 sys.path.insert(0, str(Path(__file__).parent))
 from core.database import init_db
@@ -71,7 +72,11 @@ DB_PATH = Path(__file__).parent / "agent.db"
 VAULT_DIR = Path(__file__).parent / "vault"
 SCRIBBLE_PATH = VAULT_DIR / "00_Scribble.md"
 
-app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+try:
+    static_path = importlib_resources.files("freehand").joinpath("static").as_posix()
+    app.mount("/static", StaticFiles(directory=static_path), name="static")
+except Exception:
+    pass
 app.include_router(oauth_router)
 
 
@@ -92,7 +97,11 @@ async def startup_event():
 
 @app.get("/")
 async def root():
-    return FileResponse(str(Path(__file__).parent / "static" / "index.html"))
+    try:
+        static_path = importlib_resources.files("freehand").joinpath("static", "index.html")
+        return FileResponse(str(static_path))
+    except Exception:
+        raise HTTPException(status_code=404, detail="Static files not found")
 
 
 @app.get("/health")
