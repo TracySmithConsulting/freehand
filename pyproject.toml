@@ -66,6 +66,9 @@ Changelog = "https://github.com/TracySmithConsulting/freehand/blob/main/CHANGELO
 [tool.setuptools.packages.find]
 include = ["core*"]
 
+[tool.setuptools]
+py-modules = ["cli", "server"]
+
 [tool.setuptools.package-data]
 freehand = ["static/*", "static/*/*", "bridge/*"]
 
