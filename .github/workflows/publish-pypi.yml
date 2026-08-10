@@ -26,4 +26,7 @@ jobs:
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: pip install twine && twine upload dist/*
+          DISABLE_ID_TOKEN: true
+        run: |
+          pip install twine
+          twine upload dist/*
