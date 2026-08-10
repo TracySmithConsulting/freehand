@@ -8,8 +8,6 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write  # Required for trusted publishing
     steps:
       - uses: actions/checkout@v4
 
@@ -25,5 +23,6 @@ jobs:
         run: python -m build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-        # Uses PyPI trusted publishing (OIDC) — no API token needed
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: pip install twine && twine upload dist/*
