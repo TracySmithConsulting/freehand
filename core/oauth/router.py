@@ -2,7 +2,7 @@ import json
 import secrets
 import sys
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -44,6 +44,92 @@ def _load_oauth_settings() -> dict:
 def _save_oauth_settings(data: dict) -> None:
     settings_path = Path(__file__).parent.parent.parent / "vault" / "settings.json"
     settings_path.write_text(json.dumps(data))
+
+
+# ── Pending-state TTL sweep ────────────────────────────────────────────
+# OAuth `state` parameters live in `settings.json` so they survive restarts.
+# If the callback never completes (user closes tab, OAuth provider errors,
+# network drops), the entry stays forever and the file grows unbounded.
+# This sweep drops entries that are too old OR if the cap is exceeded.
+
+PENDING_STATE_TTL_SECONDS = 3600      # 1 hour
+PENDING_STATE_HARD_CAP = 50           # if more than this, drop oldest first
+
+
+def _parse_iso(s: str):
+    """Best-effort ISO-8601 parser. Returns timezone-aware UTC datetime or None.
+
+    Tolerates:
+    - Trailing Z (UTC)
+    - Explicit offsets (+00:00, -05:00, etc.)
+    - Naive timestamps (no tzinfo) — assumed to be UTC. This is needed
+      for backwards-compat with entries written before C3 was deployed,
+      which used `datetime.utcnow()` (naive).
+    - Empty strings and garbage (returns None).
+    """
+    if not s:
+        return None
+    try:
+        # Handle trailing Z
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            # Naive datetime — assume UTC (legacy data from utcnow() calls)
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, AttributeError):
+        return None
+
+
+def _sweep_stale_pending_states(settings: dict) -> bool:
+    """In-place sweep of `settings["oauth"]["pending_states"]`.
+
+    Drops entries older than PENDING_STATE_TTL_SECONDS, and if more than
+    PENDING_STATE_HARD_CAP remain, drops the oldest first.
+
+    Returns True if any entries were removed (settings dict mutated).
+    Returns False if nothing changed.
+
+    NOTE: Does not persist. Caller decides whether to save.
+    """
+    pending = settings.get("oauth", {}).get("pending_states")
+    if not pending:
+        return False
+
+    now = datetime.now(timezone.utc)
+    mutated = False
+
+    # 1) Drop expired entries
+    expired = []
+    for state_key, meta in pending.items():
+        created = _parse_iso(meta.get("created_at", "")) if isinstance(meta, dict) else None
+        if created is None:
+            # No timestamp ⇒ treat as expired (safe default)
+            expired.append(state_key)
+            continue
+        age = (now - created).total_seconds()
+        if age > PENDING_STATE_TTL_SECONDS:
+            expired.append(state_key)
+
+    for k in expired:
+        pending.pop(k, None)
+        mutated = True
+
+    # 2) If still over the cap, drop oldest first
+    if len(pending) > PENDING_STATE_HARD_CAP:
+        # Sort by created_at ascending; drop the oldest until under cap.
+        sortable = []
+        fallback_ts = datetime.min.replace(tzinfo=timezone.utc)
+        for state_key, meta in pending.items():
+            created = _parse_iso(meta.get("created_at", "")) if isinstance(meta, dict) else None
+            sortable.append((created or fallback_ts, state_key))
+        sortable.sort()
+        # Drop the oldest len - cap entries
+        to_drop = len(pending) - PENDING_STATE_HARD_CAP
+        for _, state_key in sortable[:to_drop]:
+            pending.pop(state_key, None)
+            mutated = True
+
+    return mutated
 
 
 def _get_redirect_uri(service: str, request: Request) -> str:
@@ -106,10 +192,17 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
         settings["oauth"] = {}
     if "pending_states" not in settings["oauth"]:
         settings["oauth"]["pending_states"] = {}
+
+    # C3 fix: sweep stale entries before adding a new one. Prevents
+    # unbounded growth of settings.json when callbacks never complete.
+    if _sweep_stale_pending_states(settings):
+        # Sweep removed some entries — persist the cleanup.
+        _save_oauth_settings(settings)
+
     settings["oauth"]["pending_states"][state] = {
         "service": service,
         "label": label,
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     _save_oauth_settings(settings)
 
@@ -143,9 +236,28 @@ async def handle_callback(
 
     settings = _load_oauth_settings()
     pending = settings.get("oauth", {}).get("pending_states", {})
+
+    # C3 fix: sweep stale entries before lookup. If sweep mutated settings,
+    # persist and reload pending so the lookup below sees the cleaned dict.
+    if _sweep_stale_pending_states(settings):
+        _save_oauth_settings(settings)
+        pending = settings.get("oauth", {}).get("pending_states", {})
+
     pending_state = pending.get(state)
     if not pending_state:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+
+    # C3 fix: enforce TTL on the looked-up state even if sweep missed it
+    # (e.g. clock skew between sweep and lookup). Reject states older than
+    # the TTL — they shouldn't be honoured.
+    created = _parse_iso(pending_state.get("created_at", ""))
+    if created is not None:
+        age = (datetime.now(timezone.utc) - created).total_seconds()
+        if age > PENDING_STATE_TTL_SECONDS:
+            # Drop and reject
+            pending.pop(state, None)
+            _save_oauth_settings(settings)
+            raise HTTPException(status_code=400, detail="State parameter expired")
 
     service_from_state = pending_state.get("service")
     label = pending_state.get("label", "default")

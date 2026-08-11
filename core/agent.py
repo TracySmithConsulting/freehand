@@ -233,8 +233,14 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         {"role": "user", "content": command},
     ]
 
-    tool_results = []
     final_response = {"text": "", "tools_used": [], "error": None}
+
+    # ── Loop-safety: track recent tool calls to detect infinite retries ──
+    # If the LLM keeps calling the same tool with the same args, break early.
+    # Cap: 2 consecutive identical calls ⇒ likely stuck; 3 ⇒ break with explanation.
+    recent_call_keys: List[str] = []
+    DUPLICATE_BREAK_THRESHOLD = 3
+    last_tool_call_key: Optional[str] = None
 
     for turn in range(max_turns):
         llm_resp = await call_llm(messages, tools=tools)
@@ -253,13 +259,28 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
 
-        # Check permission for write tools
-        write_tools = {
-            "write_docx", "send_email", "create_meeting", "post_to_facebook",
-            "post_to_instagram", "create_github_issue", "create_github_pull_request",
-            "schedule_zoom_meeting",
-        }
-        if tool_name in write_tools and tier != PermissionTier.GOD_MODE:
+        # ── Detect stuck loops: same tool + same args called repeatedly ──
+        call_key = f"{tool_name}|{json.dumps(tool_args, sort_keys=True)}"
+        if call_key == last_tool_call_key:
+            recent_call_keys.append(call_key)
+        else:
+            recent_call_keys = [call_key]
+            last_tool_call_key = call_key
+
+        if len(recent_call_keys) >= DUPLICATE_BREAK_THRESHOLD:
+            final_response["error"] = (
+                f"Agent loop detected: '{tool_name}' called {DUPLICATE_BREAK_THRESHOLD} times "
+                f"with identical arguments. Aborting to avoid wasted tokens."
+            )
+            break
+
+        # ── Permission check via central registry (C2 fix) ──────────────
+        # Unknown tools are treated as 'unknown' permission — fail closed,
+        # requiring approval rather than silently bypassing the check.
+        from core.agent_config import get_tool_permission
+        permission = get_tool_permission(tool_name)
+
+        if permission == "write" and tier != PermissionTier.GOD_MODE:
             result = intercept_action(
                 "oauth_access",
                 f"Tool call: {tool_name}",
@@ -280,7 +301,21 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                 tool_result = await _run_tool(tool_name, tool_args)
                 tool_result["role"] = "tool"
                 tool_result["tool_call_id"] = tool_call["id"]
+        elif permission == "unknown" and tier != PermissionTier.GOD_MODE:
+            # Unknown tool — don't execute; tell the LLM the tool is not registered.
+            tool_result = {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": json.dumps({
+                    "error": (
+                        f"Tool '{tool_name}' is not registered in the permission "
+                        f"registry. Refusing to execute. Available tools are listed "
+                        f"in the system prompt."
+                    ),
+                }),
+            }
         else:
+            # 'read' permission or GOD_MODE — execute freely
             tool_result = await _run_tool(tool_name, tool_args)
             tool_result["role"] = "tool"
             tool_result["tool_call_id"] = tool_call["id"]

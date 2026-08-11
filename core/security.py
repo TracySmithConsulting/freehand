@@ -188,6 +188,35 @@ def _send_external_approval(
         _send_slack_approval(action_type, description, approval_id)
 
 
+def _get_approval_base_url() -> str:
+    """Resolve the base URL used in approval-button links.
+
+    Reads `settings["public_base_url"]`. Falls back to
+    `http://localhost:8000` if unset, but logs a warning so the user
+    notices (Tailscale / reverse-proxy / HTTPS deployments MUST set this
+    explicitly, or Slack button clicks will fail).
+
+    Returns the URL with no trailing slash.
+    """
+    settings = _load_settings()
+    base = settings.get("public_base_url", "").strip().rstrip("/")
+    if base:
+        return base
+    # Fallback with warning. Single warning per process is enough.
+    if not _get_approval_base_url._warned:
+        print(
+            "[WARN] public_base_url not set in settings.json — Slack approval "
+            "buttons will link to http://localhost:8000. If you are running "
+            "FreeHand on Tailscale, behind a reverse proxy, or over HTTPS, "
+            "set settings.public_base_url to your real external URL "
+            "(e.g. 'https://freehand.tail123.ts.net')."
+        )
+        _get_approval_base_url._warned = True
+    return "http://localhost:8000"
+
+_get_approval_base_url._warned = False
+
+
 def _send_telegram_approval(action_type: str, description: str, approval_id: int) -> None:
     settings = _load_settings()
     bot_token = settings.get("telegram_bot_token", "")
@@ -219,6 +248,12 @@ def _send_slack_approval(action_type: str, description: str, approval_id: int) -
         return
     if not _HAS_HTTP:
         return
+
+    # C5 fix: derive base URL from settings.public_base_url (with fallback).
+    # Slack buttons must be clickable from the user's browser; hardcoding
+    # localhost breaks any non-local deployment.
+    base = _get_approval_base_url()
+
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": f"Approval Request #{approval_id}"}},
         {"type": "section", "text": {"type": "mrkdwn", "text": f"*Action:* {action_type}\n*Description:* {description}"}},
@@ -228,13 +263,13 @@ def _send_slack_approval(action_type: str, description: str, approval_id: int) -
                 {
                     "type": "button",
                     "text": {"type": "plain_text", "text": "Approve"},
-                    "url": f"http://localhost:8000/api/approvals/{approval_id}/approve",
+                    "url": f"{base}/api/approvals/{approval_id}/approve",
                     "style": "primary",
                 },
                 {
                     "type": "button",
                     "text": {"type": "plain_text", "text": "Deny"},
-                    "url": f"http://localhost:8000/api/approvals/{approval_id}/deny",
+                    "url": f"{base}/api/approvals/{approval_id}/deny",
                     "style": "danger",
                 },
             ],

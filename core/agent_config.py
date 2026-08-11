@@ -283,6 +283,59 @@ def list_available_tools() -> List[Dict]:
     return tools
 
 
+# ── Tool permission registry ─────────────────────────────────────────
+# Centralised source of truth for which tools are read-only vs write.
+# Permission classes:
+#   "read"  — does not change external state; allowed in any tier.
+#   "write" — mutates external state (filesystem, OAuth-protected APIs).
+#             Requires permission check (intercept_action) unless tier == GOD_MODE.
+# Keep this in sync with `list_available_tools()` AND `execute_tool()`.
+TOOL_REGISTRY: Dict[str, str] = {
+    # Office
+    "read_docx":          "read",
+    "write_docx":         "write",
+    "read_xlsx":          "read",
+    "read_pptx":          "read",
+    # Browser
+    "get_axtree":         "read",
+    "extract_text":       "read",
+    "take_screenshot":    "read",
+    # Email / calendar / sheets (read-only surface exposed here)
+    "read_email":         "read",
+    "list_calendar_events": "read",
+    "read_sheets":        "read",
+    "read_sheet_range":   "read",
+    # GitHub (read)
+    "list_github_repos":  "read",
+    "list_github_issues": "read",
+    # GitHub (write)
+    "create_github_issue":     "write",
+    "create_github_pull_request": "write",
+    # Zoom
+    "list_zoom_meetings":     "read",
+    "list_zoom_recordings":   "read",
+    "schedule_zoom_meeting":  "write",
+    # Meta
+    "list_facebook_pages":    "read",
+    "post_to_facebook":       "write",
+    "list_instagram_accounts":"read",
+    "post_to_instagram":      "write",
+    # Meta-utility
+    "list_connections":       "read",
+    # Memory
+    "search_memory":          "read",
+}
+
+
+def get_tool_permission(name: str) -> str:
+    """Return the permission class for a tool: 'read' | 'write' | 'unknown'.
+
+    Tools not in the registry are treated as 'unknown' so the agent loop
+    fails closed (request approval) rather than allowing unsanctioned writes.
+    """
+    return TOOL_REGISTRY.get(name, "unknown")
+
+
 def build_system_prompt() -> str:
     settings = _load_settings()
     tier = settings.get("tier", "semi_autonomous")
