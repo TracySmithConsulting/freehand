@@ -14,7 +14,7 @@ freehand serve
 
 - **🔌 7 OAuth connectors** — Gmail, Outlook, Zoom, Facebook, Instagram, GitHub, custom email (IMAP/SMTP)
 - **🔗 Cross-agent memory import** — automatically detects and imports memories from Hermes Agent and OpenClaw
-- **🛠 17 agent tools** — email, calendar, sheets, GitHub, Zoom, browser automation, document processing
+- **🛠 24 agent tools** — 6 write (file writes, OAuth-protected posts/PRs/issues/meetings) + 18 read (email, calendar, sheets, GitHub, Zoom, browser automation, document processing, memory search)
 - **🔒 Permission tiers** — Autonomous, Semi-Autonomous, God Mode with approval workflows
 - **💬 Remote gateways** — Telegram, Slack, WhatsApp
 - **🧠 FTS5 memory search** — full-text search across all vault notes

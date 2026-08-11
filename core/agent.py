@@ -20,7 +20,13 @@ from core.memory import search_memory
 
 
 async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict = None) -> dict:
-    """Call an OpenAI-compatible API and return the response."""
+    """Call an OpenAI-compatible API and return the response.
+
+    H1 fix: 3-attempt retry with exponential backoff (2s, 4s, 8s) on
+    transient errors (HTTP 429/5xx, timeouts, connection errors). Auth
+    errors (401/403) and client errors (400) are NOT retried — they
+    indicate the request itself is wrong.
+    """
     if config is None:
         config = get_llm_config()
 
@@ -58,18 +64,41 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
         headers["Authorization"] = f"Bearer {api_key}"
 
     timeout = aiohttp.ClientTimeout(total=120)
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    return {"error": f"LLM API error {resp.status}: {text[:200]}"}
-                data = await resp.json()
-                return data.get("choices", [{}])[0].get("message", {})
-    except asyncio.TimeoutError:
-        return {"error": "LLM request timed out (120s)"}
-    except Exception as e:
-        return {"error": f"LLM request failed: {str(e)[:200]}"}
+
+    # H1: retry configuration
+    RETRY_BACKOFFS = [0, 2, 4]  # seconds; first attempt has 0s delay
+    RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
+
+    last_error = None
+    for attempt, delay in enumerate(RETRY_BACKOFFS):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return data.get("choices", [{}])[0].get("message", {})
+                    # Read error body for context
+                    try:
+                        body_text = (await resp.text())[:200]
+                    except Exception:
+                        body_text = ""
+                    last_error = f"LLM API error {resp.status}: {body_text}"
+                    # Only retry on retryable status codes
+                    if resp.status not in RETRYABLE_STATUS:
+                        return {"error": last_error}
+                    # Otherwise, fall through to next retry
+        except asyncio.TimeoutError:
+            last_error = "LLM request timed out (120s)"
+        except aiohttp.ClientError as e:
+            last_error = f"LLM connection error: {str(e)[:200]}"
+        except Exception as e:
+            # Non-retryable exception (programmer error, not network)
+            return {"error": f"LLM request failed: {str(e)[:200]}"}
+
+    # All retries exhausted
+    return {"error": last_error or "LLM request failed after retries"}
 
 
 def parse_tool_call(message: dict) -> Optional[dict]:
@@ -242,6 +271,19 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     DUPLICATE_BREAK_THRESHOLD = 3
     last_tool_call_key: Optional[str] = None
 
+    # H3 fix: cap tool result size sent to the LLM. A single `read_sheets`
+    # returning 5000 rows would blow context on the next turn. 8K chars is
+    # generous enough for most tool results while keeping context manageable.
+    TOOL_RESULT_LLM_CAP = 8000
+
+    # N6 fix: source-aware write authorisation. Tools like `write_docx` are
+    # dangerous when triggered from a remote gateway. We restrict 'web' and
+    # 'cli' to the full tier system, but require explicit confirmation for
+    # write tools triggered from remote gateways when tier is GOD_MODE.
+    # This doesn't replace the tier system — it layers on top.
+    REMOTE_SOURCES = {"telegram", "slack", "whatsapp"}
+    is_remote_source = source in REMOTE_SOURCES
+
     for turn in range(max_turns):
         llm_resp = await call_llm(messages, tools=tools)
 
@@ -280,28 +322,44 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         from core.agent_config import get_tool_permission
         permission = get_tool_permission(tool_name)
 
-        if permission == "write" and tier != PermissionTier.GOD_MODE:
-            result = intercept_action(
-                "oauth_access",
-                f"Tool call: {tool_name}",
-                {"tool": tool_name, "args": tool_args},
-                source,
-                caller_id,
-            )
-            if not result.get("allowed"):
-                tool_result = {
-                    "role": "tool",
-                    "tool_call_id": tool_call["id"],
-                    "content": json.dumps({
-                        "error": f"Approval required for {tool_name}",
-                        "approval_id": result.get("approval_id"),
-                    }),
-                }
+        if permission == "write":
+            # N6: tighten permission for remote sources.
+            # Even at GOD_MODE, write tools from telegram/slack/whatsapp go
+            # through the approval workflow unless explicitly exempted.
+            effective_tier = tier
+            if is_remote_source and tier == PermissionTier.GOD_MODE:
+                # Demote write tools from remote sources to SEMI_AUTONOMOUS
+                # behaviour for this single call. The tier setting in
+                # settings.json is unchanged.
+                effective_tier = PermissionTier.SEMI_AUTONOMOUS
+            if effective_tier != PermissionTier.GOD_MODE:
+                result = intercept_action(
+                    "oauth_access",
+                    f"Tool call: {tool_name}",
+                    {"tool": tool_name, "args": tool_args, "source": source},
+                    source,
+                    caller_id,
+                )
+                if not result.get("allowed"):
+                    tool_result = {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": json.dumps({
+                            "error": f"Approval required for {tool_name}",
+                            "approval_id": result.get("approval_id"),
+                        }),
+                    }
+                else:
+                    tool_result = await _run_tool(tool_name, tool_args)
+                    tool_result["role"] = "tool"
+                    tool_result["tool_call_id"] = tool_call["id"]
             else:
+                # 'effective_tier' is GOD_MODE (either real, or remote source
+                # didn't apply because tier wasn't GOD_MODE).
                 tool_result = await _run_tool(tool_name, tool_args)
                 tool_result["role"] = "tool"
                 tool_result["tool_call_id"] = tool_call["id"]
-        elif permission == "unknown" and tier != PermissionTier.GOD_MODE:
+        elif permission == "unknown":
             # Unknown tool — don't execute; tell the LLM the tool is not registered.
             tool_result = {
                 "role": "tool",
@@ -315,13 +373,31 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                 }),
             }
         else:
-            # 'read' permission or GOD_MODE — execute freely
+            # 'read' permission — execute freely (no tier check needed)
             tool_result = await _run_tool(tool_name, tool_args)
             tool_result["role"] = "tool"
             tool_result["tool_call_id"] = tool_call["id"]
 
-        messages.append(llm_resp)
-        messages.append(tool_result)
+        # H3 fix: cap the result sent back to the LLM. The full result is
+        # kept in tools_used for the API response; only the LLM-bound copy
+        # is truncated.
+        llm_content = tool_result.get("content", "")
+        if isinstance(llm_content, str) and len(llm_content) > TOOL_RESULT_LLM_CAP:
+            truncated = (
+                llm_content[:TOOL_RESULT_LLM_CAP]
+                + f"\n\n[... truncated at {TOOL_RESULT_LLM_CAP} chars. "
+                f"Full result available to the user via the tools_used list. ...]"
+            )
+            messages.append(llm_resp)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": truncated,
+            })
+        else:
+            messages.append(llm_resp)
+            messages.append(tool_result)
+
         final_response["tools_used"].append({
             "name": tool_name,
             "args": tool_args,

@@ -2,7 +2,7 @@ import json
 import re
 import sqlite3
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 try:
@@ -78,6 +78,33 @@ def _slugify(text: str) -> str:
     text = re.sub(r"[^a-zA-Z0-9\s-]", "", text)
     text = text.strip().replace(" ", "-").lower()
     return text[:50] or "untitled"
+
+
+def _safe_thread_path(slug: str) -> Optional[Path]:
+    """N4 fix: ensure slug cannot escape THREADS_DIR via traversal.
+
+    Rejects:
+    - Empty slugs
+    - Slugs containing '..', '/', '\\', or other path separators after sanitisation
+    - Slugs whose resolved path is not under THREADS_DIR
+
+    Returns the safe absolute path, or None if unsafe.
+    """
+    if not slug or not slug.strip():
+        return None
+    if ".." in slug or "/" in slug or "\\" in slug:
+        return None
+    candidate = (THREADS_DIR / (slug + ".md")).resolve()
+    threads_root = THREADS_DIR.resolve()
+    try:
+        # Python 3.9+: is_relative_to
+        if not candidate.is_relative_to(threads_root):
+            return None
+    except AttributeError:
+        # Fallback for older Python
+        if threads_root not in candidate.parents:
+            return None
+    return candidate
 
 
 def _read_scribble() -> str:
@@ -172,10 +199,15 @@ def process_scribble() -> dict:
             if raw_topic.lower() in ("general", "untitled", ""):
                 raw_topic = entry_text
             topic_slug = _slugify(raw_topic)
-            thread_path = THREADS_DIR / (topic_slug + ".md")
+            # N4 fix: validate the path is inside THREADS_DIR
+            thread_path = _safe_thread_path(topic_slug)
+            if thread_path is None:
+                # Skip this entry rather than risk writing outside the vault.
+                continue
             THREADS_DIR.mkdir(parents=True, exist_ok=True)
 
-            timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+            # N8 fix: aware UTC datetime
+            timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             new_block = f"\n### {timestamp}\n- {entry_text}\n"
 
             if thread_path.exists():
@@ -196,7 +228,8 @@ def process_scribble() -> dict:
         processed_indices.add(idx)
 
     _write_scribble("\n".join(lines))
-    now_iso = datetime.utcnow().isoformat()
+    # N8 fix: aware UTC datetime
+    now_iso = datetime.now(timezone.utc).isoformat()
     _save_sweep_state({
         "last_sweep": now_iso,
         "processed_lines": sorted(processed_indices),

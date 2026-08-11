@@ -1,9 +1,10 @@
 import json
+import secrets as _secrets
 import sqlite3
 import asyncio
 from pathlib import Path
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import sys
@@ -72,6 +73,69 @@ DB_PATH = Path(__file__).parent / "agent.db"
 VAULT_DIR = Path(__file__).parent / "vault"
 SCRIBBLE_PATH = VAULT_DIR / "00_Scribble.md"
 
+
+# ── API-key auth (N1 fix) ─────────────────────────────────────────────
+# Every /api/* and /api/tools/* endpoint requires an X-API-Key header
+# matching settings["api_key"]. On first run, an api_key is generated
+# and persisted to vault/settings.json; the user is told via stderr.
+#
+# Exceptions (no auth required):
+#   GET  /                          - serves the static web UI
+#   GET  /health                    - liveness probe
+#   POST /api/gateway/telegram      - bot-token-based auth + allow_from
+#   POST /api/gateway/slack         - HMAC signature + allow_from
+#   POST /api/gateway/whatsapp      - bridge-secret header + allow_from
+#
+# This is "single shared secret" auth — sufficient for a local-first
+# single-user agent. NOT suitable for multi-user or public exposure.
+
+def _load_settings_for_auth() -> dict:
+    settings_path = VAULT_DIR / "settings.json"
+    if settings_path.exists():
+        try:
+            return json.loads(settings_path.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_settings_for_auth(data: dict) -> None:
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
+    (VAULT_DIR / "settings.json").write_text(json.dumps(data))
+
+
+def get_or_create_api_key() -> str:
+    """Return the current API key, generating one if missing."""
+    settings = _load_settings_for_auth()
+    key = settings.get("api_key", "").strip()
+    if not key:
+        # 32-byte URL-safe token; ~43 chars. Compared in constant time below.
+        key = _secrets.token_urlsafe(32)
+        settings["api_key"] = key
+        _save_settings_for_auth(settings)
+        print(
+            "[FreeHand] Generated new api_key (settings.json → api_key).\n"
+            "           Pass it as `X-API-Key: <key>` header on all /api/* requests.\n"
+            "           Read it: cat vault/settings.json | jq -r .api_key"
+        )
+    return key
+
+
+async def require_api_key(request: Request) -> None:
+    """FastAPI dependency: enforce X-API-Key on protected endpoints."""
+    # Allow health, root, and gateway webhooks (each has its own auth)
+    path = request.url.path
+    if path in ("/", "/health"):
+        return
+    if path.startswith("/api/gateway/"):
+        return  # Telegram/Slack/WhatsApp each have their own auth mechanism
+
+    expected = get_or_create_api_key()
+    provided = request.headers.get("X-API-Key", "").strip()
+    # Constant-time compare to avoid timing leaks
+    if not provided or not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+
 try:
     static_path = importlib_resources.files("freehand").joinpath("static").as_posix()
     app.mount("/static", StaticFiles(directory=static_path), name="static")
@@ -109,7 +173,7 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
 
 
-@app.get("/api/v1/status")
+@app.get("/api/v1/status", dependencies=[Depends(require_api_key)])
 async def api_status():
     return {
         "service": "freehand",
@@ -121,14 +185,14 @@ async def api_status():
     }
 
 
-@app.get("/api/scribble")
+@app.get("/api/scribble", dependencies=[Depends(require_api_key)])
 async def get_scribble():
     if not SCRIBBLE_PATH.exists():
         return {"content": ""}
     return {"content": SCRIBBLE_PATH.read_text()}
 
 
-@app.post("/api/scribble")
+@app.post("/api/scribble", dependencies=[Depends(require_api_key)])
 async def save_scribble(body: dict):
     content = body.get("content", "")
     if not content.strip():
@@ -137,7 +201,7 @@ async def save_scribble(body: dict):
     return {"status": "saved", "path": str(SCRIBBLE_PATH)}
 
 
-@app.get("/api/tasks")
+@app.get("/api/tasks", dependencies=[Depends(require_api_key)])
 async def get_tasks():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -148,7 +212,7 @@ async def get_tasks():
     return tasks
 
 
-@app.post("/api/tasks")
+@app.post("/api/tasks", dependencies=[Depends(require_api_key)])
 async def create_task(body: dict):
     title = body.get("title", "").strip()
     cron_schedule = body.get("cron_schedule", "").strip()
@@ -165,7 +229,7 @@ async def create_task(body: dict):
     return {"id": task_id, "title": title, "cron_schedule": cron_schedule, "status": "pending"}
 
 
-@app.delete("/api/tasks/{task_id}")
+@app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_api_key)])
 async def delete_task(task_id: int):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
@@ -176,12 +240,12 @@ async def delete_task(task_id: int):
     return {"status": "deleted"}
 
 
-@app.get("/api/approvals")
+@app.get("/api/approvals", dependencies=[Depends(require_api_key)])
 async def api_get_approvals():
     return get_pending_approvals()
 
 
-@app.post("/api/approvals/{approval_id}/approve")
+@app.post("/api/approvals/{approval_id}/approve", dependencies=[Depends(require_api_key)])
 async def api_approve(approval_id: int):
     try:
         result = handle_approval(approval_id, "approve")
@@ -190,7 +254,7 @@ async def api_approve(approval_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/api/approvals/{approval_id}/deny")
+@app.post("/api/approvals/{approval_id}/deny", dependencies=[Depends(require_api_key)])
 async def api_deny(approval_id: int):
     try:
         result = handle_approval(approval_id, "deny")
@@ -199,13 +263,13 @@ async def api_deny(approval_id: int):
         raise HTTPException(status_code=404, detail=str(e))
 
 
-@app.post("/api/approvals/clear")
+@app.post("/api/approvals/clear", dependencies=[Depends(require_api_key)])
 async def api_clear_approvals():
     count = clear_pending_approvals()
     return {"cleared": count}
 
 
-@app.get("/api/approvals/stream")
+@app.get("/api/approvals/stream", dependencies=[Depends(require_api_key)])
 async def approval_stream(request: Request):
     queue: list = []
 
@@ -236,12 +300,12 @@ async def approval_stream(request: Request):
     )
 
 
-@app.get("/api/security/tier")
+@app.get("/api/security/tier", dependencies=[Depends(require_api_key)])
 async def get_tier():
     return {"tier": get_current_tier().value}
 
 
-@app.post("/api/security/tier")
+@app.post("/api/security/tier", dependencies=[Depends(require_api_key)])
 async def set_tier_endpoint(body: dict):
     tier = body.get("tier", "").strip()
     try:
@@ -251,7 +315,7 @@ async def set_tier_endpoint(body: dict):
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/api/security/check")
+@app.post("/api/security/check", dependencies=[Depends(require_api_key)])
 async def security_check(body: dict):
     action_type = body.get("action_type", "").strip()
     description = body.get("description", "").strip()
@@ -266,7 +330,59 @@ async def security_check(body: dict):
     return result
 
 
-@app.get("/api/settings")
+# ── N2 fix: deep-merge settings instead of overwriting whole file ──
+# The old endpoint let any caller replace the entire settings.json,
+# which would silently drop keys that other parts of the system rely on.
+# Now: known keys are merged at the top level; unknown keys are rejected.
+
+SETTINGS_ALLOWED_KEYS = frozenset({
+    "api_key", "omniroute", "llm", "tier", "oauth", "telegram",
+    "telegram_bot_token", "telegram_chat_id", "telegram_chat_whitelist",
+    "slack", "slack_bot_token", "slack_webhook_url", "slack_signing_secret",
+    "slack_allow_from", "whatsapp", "whatsapp_enabled", "whatsapp_pairing_phone",
+    "bridge_secret", "whatsapp_allow_from", "public_base_url",
+    "sweep_interval", "allowed_browser_domains", "user",
+})
+
+
+def _merge_settings(existing: dict, updates: dict) -> tuple:
+    """Recursive deep-merge of settings, bounded to known keys.
+
+    For each key in `updates`:
+    - If not in SETTINGS_ALLOWED_KEYS → reject.
+    - If both existing and updates values are dicts → recursive merge.
+    - Otherwise → replace.
+
+    Returns (merged, rejected_keys).
+
+    Three-level deep merge (oauth.providers.google) is supported because
+    the recursion handles arbitrary nesting.
+    """
+    merged = dict(existing)
+    rejected = []
+    for k, v in updates.items():
+        if k not in SETTINGS_ALLOWED_KEYS:
+            rejected.append(k)
+            continue
+        if isinstance(v, dict) and isinstance(merged.get(k), dict):
+            merged[k] = _deep_merge_dicts(merged[k], v)
+        else:
+            merged[k] = v
+    return merged, rejected
+
+
+def _deep_merge_dicts(existing: dict, updates: dict) -> dict:
+    """Recursive deep-merge of two dicts. Lists are replaced, not merged."""
+    out = dict(existing)
+    for k, v in updates.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge_dicts(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+@app.get("/api/settings", dependencies=[Depends(require_api_key)])
 async def get_settings():
     settings_path = Path(__file__).parent / "vault" / "settings.json"
     if settings_path.exists():
@@ -274,14 +390,21 @@ async def get_settings():
     return {"api_key": "", "omniroute": ""}
 
 
-@app.post("/api/settings")
+@app.post("/api/settings", dependencies=[Depends(require_api_key)])
 async def save_settings(body: dict):
     settings_path = Path(__file__).parent / "vault" / "settings.json"
-    settings_path.write_text(json.dumps(body))
-    return {"status": "saved"}
+    existing = {}
+    if settings_path.exists():
+        try:
+            existing = json.loads(settings_path.read_text())
+        except Exception:
+            pass
+    merged, rejected = _merge_settings(existing, body)
+    settings_path.write_text(json.dumps(merged))
+    return {"status": "saved", "rejected": rejected}
 
 
-@app.post("/api/agent/command")
+@app.post("/api/agent/command", dependencies=[Depends(require_api_key)])
 async def agent_command(body: dict):
     command = body.get("command", "").strip()
     source = body.get("source", "")
@@ -289,11 +412,16 @@ async def agent_command(body: dict):
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
 
-    # Log the command
+    # N3 fix: truncate command before storing. Full text goes to the agent
+    # loop but only the first 200 chars land in the memories table. Sensitive
+    # secrets in commands are not persisted indefinitely.
+    import hashlib
+    cmd_truncated = command[:200]
+    cmd_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()[:16]
     conn = sqlite3.connect(DB_PATH)
     conn.execute(
         "INSERT INTO memories (path, title, content) VALUES (?, ?, ?)",
-        ("/agent/command", "Command: " + command[:50], command)
+        ("/agent/command", f"Command ({cmd_hash}): " + cmd_truncated[:50], cmd_truncated)
     )
     conn.commit()
     conn.close()
@@ -304,13 +432,13 @@ async def agent_command(body: dict):
     return result
 
 
-@app.post("/api/memory/sync")
+@app.post("/api/memory/sync", dependencies=[Depends(require_api_key)])
 async def memory_sync():
     count = sync_vault_to_sqlite()
     return {"status": "synced", "files": count}
 
 
-@app.get("/api/memory/search")
+@app.get("/api/memory/search", dependencies=[Depends(require_api_key)])
 async def memory_search(q: str = "", limit: int = 3):
     if not q.strip():
         return []
@@ -318,19 +446,24 @@ async def memory_search(q: str = "", limit: int = 3):
     return results
 
 
-@app.get("/api/skills")
+@app.get("/api/skills", dependencies=[Depends(require_api_key)])
 async def list_skills():
     skills = parse_skills()
     return skills
 
 
-@app.post("/api/sweep")
+@app.post("/api/sweep", dependencies=[Depends(require_api_key)])
 async def api_sweep():
     result = process_scribble()
     return result
 
 
 # ── Gateway / Remote Chat Endpoints ────────────────────────────────────────────
+#
+# Gateway webhooks use their own auth mechanism (bot tokens, HMAC signatures,
+# bridge secrets). They DO NOT require X-API-Key — see require_api_key()
+# exception list above. Inside each handler we enforce allow_from as the
+# second layer (see core/gateway.py).
 
 @app.post("/api/gateway/telegram")
 async def telegram_webhook(request: Request):
@@ -355,8 +488,22 @@ async def slack_webhook(request: Request):
     return JSONResponse(content=result, status_code=status)
 
 
+# N12c: WhatsApp webhook requires X-Bridge-Secret matching settings.bridge_secret.
+# The bridge (separate Node.js process) must send this header. If unset, the
+# endpoint is closed entirely (returns 503).
 @app.post("/api/gateway/whatsapp")
 async def whatsapp_webhook(request: Request):
+    settings = _load_settings_for_auth()
+    expected = settings.get("bridge_secret", "").strip()
+    if not expected:
+        return JSONResponse(
+            {"error": "bridge_secret not configured in settings.json"},
+            status_code=503,
+        )
+    provided = request.headers.get("X-Bridge-Secret", "").strip()
+    if not provided or not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing X-Bridge-Secret")
+
     try:
         data = await request.json()
     except Exception:
@@ -369,18 +516,18 @@ async def whatsapp_webhook(request: Request):
     return result
 
 
-@app.get("/api/gateway/status")
+@app.get("/api/gateway/status", dependencies=[Depends(require_api_key)])
 async def gateway_status():
     return get_gateway_status()
 
 
-@app.post("/api/gateway/settings")
+@app.post("/api/gateway/settings", dependencies=[Depends(require_api_key)])
 async def gateway_settings(body: dict):
     result = update_gateway_settings(body)
     return result
 
 
-@app.post("/api/gateway/whatsapp/pair")
+@app.post("/api/gateway/whatsapp/pair", dependencies=[Depends(require_api_key)])
 async def whatsapp_pair(body: dict):
     phone = body.get("phone", "").strip()
     if not phone:
@@ -391,7 +538,7 @@ async def whatsapp_pair(body: dict):
 
 # ── Tool Endpoints ─────────────────────────────────────────────────────────────
 
-@app.get("/api/tools/office/read/docx")
+@app.get("/api/tools/office/read/docx", dependencies=[Depends(require_api_key)])
 async def tool_read_docx(path: str):
     result = read_docx(path)
     if "error" in result:
@@ -399,7 +546,7 @@ async def tool_read_docx(path: str):
     return result
 
 
-@app.post("/api/tools/office/write/docx")
+@app.post("/api/tools/office/write/docx", dependencies=[Depends(require_api_key)])
 async def tool_write_docx(body: dict):
     path = body.get("path", "").strip()
     title = body.get("title", "Untitled").strip()
@@ -412,7 +559,7 @@ async def tool_write_docx(body: dict):
     return result
 
 
-@app.get("/api/tools/office/read/xlsx")
+@app.get("/api/tools/office/read/xlsx", dependencies=[Depends(require_api_key)])
 async def tool_read_xlsx(path: str):
     result = read_xlsx(path)
     if "error" in result:
@@ -420,7 +567,7 @@ async def tool_read_xlsx(path: str):
     return result
 
 
-@app.post("/api/tools/office/write/xlsx")
+@app.post("/api/tools/office/write/xlsx", dependencies=[Depends(require_api_key)])
 async def tool_write_xlsx(body: dict):
     path = body.get("path", "").strip()
     data = body.get("data", {})
@@ -432,7 +579,7 @@ async def tool_write_xlsx(body: dict):
     return result
 
 
-@app.get("/api/tools/office/read/pptx")
+@app.get("/api/tools/office/read/pptx", dependencies=[Depends(require_api_key)])
 async def tool_read_pptx(path: str):
     result = read_pptx(path)
     if "error" in result:
@@ -440,7 +587,7 @@ async def tool_read_pptx(path: str):
     return result
 
 
-@app.post("/api/tools/office/write/pptx")
+@app.post("/api/tools/office/write/pptx", dependencies=[Depends(require_api_key)])
 async def tool_write_pptx(body: dict):
     path = body.get("path", "").strip()
     slides = body.get("slides", [])
@@ -452,7 +599,7 @@ async def tool_write_pptx(body: dict):
     return result
 
 
-@app.post("/api/tools/browser/axtree")
+@app.post("/api/tools/browser/axtree", dependencies=[Depends(require_api_key)])
 async def tool_browser_axtree(body: dict):
     url = body.get("url", "").strip()
     mode = body.get("mode", "headless")
@@ -464,7 +611,7 @@ async def tool_browser_axtree(body: dict):
     return result
 
 
-@app.post("/api/tools/browser/text")
+@app.post("/api/tools/browser/text", dependencies=[Depends(require_api_key)])
 async def tool_browser_text(body: dict):
     url = body.get("url", "").strip()
     mode = body.get("mode", "headless")
@@ -476,7 +623,7 @@ async def tool_browser_text(body: dict):
     return result
 
 
-@app.post("/api/tools/browser/click")
+@app.post("/api/tools/browser/click", dependencies=[Depends(require_api_key)])
 async def tool_browser_click(body: dict):
     url = body.get("url", "").strip()
     selector = body.get("selector", "").strip()
@@ -489,7 +636,7 @@ async def tool_browser_click(body: dict):
     return result
 
 
-@app.post("/api/tools/browser/fill")
+@app.post("/api/tools/browser/fill", dependencies=[Depends(require_api_key)])
 async def tool_browser_fill(body: dict):
     url = body.get("url", "").strip()
     selector = body.get("selector", "").strip()
@@ -503,7 +650,7 @@ async def tool_browser_fill(body: dict):
     return result
 
 
-@app.post("/api/tools/browser/navigate")
+@app.post("/api/tools/browser/navigate", dependencies=[Depends(require_api_key)])
 async def tool_browser_navigate(body: dict):
     url = body.get("url", "").strip()
     mode = body.get("mode", "headless")
@@ -515,7 +662,7 @@ async def tool_browser_navigate(body: dict):
     return result
 
 
-@app.post("/api/tools/browser/screenshot")
+@app.post("/api/tools/browser/screenshot", dependencies=[Depends(require_api_key)])
 async def tool_browser_screenshot(body: dict):
     url = body.get("url", "").strip()
     mode = body.get("mode", "headless")
@@ -540,25 +687,25 @@ if __name__ == "__main__":
 
 # ── Agent Import Endpoints ─────────────────────────────────────────────────────
 
-@app.get("/api/agents")
+@app.get("/api/agents", dependencies=[Depends(require_api_key)])
 async def agents_list():
     """List all detected AI agents."""
     return summarize_agents()
 
 
-@app.post("/api/agents/detect")
+@app.post("/api/agents/detect", dependencies=[Depends(require_api_key)])
 async def agents_detect():
     """Force re-scan for installed agents."""
     return summarize_agents()
 
 
-@app.get("/api/agents/imported")
+@app.get("/api/agents/imported", dependencies=[Depends(require_api_key)])
 async def agents_imported():
     """List all import records."""
     return get_import_status()
 
 
-@app.post("/api/agents/import")
+@app.post("/api/agents/import", dependencies=[Depends(require_api_key)])
 async def agents_import(body: dict):
     """Import from a detected agent."""
     agent_name = body.get("agent", "").strip().lower()
@@ -598,7 +745,7 @@ async def agents_import(body: dict):
     }
 
 
-@app.post("/api/agents/import/preview")
+@app.post("/api/agents/import/preview", dependencies=[Depends(require_api_key)])
 async def agents_import_preview(body: dict):
     """Preview an import without writing."""
     agent_name = body.get("agent", "").strip().lower()
@@ -620,7 +767,7 @@ async def agents_import_preview(body: dict):
         raise HTTPException(status_code=404, detail=f"Unknown agent: {agent_name}")
 
 
-@app.delete("/api/agents/import/{agent_name}")
+@app.delete("/api/agents/import/{agent_name}", dependencies=[Depends(require_api_key)])
 async def agents_remove(agent_name: str):
     """Remove all imports for an agent."""
     vault_dir = Path(__file__).parent / "vault"

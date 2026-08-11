@@ -48,10 +48,37 @@ if ! check_python "python3.12" && \
     echo ""
     echo "  Python 3.11+ not found."
     echo "  Installing Python..."
+
+    # C7 fix: never install system-level package managers without explicit
+    # confirmation. macOS users can choose: install Homebrew (which
+    # downloads and runs a remote script), install python@3.12 manually, or
+    # abort. Default = refuse and exit (force the user to read the message).
+
     if [ "$PLATFORM" = "macos" ]; then
         if ! command -v brew &>/dev/null; then
-            echo "  Homebrew not found. Installing via brew install python@3.12"
-            /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            echo ""
+            echo "  ⚠ Homebrew is not installed. FreeHand can install it,"
+            echo "    but doing so downloads and runs a remote shell script"
+            echo "    from https://raw.githubusercontent.com/Homebrew —"
+            echo "    a significant trust decision."
+            echo ""
+            # Skip if non-interactive (CI, curl|bash) — fail safely.
+            if [ ! -t 0 ]; then
+                echo "  Non-interactive install detected. Refusing to install Homebrew."
+                echo "  Please install Homebrew manually or install python@3.12 first."
+                exit 1
+            fi
+            printf "  Install Homebrew now? [y/N] "
+            read -r REPLY
+            case "$REPLY" in
+                [Yy]|[Yy][Ee][Ss])
+                    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+                    ;;
+                *)
+                    echo "  Aborted. Install Homebrew manually or install python@3.12 first."
+                    exit 1
+                    ;;
+            esac
         fi
         brew install python@3.12
         PYTHON_BIN="python3.12"
