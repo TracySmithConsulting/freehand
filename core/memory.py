@@ -76,6 +76,12 @@ def sync_vault_to_sqlite() -> int:
 def search_memory(query: str, limit: int = 3) -> List[Dict]:
     """Search the FTS5 memories index for `query` and return the top
     `limit` most relevant markdown file records as dicts.
+
+    R5 fix: FTS5 MATCH operator is injection-sensitive. Untrusted input
+    containing tokens like `*`, `"`, `OR`, `NOT`, `:`, `^` is interpreted
+    as FTS5 syntax and can return every row, fail with a parse error, or
+    crash the query. We sanitise by quoting the entire input as a phrase
+    after escaping internal double-quotes.
     """
     conn = _get_conn()
     cursor = conn.cursor()
@@ -84,21 +90,31 @@ def search_memory(query: str, limit: int = 3) -> List[Dict]:
         conn.close()
         return []
 
-    cursor.execute(
-        """
-        SELECT m.id, m.path, m.title, m.updated_at,
-               memories_fts.rank AS relevance
-        FROM memories_fts
-        JOIN memories m ON m.id = memories_fts.rowid
-        WHERE memories_fts MATCH ?
-        ORDER BY memories_fts.rank
-        LIMIT ?
-        """,
-        (query, limit),
-    )
+    # R5: wrap query in double quotes (phrase query) and escape any
+    # internal double-quotes by doubling them. FTS5 phrase query is
+    # interpreted literally — no operators, no wildcards.
+    safe_query = '"' + query.replace('"', '""') + '"'
 
-    results = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    try:
+        cursor.execute(
+            """
+            SELECT m.id, m.path, m.title, m.updated_at,
+                   memories_fts.rank AS relevance
+            FROM memories_fts
+            JOIN memories m ON m.id = memories_fts.rowid
+            WHERE memories_fts MATCH ?
+            ORDER BY memories_fts.rank
+            LIMIT ?
+            """,
+            (safe_query, limit),
+        )
+        results = [dict(row) for row in cursor.fetchall()]
+    except sqlite3.OperationalError:
+        # FTS5 parse error (shouldn't happen with phrase query, but
+        # defensive). Return empty rather than crash the agent loop.
+        results = []
+    finally:
+        conn.close()
     return results
 
 

@@ -73,6 +73,50 @@ DB_PATH = Path(__file__).parent / "agent.db"
 VAULT_DIR = Path(__file__).parent / "vault"
 SCRIBBLE_PATH = VAULT_DIR / "00_Scribble.md"
 
+# N9 fix: request body size limit middleware.
+# Without a cap, anyone with X-API-Key can POST a 100MB body to
+# /api/tools/browser/fill and force the server to spend time parsing
+# huge inputs (or OOM). 1MB is plenty for any current FreeHand endpoint;
+# tune via settings["max_request_body_bytes"] if needed.
+DEFAULT_MAX_BODY_BYTES = 1 * 1024 * 1024  # 1 MiB
+
+
+def _get_max_body_bytes() -> int:
+    """Read the operator-configurable body size cap from settings.json."""
+    try:
+        with open(Path(__file__).parent / "vault" / "settings.json") as f:
+            settings = json.load(f)
+        return int(settings.get("max_request_body_bytes", DEFAULT_MAX_BODY_BYTES))
+    except Exception:
+        return DEFAULT_MAX_BODY_BYTES
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    """Reject requests whose Content-Length exceeds the cap."""
+    # Allow gateway webhooks (they may carry Slack/Telegram payloads —
+    # typically small but we want to be permissive here so callbacks work).
+    if request.url.path.startswith("/api/gateway/"):
+        return await call_next(request)
+
+    # Health/static: no body expected.
+    if request.url.path in ("/", "/health"):
+        return await call_next(request)
+
+    cap = _get_max_body_bytes()
+    cl = request.headers.get("content-length")
+    if cl is not None:
+        try:
+            if int(cl) > cap:
+                return JSONResponse(
+                    {"error": f"Request body too large (>{cap} bytes). Increase settings.max_request_body_bytes or shrink payload."},
+                    status_code=413,
+                )
+        except ValueError:
+            pass
+
+    return await call_next(request)
+
 
 # ── API-key auth (N1 fix) ─────────────────────────────────────────────
 # Every /api/* and /api/tools/* endpoint requires an X-API-Key header
@@ -264,9 +308,13 @@ async def api_deny(approval_id: int):
 
 
 @app.post("/api/approvals/clear", dependencies=[Depends(require_api_key)])
-async def api_clear_approvals():
-    count = clear_pending_approvals()
-    return {"cleared": count}
+async def api_clear_approvals(body: dict = None):
+    """Reject all pending approvals. C4 fix: accepts optional `reason` field."""
+    reason = ""
+    if body and isinstance(body, dict):
+        reason = body.get("reason", "") or ""
+    count = clear_pending_approvals(reason=reason)
+    return {"cleared": count, "reason": reason}
 
 
 @app.get("/api/approvals/stream", dependencies=[Depends(require_api_key)])
@@ -342,6 +390,7 @@ SETTINGS_ALLOWED_KEYS = frozenset({
     "slack_allow_from", "whatsapp", "whatsapp_enabled", "whatsapp_pairing_phone",
     "bridge_secret", "whatsapp_allow_from", "public_base_url",
     "sweep_interval", "allowed_browser_domains", "user",
+    "max_request_body_bytes", "max_screenshot_size_mb",
 })
 
 

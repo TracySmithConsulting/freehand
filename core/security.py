@@ -319,13 +319,51 @@ def handle_approval(approval_id: int, action: str) -> dict:
     return {"status": new_status, "id": approval_id}
 
 
-def clear_pending_approvals() -> int:
-    """Reject all pending approvals. Returns count cleared."""
+def clear_pending_approvals(reason: str = "") -> int:
+    """Reject all pending approvals. Returns count cleared.
+
+    C4 fix: this is a powerful operation that silently cancels every
+    in-flight approval request — including ones the user may have
+    already responded to via Telegram/Slack. Old signature had no
+    parameters, no warning, no audit trail.
+
+    New behaviour:
+    - `reason` is required (positional callers from internal code use the
+      default empty string, but external callers should provide context).
+    - Emits a stderr warning when called.
+    - Writes an audit row to the `approvals` table with status='rejected'
+      so there's a record of who cleared what.
+
+    Returns the number of pending approvals that were cleared.
+    """
+    if not reason:
+        import sys
+        print(
+            "[WARN] clear_pending_approvals() called without a reason. "
+            "Pass a string explaining why you're cancelling pending approvals.",
+            file=sys.stderr,
+        )
+
     conn = _get_conn()
     cursor = conn.execute(
         "UPDATE approvals SET status = 'rejected' WHERE status = 'pending'"
     )
     count = cursor.rowcount
     conn.commit()
+
+    if count > 0:
+        # Audit log: insert a marker row indicating bulk rejection.
+        from datetime import datetime, timezone
+        conn.execute(
+            "INSERT INTO approvals (action_type, description, payload, status) VALUES (?, ?, ?, ?)",
+            (
+                "bulk_clear",
+                f"Bulk-cleared {count} pending approvals" + (f": {reason}" if reason else ""),
+                json.dumps({"count": count, "reason": reason}),
+                "rejected",
+            ),
+        )
+        conn.commit()
+
     conn.close()
     return count
