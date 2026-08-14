@@ -28,10 +28,17 @@ def sync_vault_to_sqlite() -> int:
     cursor = conn.cursor()
 
     md_files: List[Path] = []
+    # R10 fix: skip the scratchpad and other known-noise files. These
+    # are either actively transient (00_Scribble.md is constantly edited
+    # by the agent loop) or not knowledge to surface in memory search.
+    SKIP_FILENAMES = {"00_Scribble.md", ".sweep_state.json"}
     for root, _dirs, files in os.walk(VAULT_DIR):
         for fname in files:
-            if fname.endswith(".md"):
-                md_files.append(Path(root) / fname)
+            if not fname.endswith(".md"):
+                continue
+            if fname in SKIP_FILENAMES:
+                continue
+            md_files.append(Path(root) / fname)
 
     synced = 0
     for md_path in md_files:
@@ -136,11 +143,30 @@ def parse_skills(skills_dir: Optional[Path] = None) -> List[Dict]:
     if not skills_dir.exists():
         return skills
 
+    # R11 fix: compute the resolved skills_dir root once and reject
+    # any skill subdir that resolves outside it. Defends against future
+    # changes (or symlinks) that could let a malicious SKILL.md escape
+    # the skills/ boundary.
+    skills_root_resolved = skills_dir.resolve()
+
     for skill_dir in sorted(skills_dir.iterdir()):
         if not skill_dir.is_dir():
             continue
+        try:
+            # Reject any skill_dir that escapes the skills_root.
+            if not skill_dir.resolve().is_relative_to(skills_root_resolved):
+                continue
+        except (OSError, ValueError):
+            continue
+
         skill_md = skill_dir / "SKILL.md"
         if not skill_md.exists():
+            continue
+        # Also verify SKILL.md itself is inside the skill_dir after resolve.
+        try:
+            if not skill_md.resolve().is_relative_to(skill_dir.resolve()):
+                continue
+        except (OSError, ValueError):
             continue
 
         try:

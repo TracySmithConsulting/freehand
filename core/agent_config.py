@@ -46,240 +46,29 @@ def _save_settings(data: dict) -> None:
 
 
 def list_available_tools() -> List[Dict]:
+    """Build OpenAI-style function-calling schemas from TOOL_REGISTRY.
+
+    B2 fix: previously this was a hardcoded list of 14 tools while
+    TOOL_REGISTRY had 24. The LLM could only see 14 — 10 were dead
+    code. Now every tool registered in TOOL_REGISTRY with a matching
+    entry in TOOL_SCHEMAS automatically becomes visible.
+
+    Adding a new tool: register in TOOL_REGISTRY + add schema in
+    TOOL_SCHEMAS. No need to edit this function.
+    """
     tools = []
-
-    # Office tools
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "read_docx",
-            "description": "Read a .docx file and return its content",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "Path to the .docx file"}
-                },
-                "required": ["path"],
+    for name in TOOL_REGISTRY.keys():
+        schema = TOOL_SCHEMAS.get(name)
+        if schema is None:
+            continue
+        tools.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": schema["description"],
+                "parameters": schema["parameters"],
             },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "write_docx",
-            "description": "Write a .docx file with the given content",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "title": {"type": "string"},
-                    "content": {"type": "array", "items": {"type": "string"}},
-                },
-                "required": ["path", "content"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "read_xlsx",
-            "description": "Read an .xlsx spreadsheet and return its content",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"}
-                },
-                "required": ["path"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "read_pptx",
-            "description": "Read a .pptx presentation and return its content",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string"}
-                },
-                "required": ["path"],
-            },
-        },
-    })
-
-    # Browser tools
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "get_axtree",
-            "description": "Get the accessibility tree (AXTree) from a URL",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["headless", "headed"]},
-                },
-                "required": ["url"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "extract_text",
-            "description": "Extract readable text content from a URL",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["headless", "headed"]},
-                },
-                "required": ["url"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "take_screenshot",
-            "description": "Take a screenshot of a URL",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "url": {"type": "string"},
-                    "mode": {"type": "string", "enum": ["headless", "headed"]},
-                    "full_page": {"type": "boolean"},
-                },
-                "required": ["url"],
-            },
-        },
-    })
-
-    # Integration tools
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "read_email",
-            "description": "Read emails from a connected email service (google, microsoft, or email)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "service": {"type": "string", "enum": ["google", "microsoft", "email"]},
-                    "label": {"type": "string", "description": "Connection label, default 'default'"},
-                    "filter": {"type": "string", "description": "Optional filter query"},
-                },
-                "required": ["service"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "list_calendar_events",
-            "description": "List calendar events from Google or Microsoft",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "service": {"type": "string", "enum": ["google", "microsoft"]},
-                    "label": {"type": "string"},
-                    "from": {"type": "string", "description": "Start datetime ISO format"},
-                    "to": {"type": "string", "description": "End datetime ISO format"},
-                },
-                "required": ["service"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "read_sheets",
-            "description": "Read a Google Sheets spreadsheet metadata",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "label": {"type": "string"},
-                    "spreadsheet_id": {"type": "string"},
-                },
-                "required": ["spreadsheet_id"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "list_github_repos",
-            "description": "List GitHub repositories for the connected account",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "label": {"type": "string"},
-                    "private": {"type": "boolean"},
-                },
-                "required": [],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "list_github_issues",
-            "description": "List issues in a GitHub repository",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "label": {"type": "string"},
-                    "repo": {"type": "string", "description": "Format: owner/repo"},
-                    "state": {"type": "string", "enum": ["open", "closed", "all"]},
-                },
-                "required": ["repo"],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "list_zoom_meetings",
-            "description": "List Zoom meetings for the connected account",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "label": {"type": "string"},
-                    "page_size": {"type": "integer"},
-                },
-                "required": [],
-            },
-        },
-    })
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "list_connections",
-            "description": "List all connected services and their status",
-            "parameters": {
-                "type": "object",
-                "properties": {},
-            },
-        },
-    })
-
-    # Memory/search
-    tools.append({
-        "type": "function",
-        "function": {
-            "name": "search_memory",
-            "description": "Search the agent's memory (vault notes and scribbles)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "limit": {"type": "integer", "default": 5},
-                },
-                "required": ["query"],
-            },
-        },
-    })
-
+        })
     return tools
 
 
@@ -289,7 +78,9 @@ def list_available_tools() -> List[Dict]:
 #   "read"  — does not change external state; allowed in any tier.
 #   "write" — mutates external state (filesystem, OAuth-protected APIs).
 #             Requires permission check (intercept_action) unless tier == GOD_MODE.
-# Keep this in sync with `list_available_tools()` AND `execute_tool()`.
+# Keep this in sync with `TOOL_SCHEMAS` below — every entry here MUST
+# have a matching schema, or the tool won't appear in the LLM's
+# available tools.
 TOOL_REGISTRY: Dict[str, str] = {
     # Office
     "read_docx":          "read",
@@ -324,6 +115,284 @@ TOOL_REGISTRY: Dict[str, str] = {
     "list_connections":       "read",
     # Memory
     "search_memory":          "read",
+}
+
+
+# ── Tool schemas (LLM-visible parameter definitions) ────────────────────
+# Each entry maps tool name -> {"description": str, "parameters": JSON
+# Schema dict}. Only tools listed here are visible to the LLM.
+# Adding a new tool: add to TOOL_REGISTRY above AND a schema here.
+TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
+    # ── Office ─────────────────────────────────────────────────────
+    "read_docx": {
+        "description": "Read a .docx file and return its content",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Path to the .docx file"}
+            },
+            "required": ["path"],
+        },
+    },
+    "write_docx": {
+        "description": "Write a .docx file with the given content",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "title": {"type": "string"},
+                "content": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    "read_xlsx": {
+        "description": "Read an .xlsx spreadsheet and return its content",
+        "parameters": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    "read_pptx": {
+        "description": "Read a .pptx presentation and return its content",
+        "parameters": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+        },
+    },
+    # ── Browser ────────────────────────────────────────────────────
+    "get_axtree": {
+        "description": "Get the accessibility tree (AXTree) from a URL",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["url"],
+        },
+    },
+    "extract_text": {
+        "description": "Extract readable text content from a URL",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["url"],
+        },
+    },
+    "take_screenshot": {
+        "description": "Take a screenshot of a URL",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+                "full_page": {"type": "boolean"},
+            },
+            "required": ["url"],
+        },
+    },
+    # ── Email / Calendar / Sheets ──────────────────────────────────
+    "read_email": {
+        "description": "Read emails from a connected email service (google, microsoft, or email)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "enum": ["google", "microsoft", "email"]},
+                "label": {"type": "string", "description": "Connection label, default 'default'"},
+                "filter": {"type": "string", "description": "Optional filter query"},
+            },
+            "required": ["service"],
+        },
+    },
+    "list_calendar_events": {
+        "description": "List calendar events from Google or Microsoft",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "enum": ["google", "microsoft"]},
+                "label": {"type": "string"},
+                "from": {"type": "string", "description": "Start datetime ISO format"},
+                "to": {"type": "string", "description": "End datetime ISO format"},
+            },
+            "required": ["service"],
+        },
+    },
+    "read_sheets": {
+        "description": "Read a Google Sheets spreadsheet metadata",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "spreadsheet_id": {"type": "string"},
+            },
+            "required": ["spreadsheet_id"],
+        },
+    },
+    "read_sheet_range": {
+        "description": "Read a range of cells from a Google Sheets spreadsheet",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "spreadsheet_id": {"type": "string"},
+                "range": {"type": "string", "description": "A1 notation range, e.g. 'Sheet1!A1:D10'"},
+            },
+            "required": ["spreadsheet_id", "range"],
+        },
+    },
+    # ── GitHub ─────────────────────────────────────────────────────
+    "list_github_repos": {
+        "description": "List GitHub repositories for the connected account",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "private": {"type": "boolean"},
+            },
+            "required": [],
+        },
+    },
+    "list_github_issues": {
+        "description": "List issues in a GitHub repository",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "repo": {"type": "string", "description": "Format: owner/repo"},
+                "state": {"type": "string", "enum": ["open", "closed", "all"]},
+            },
+            "required": ["repo"],
+        },
+    },
+    "create_github_issue": {
+        "description": "Create a new issue in a GitHub repository (write action — requires approval)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "repo": {"type": "string", "description": "Format: owner/repo"},
+                "title": {"type": "string"},
+                "body": {"type": "string", "description": "Issue body in Markdown"},
+            },
+            "required": ["repo", "title"],
+        },
+    },
+    "create_github_pull_request": {
+        "description": "Create a pull request on a GitHub repository (write action — requires approval)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "repo": {"type": "string", "description": "Format: owner/repo"},
+                "title": {"type": "string"},
+                "head": {"type": "string", "description": "Branch name containing the changes"},
+                "base": {"type": "string", "description": "Branch name to merge into"},
+                "body": {"type": "string", "description": "PR description in Markdown"},
+            },
+            "required": ["repo", "title", "head", "base"],
+        },
+    },
+    # ── Zoom ───────────────────────────────────────────────────────
+    "list_zoom_meetings": {
+        "description": "List Zoom meetings for the connected account",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "page_size": {"type": "integer"},
+            },
+            "required": [],
+        },
+    },
+    "list_zoom_recordings": {
+        "description": "List Zoom meeting recordings for the connected account",
+        "parameters": {
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": [],
+        },
+    },
+    "schedule_zoom_meeting": {
+        "description": "Schedule a new Zoom meeting (write action — requires approval)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "title": {"type": "string"},
+                "start_time": {"type": "string", "description": "ISO 8601 start datetime"},
+                "duration": {"type": "integer", "description": "Duration in minutes (default 60)"},
+            },
+            "required": ["title", "start_time"],
+        },
+    },
+    # ── Meta (Facebook / Instagram) ───────────────────────────────
+    "list_facebook_pages": {
+        "description": "List Facebook pages available to the connected account",
+        "parameters": {
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": [],
+        },
+    },
+    "post_to_facebook": {
+        "description": "Post content to a Facebook page (write action — requires approval)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "page_id": {"type": "string", "description": "Facebook page ID to post to"},
+                "content": {"type": "string", "description": "Post text content"},
+            },
+            "required": ["page_id", "content"],
+        },
+    },
+    "list_instagram_accounts": {
+        "description": "List Instagram business accounts available to the connected account",
+        "parameters": {
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": [],
+        },
+    },
+    "post_to_instagram": {
+        "description": "Post content to an Instagram business account (write action — requires approval)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "label": {"type": "string"},
+                "content": {"type": "string", "description": "Caption text"},
+                "media_url": {"type": "string", "description": "Public URL to the image/video to post"},
+            },
+            "required": [],
+        },
+    },
+    # ── Meta-utility ──────────────────────────────────────────────
+    "list_connections": {
+        "description": "List all connected services (Google, Microsoft, Zoom, Facebook, Instagram, GitHub) and their status",
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    # ── Memory ─────────────────────────────────────────────────────
+    "search_memory": {
+        "description": "Search the agent's memory (vault notes and scribbles)",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "limit": {"type": "integer", "default": 5},
+            },
+            "required": ["query"],
+        },
+    },
 }
 
 

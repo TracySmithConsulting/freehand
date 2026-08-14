@@ -71,6 +71,20 @@ Full suite: **81 tests, 81 passing**.
 
 Full suite: **103 tests, 103 passing**.
 
+## [Unreleased] — 2026-08-12 — round 4
+
+### Functionality
+
+- **B2 (tool registry → function-calling schemas)**: `list_available_tools()` was a hardcoded list of 14 tools while TOOL_REGISTRY had 24 — 10 write tools were dead code from the LLM's perspective. Replaced with a schema-driven build: every entry in `TOOL_REGISTRY` now gets a corresponding schema in the new `TOOL_SCHEMAS` dict, and the LLM sees all 24 tools. Adding a new tool = register in TOOL_REGISTRY + add schema in TOOL_SCHEMAS. (`core/agent_config.py`)
+- **R10 (skip scratchpad in vault sync)**: `sync_vault_to_sqlite()` no longer indexes `00_Scribble.md` or `.sweep_state.json` into the FTS5 memories table. They were always transient/operational files. (`core/memory.py`)
+- **R11 (parse_skills boundary check)**: `parse_skills()` now verifies each skill_dir resolves inside the skills root, and each SKILL.md resolves inside its own skill_dir. Prevents symlink-based escapes from loading malicious skill content. (`core/memory.py`)
+
+### Tests added
+
+- **`tests/test_round4_fixes.py`** — 14 new tests across B2/R10/R11/R13/R15. Includes registry-schema consistency checks, end-to-end vault sync tests, workspace boundary tests for the office write tools.
+
+Full suite: **117 tests, 117 passing, 2 skipped (Windows symlink privilege)**.
+
 ## [0.1.0] — 2026-08-10
 
 ### Added
