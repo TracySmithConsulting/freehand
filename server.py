@@ -168,7 +168,16 @@ def get_or_create_api_key() -> str:
 
 
 async def require_api_key(request: Request) -> None:
-    """FastAPI dependency: enforce X-API-Key on protected endpoints."""
+    """FastAPI dependency: enforce X-API-Key on protected endpoints.
+
+    Accepts the API key via two header styles:
+      - X-API-Key: <key>                      (FreeHand-native)
+      - Authorization: Bearer <key>           (MCP-standard; what Codex,
+                                              Claude Desktop, generic MCP
+                                              SDKs send by default)
+
+    Comparison is constant-time to avoid timing leaks.
+    """
     # Allow health, root, and gateway webhooks (each has its own auth)
     path = request.url.path
     if path in ("/", "/health"):
@@ -177,8 +186,14 @@ async def require_api_key(request: Request) -> None:
         return  # Telegram/Slack/WhatsApp each have their own auth mechanism
 
     expected = get_or_create_api_key()
+
+    # Try X-API-Key first, then Authorization: Bearer
     provided = request.headers.get("X-API-Key", "").strip()
-    # Constant-time compare to avoid timing leaks
+    if not provided:
+        auth = request.headers.get("Authorization", "").strip()
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip()
+
     if not provided or not _secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 

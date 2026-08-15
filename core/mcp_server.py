@@ -50,6 +50,11 @@ router = APIRouter(prefix="/mcp", tags=["mcp"])
 # Auth is mounted at the app level in server.py via
 # app.include_router(mcp_router_mod.router, dependencies=[Depends(require_api_key)])
 # — we don't add it here to avoid the server.py ↔ core.mcp_server circular import.
+#
+# Auth header compatibility: MCP clients (Codex, Claude Desktop, generic
+# MCP SDKs) typically use `Authorization: Bearer <key>` rather than
+# `X-API-Key`. The require_api_key dependency accepts both — see its
+# header-compat block.
 
 # MCP protocol version this server implements.
 MCP_PROTOCOL_VERSION = "2025-06-18"
@@ -111,6 +116,11 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
     A write tool at GOD_MODE from an MCP call still executes (same as if
     FreeHand itself had decided to call it). Write tools at lower tiers
     are rejected — the MCP client should surface that to the user.
+
+    Note: execute_tool() is async (returns a coroutine). To avoid
+    "Cannot run the event loop while another loop is running" when
+    called from inside FastAPI's existing loop, we dispatch the
+    coroutine via run_in_executor on a fresh thread with its own loop.
     """
     tier = get_current_tier()
     permission = TOOL_REGISTRY.get(name, "unknown")
@@ -121,8 +131,6 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
             "isError": True,
         }
     if permission == "write" and tier != PermissionTier.GOD_MODE:
-        # Reject write tools at lower tiers when invoked via MCP — the user
-        # has not given an explicit OK via the FreeHand UI for this MCP call.
         result = intercept_action(
             "oauth_access",
             f"MCP tool call: {name}",
@@ -144,30 +152,7 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
             }
 
     try:
-        # execute_tool is async — but its return value is sync (it's
-        # only async because the underlying tools are). We can call it
-        # directly via asyncio.run if needed, but in FastAPI request
-        # handlers we have a running loop. For now use asyncio.run on a
-        # fresh loop is risky; instead, dispatch via a helper.
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        if loop.is_running():
-            # We're inside an async context — but FastAPI handlers are sync
-            # by default. Build a fresh loop just for this tool call.
-            inner_loop = asyncio.new_event_loop()
-            try:
-                tool_result = inner_loop.run_until_complete(execute_tool(name, arguments))
-            finally:
-                inner_loop.close()
-        else:
-            tool_result = loop.run_until_complete(execute_tool(name, arguments))
-
-        # execute_tool returns {"content": json.dumps(...)}. MCP expects
-        # content as a list of typed objects.
+        tool_result = _run_async_in_thread(execute_tool(name, arguments))
         return {
             "content": [{"type": "text", "text": str(tool_result.get("content", ""))}],
             "isError": "error" in tool_result,
@@ -178,6 +163,34 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
             "content": [{"type": "text", "text": f"Tool execution error: {str(e)[:500]}"}],
             "isError": True,
         }
+
+
+def _run_async_in_thread(coro):
+    """Run an async coroutine to completion in a fresh thread with its own loop.
+
+    Required because FastAPI's request handler is itself async — running
+    a new event loop inside it raises "Cannot run the event loop while
+    another loop is running." By offloading to a worker thread we get
+    a clean loop each time.
+
+    Returns the result of the coroutine. Re-raises any exception.
+    """
+    import asyncio
+    import threading
+    result_box = {"value": None, "error": None}
+
+    def _runner():
+        try:
+            result_box["value"] = asyncio.run(coro)
+        except Exception as e:
+            result_box["error"] = e
+
+    t = threading.Thread(target=_runner, daemon=True)
+    t.start()
+    t.join()
+    if result_box["error"] is not None:
+        raise result_box["error"]
+    return result_box["value"]
 
 
 # ── Resource list ──────────────────────────────────────────────────────

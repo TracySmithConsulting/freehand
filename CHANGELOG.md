@@ -137,6 +137,39 @@ To connect an MCP client (e.g. Claude Desktop):
 
 Full suite: **164 tests, 164 passing, 2 skipped (Windows symlink privilege)**.
 
+## [Unreleased] — 2026-08-12 — round 5.1 (MCP end-to-end smoke + Bearer auth)
+
+End-to-end smoke test with Codex CLI caught two real bugs and added Bearer auth compatibility.
+
+### Fixed
+
+- **Event-loop collision in MCP tool dispatch**: `_mcp_tool_call()` was calling `execute_tool()` (async) via `loop.run_until_complete()` from inside FastAPI's already-running event loop, raising "Cannot run the event loop while another loop is running." Fixed by dispatching the coroutine to a fresh worker thread via `_run_async_in_thread()`, which gets its own clean event loop. (`core/mcp_server.py`)
+- **`/api/memory/search` is GET, not POST**: discovered during smoke test — `/api/memory/search` only accepts GET. Not changed (correct behaviour), but worth noting for future API tests. (`server.py`)
+
+### Added
+
+- **Bearer-token auth compatibility**: `require_api_key()` now accepts `Authorization: Bearer <key>` in addition to `X-API-Key: <key>`. This is what MCP-standard clients (Codex, Claude Desktop, generic MCP SDKs) send by default. Constant-time comparison, case-insensitive prefix per RFC 7235. 4 new tests. (`server.py`)
+
+### Verified
+
+End-to-end smoke test against Codex CLI 0.145.0 (using `Authorization: Bearer <key>`):
+
+  $ codex mcp add freehand --url http://localhost:8000/mcp \
+                            --bearer-token-env-var FREEHAND_API_KEY
+  $ export FREEHAND_API_KEY=<api-key>
+  $ codex exec "Use freehand search_memory to search for 'MCP smoke test'"
+
+  → Codex connected, dispatched `search_memory`, got a real FTS5 match
+  → Returned the title, vault path, and timestamp of the matched note
+
+Before this commit, the MCP server would have returned
+"Cannot run the event loop while another loop is running" on every
+real tool call. After, it works end-to-end.
+
+OpenCode is NOT installed (only Codex CLI, Pi Agent, and Antigravity IDE are present). Hermes itself supports MCP natively — adding a `mcp_servers:` entry to `~/.hermes/config.yaml` would let Hermes drive FreeHand's tools too. Not done in this round — Tracy can decide if she wants that wired up.
+
+Full suite: **168 tests, 168 passing, 2 skipped (Windows symlink privilege)**.
+
 ## [0.1.0] — 2026-08-10
 
 ### Added

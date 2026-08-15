@@ -330,3 +330,44 @@ class TestMcpHttpEndpoint:
         assert r.status_code == 200
         body = r.json()
         assert body["error"]["code"] == mcp_server.INVALID_REQUEST
+
+    def test_bearer_header_accepted_as_alternative(self):
+        """MCP-standard Authorization: Bearer <key> should work alongside X-API-Key.
+
+        Codex, Claude Desktop, and generic MCP SDKs send Bearer by default.
+        FreeHand must accept it for those clients to connect.
+        """
+        from fastapi.testclient import TestClient
+        from server import app, get_or_create_api_key
+        api_key = get_or_create_api_key()
+        client = TestClient(app, headers={"Authorization": f"Bearer {api_key}"})
+
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["result"] == {}
+
+    def test_bearer_with_wrong_key_returns_401(self):
+        from fastapi.testclient import TestClient
+        from server import app
+        client = TestClient(app, headers={"Authorization": "Bearer wrong-key-here"})
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+        assert r.status_code == 401
+
+    def test_bearer_case_insensitive_prefix(self):
+        """The "Bearer" prefix should be case-insensitive per RFC 7235."""
+        from fastapi.testclient import TestClient
+        from server import app, get_or_create_api_key
+        api_key = get_or_create_api_key()
+        client = TestClient(app, headers={"Authorization": f"bearer {api_key}"})
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+        assert r.status_code == 200
+
+    def test_x_api_key_still_works(self):
+        """Original X-API-Key auth path must remain functional."""
+        from fastapi.testclient import TestClient
+        from server import app, get_or_create_api_key
+        api_key = get_or_create_api_key()
+        client = TestClient(app, headers={"X-API-Key": api_key})
+        r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+        assert r.status_code == 200
