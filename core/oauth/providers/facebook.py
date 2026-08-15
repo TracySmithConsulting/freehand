@@ -25,14 +25,22 @@ class FacebookConnector(BaseConnector):
     supports_multi_account = True
 
     def _get_credentials(self) -> tuple:
+        # OAuth broker Option B: check user override, then env, then
+        # broker_config.json. See core/oauth/broker.py.
+        from core.oauth.broker import get_client_credentials
+        # Facebook and Instagram share the Meta app_id/secret, so we
+        # look up under "facebook" (broker key) which carries the
+        # app_id/secret pair for both.
+        app_id, app_secret, _source = get_client_credentials("facebook")
+        if app_id and app_secret:
+            return app_id, app_secret
+        # Fallback: user's meta.facebook in settings.json
         import sys
         from pathlib import Path
         sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
         from core.oauth.router import _load_oauth_settings
         settings = _load_oauth_settings()
-        providers = settings.get("oauth", {}).get("providers", {})
-        meta = providers.get("meta", {})
-        fb = meta.get("facebook", {})
+        fb = settings.get("oauth", {}).get("providers", {}).get("meta", {}).get("facebook", {})
         return fb.get("app_id", ""), fb.get("app_secret", "")
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:

@@ -62,6 +62,8 @@ from core.tools.browser import (
     screenshot,
 )
 from core.oauth import router as oauth_router
+from core.oauth import broker as oauth_broker
+from core import mcp_server as mcp_router_mod
 
 app = FastAPI(
     title="FreeHand API",
@@ -186,6 +188,51 @@ try:
 except Exception:
     pass
 app.include_router(oauth_router)
+
+
+# ── OAuth Broker Admin Endpoints ──────────────────────────────────────
+# Diagnostic + write endpoints for the broker config. Broker holds the
+# FreeHand-shared OAuth client_id/secret per service (see core/oauth/broker.py).
+# User-supplied credentials in settings.json always win; broker is fallback.
+
+@app.get("/api/broker/status", dependencies=[Depends(require_api_key)])
+async def broker_status_endpoint():
+    """Report which services have credentials configured and where from."""
+    return oauth_broker.broker_status()
+
+
+@app.post("/api/broker/config", dependencies=[Depends(require_api_key)])
+async def broker_write_config_endpoint(body: dict):
+    """Write broker_config.json with the FreeHand-shared OAuth credentials.
+
+    Body shape:
+        {"providers": {"google": {"client_id": "...", "client_secret": "..."},
+                        "microsoft": {...}, ...}}
+
+    Returns the new broker_status() snapshot.
+    """
+    providers = body.get("providers", {})
+    if not isinstance(providers, dict):
+        raise HTTPException(status_code=400, detail="'providers' must be an object")
+    return oauth_broker.write_broker_config(providers)
+
+
+@app.delete("/api/broker/config", dependencies=[Depends(require_api_key)])
+async def broker_clear_endpoint():
+    """Remove broker_config.json (reset to user-only credentials)."""
+    p = oauth_broker._broker_config_path()
+    if p.exists():
+        p.unlink()
+    return oauth_broker.broker_status()
+# MCP server surface (JSON-RPC 2.0 over HTTP POST at /mcp). Same X-API-Key
+# auth as /api/* — the user's settings["api_key"] doubles as their MCP
+# credential. Auth dependency is mounted here (not on the router itself)
+# to avoid the server.py ↔ core.mcp_server circular import. See core/mcp_server.py
+# for method coverage.
+app.include_router(
+    mcp_router_mod.router,
+    dependencies=[Depends(require_api_key)],
+)
 
 
 @app.on_event("startup")

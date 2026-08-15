@@ -33,14 +33,11 @@ class GoogleConnector(BaseConnector):
     supports_multi_account = True
 
     def _get_credentials(self) -> tuple:
-        import sys
-        from pathlib import Path
-        sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-        from core.oauth.router import _load_oauth_settings
-        settings = _load_oauth_settings()
-        providers = settings.get("oauth", {}).get("providers", {})
-        g = providers.get("google", {})
-        return g.get("client_id", ""), g.get("client_secret", "")
+        # OAuth broker Option B: check user override, then env, then
+        # broker_config.json. See core/oauth/broker.py.
+        from core.oauth.broker import get_client_credentials
+        client_id, client_secret, _source = get_client_credentials("google")
+        return client_id or "", client_secret or ""
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         client_id, _ = self._get_credentials()

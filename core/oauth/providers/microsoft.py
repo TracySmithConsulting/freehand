@@ -30,14 +30,18 @@ class MicrosoftConnector(BaseConnector):
     supports_multi_account = True
 
     def _get_credentials(self) -> tuple:
+        # OAuth broker Option B: client_id/secret come from broker.
+        # Tenant stays in user settings (it's not a secret — "common" by default).
+        from core.oauth.broker import get_client_credentials
+        client_id, client_secret, _source = get_client_credentials("microsoft")
         import sys
         from pathlib import Path
         sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
         from core.oauth.router import _load_oauth_settings
         settings = _load_oauth_settings()
-        providers = settings.get("oauth", {}).get("providers", {})
-        m = providers.get("microsoft", {})
-        return m.get("client_id", ""), m.get("client_secret", ""), m.get("tenant", "common")
+        m = settings.get("oauth", {}).get("providers", {}).get("microsoft", {})
+        tenant = m.get("tenant", "common")
+        return client_id or "", client_secret or "", tenant
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         client_id, client_secret, tenant = self._get_credentials()

@@ -85,6 +85,58 @@ Full suite: **103 tests, 103 passing**.
 
 Full suite: **117 tests, 117 passing, 2 skipped (Windows symlink privilege)**.
 
+## [Unreleased] — 2026-08-12 — round 5 (MCP broker)
+
+Implements the [[../Tracy-Personal-Wiki/concepts/freehand-mcp-broker|freehand-mcp-broker design]]: Deliverable 1 (MCP server surface) + Deliverable 2 (OAuth broker Option B).
+
+### Deliverable 1 — FreeHand as MCP server
+
+- **New `/mcp` endpoint** at `POST /mcp` (JSON-RPC 2.0 over HTTP). Mounted with the same `X-API-Key` auth as `/api/*`. Methods: `initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/read`. (`core/mcp_server.py` + `server.py` mount)
+- All 24 tools (Round 4 schema-driven) are now reachable from any MCP client — Claude Desktop, Hermes, custom agents. Same permission checks as the in-process agent loop (write tools at GOD_MODE execute, lower tiers require approval).
+- Resources serve vault files as `freehand://vault/<rel>` URIs. Skips `00_Scribble.md` and `.sweep_state.json` (operational noise). Path-traversal rejected.
+- 25 new tests in `tests/test_mcp_server.py`: JSON-RPC envelope shape, batch requests, write-tool permission gate, resource path traversal, malformed JSON handling, HTTP-level integration via TestClient.
+
+### Deliverable 2 — OAuth broker Option B
+
+- **New `core/oauth/broker.py`** with `get_client_credentials(service)` returning `(client_id, client_secret, source)`. Resolution order: user override in `settings.json` → `FREEHAND_BROKER_<SERVICE>_*` env vars → `vault/broker_config.json` → `(None, None, "none")`.
+- **All 5 OAuth connectors** (Google, Microsoft, Zoom, Facebook, Instagram) now route through broker. Microsoft tenant stays in user settings (not a secret). Facebook+Instagram share a single Meta app_id/secret pair.
+- **New HTTP endpoints** under `/api/broker/`: `GET /status`, `POST /config`, `DELETE /config`. All require `X-API-Key`. Atomic write via tmp+rename.
+- 22 new tests in `tests/test_oauth_broker.py`: resolution order, atomic write, connector integration, HTTP endpoints, user-overrides-broker.
+
+### Operator notes
+
+After upgrading, the broker is **inactive by default** — no built-in client_ids. To enable the broker:
+
+```bash
+# Option A: env vars (preferred for production)
+export FREEHAND_BROKER_GOOGLE_CLIENT_ID="..."
+export FREEHAND_BROKER_GOOGLE_CLIENT_SECRET="..."
+# ...repeat for each service
+
+# Option B: broker_config.json (preferred for dev)
+curl -X POST -H "X-API-Key: $FREEHAND_API_KEY" \
+     -d '{"providers": {"google": {"client_id": "...", "client_secret": "..."}}}' \
+     http://localhost:8000/api/broker/config
+```
+
+User-supplied credentials in `settings["oauth"]["providers"][service]` always win over the broker. The broker is a fallback, not a replacement.
+
+To connect an MCP client (e.g. Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "freehand": {
+      "url": "http://localhost:8000/mcp",
+      "transport": "http",
+      "headers": {"X-API-Key": "<your-api-key>"}
+    }
+  }
+}
+```
+
+Full suite: **164 tests, 164 passing, 2 skipped (Windows symlink privilege)**.
+
 ## [0.1.0] — 2026-08-10
 
 ### Added

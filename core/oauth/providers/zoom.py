@@ -27,13 +27,19 @@ class ZoomConnector(BaseConnector):
     supports_multi_account = True
 
     def _get_credentials(self) -> tuple:
+        # OAuth broker Option B: check user override, then env, then
+        # broker_config.json. See core/oauth/broker.py.
+        from core.oauth.broker import get_client_credentials
+        client_id, client_secret, _source = get_client_credentials("zoom")
+        if client_id and client_secret:
+            return client_id, client_secret
+        # Fallback: user's zoom in settings.json
         import sys
         from pathlib import Path
         sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
         from core.oauth.router import _load_oauth_settings
         settings = _load_oauth_settings()
-        providers = settings.get("oauth", {}).get("providers", {})
-        z = providers.get("zoom", {})
+        z = settings.get("oauth", {}).get("providers", {}).get("zoom", {})
         return z.get("client_id", ""), z.get("client_secret", "")
 
     def authorize_url(self, state: str, redirect_uri: str) -> str:
