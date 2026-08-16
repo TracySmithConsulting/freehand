@@ -61,16 +61,21 @@ class MicrosoftConnector(BaseConnector):
     async def handle_callback(self, code: str, state: str, redirect_uri: str) -> dict:
         client_id, client_secret, tenant = self._get_credentials()
         token_url = MS_TOKEN_URL.format(tenant=tenant)
-        payload = urllib.parse.urlencode({
+        # Pass dict (not pre-urlencoded string) so aiohttp sets
+        # Content-Type: application/x-www-form-urlencoded. Passing a string
+        # makes aiohttp send text/plain, which Microsoft rejects with
+        # AADSTS900144 "request body must contain grant_type". Same bug
+        # pattern as Google on round 5 (commits 63b32fa).
+        payload_dict = {
             "code": code,
             "grant_type": "authorization_code",
             "client_id": client_id,
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
             "scope": " ".join(self.scopes_read + self.scopes_write),
-        })
+        }
         async with aiohttp.ClientSession() as session:
-            async with session.post(token_url, data=payload) as resp:
+            async with session.post(token_url, data=payload_dict) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     raise Exception(f"Token exchange failed: {body}")

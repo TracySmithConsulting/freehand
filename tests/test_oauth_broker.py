@@ -355,3 +355,35 @@ class TestBrokerHttpEndpoints:
         r = client.delete("/api/broker/config")
         assert r.status_code == 200
         assert not (vault / "broker_config.json").exists()
+
+# --- Round 6 regression: Microsoft (and any other) providers must send
+# application/x-www-form-urlencoded on the token exchange, not text/plain.
+# Passing a pre-urlencoded string to aiohttp's data= kwarg makes it default
+# to text/plain, which Microsoft rejects with AADSTS900144 ("request body
+# must contain grant_type"). Same bug pattern as Google on round 5.
+
+class TestProviderTokenExchangeContentType:
+    """Every provider's handle_callback must post a dict (not a string) so
+    aiohttp sends the correct Content-Type header to the token endpoint."""
+
+    def test_microsoft_uses_dict_payload(self):
+        import inspect
+        from core.oauth.providers.microsoft import MicrosoftConnector
+        src = inspect.getsource(MicrosoftConnector.handle_callback)
+        # Must NOT use the old urlencode + data=string pattern
+        assert "urlencode({" not in src, (
+            "Microsoft handle_callback still uses urlencode() — would send "
+            "text/plain Content-Type and Microsoft rejects with AADSTS900144"
+        )
+        # Must use a dict-based `data=` kwarg
+        assert "data=payload_dict" in src or "data={" in src, (
+            "Microsoft handle_callback should post a dict via data=payload_dict"
+        )
+
+    def test_google_uses_dict_payload(self):
+        """Cross-check: Google's handler was fixed in round 5 commit 63b32fa."""
+        import inspect
+        from core.oauth.providers.google import GoogleConnector
+        src = inspect.getsource(GoogleConnector.handle_callback)
+        assert "urlencode({" not in src
+        assert "data=payload_dict" in src or "data={" in src

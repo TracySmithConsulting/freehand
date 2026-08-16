@@ -136,7 +136,10 @@ def _get_redirect_uri(service: str, request: Request) -> str:
     settings = _load_oauth_settings()
     redirect_uris = settings.get("oauth", {}).get("redirect_uris", {})
     stored = redirect_uris.get(service, "")
-    current = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/api/integrations/callback/{service}"
+    # Route is /api/integrations/{service}/callback — NOT
+    # /api/integrations/callback/{service}. The latter is what the
+    # original code generated, which is why every OAuth callback 404'd.
+    current = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/api/integrations/{service}/callback"
     if stored and stored != current:
         if "oauth" not in settings:
             settings["oauth"] = {}
@@ -182,6 +185,10 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
         raise HTTPException(status_code=501, detail=f"Connector not implemented: {service}")
 
     redirect_uri = _get_redirect_uri(service, request)
+    # Inner token used as the dict key. The outer JSON object (with
+    # service + label embedded) is sent to Google as the URL state param
+    # because we want service/label to survive the redirect. On callback
+    # we parse that JSON and look up by the inner token.
     state = secrets.token_urlsafe(32)
     stored_state = json.dumps({"state": state, "service": service, "label": label})
 
@@ -243,7 +250,18 @@ async def handle_callback(
         _save_oauth_settings(settings)
         pending = settings.get("oauth", {}).get("pending_states", {})
 
-    pending_state = pending.get(state)
+    # The state param Google sends back is the JSON object we constructed
+    # in the authorize handler. Parse it to recover the inner token, then
+    # look up by the inner token (which is how pending_states is keyed).
+    inner_state = None
+    try:
+        parsed_state = json.loads(state) if state else {}
+        inner_state = parsed_state.get("state") if isinstance(parsed_state, dict) else None
+    except (json.JSONDecodeError, TypeError):
+        # Fallback: maybe it's a bare token (older format)
+        inner_state = state or None
+
+    pending_state = pending.get(inner_state) if inner_state else None
     if not pending_state:
         raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
 
@@ -292,7 +310,9 @@ async def handle_callback(
 
     settings = _load_oauth_settings()
     if "oauth" in settings and "pending_states" in settings["oauth"]:
-        settings["oauth"]["pending_states"].pop(state, None)
+        # Pop by inner_state (the dict key), not the JSON state param
+        if inner_state:
+            settings["oauth"]["pending_states"].pop(inner_state, None)
         _save_oauth_settings(settings)
 
     return HTMLResponse(

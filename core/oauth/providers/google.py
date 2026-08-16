@@ -26,9 +26,13 @@ class GoogleConnector(BaseConnector):
     ]
     scopes_write = [
         "https://www.googleapis.com/auth/gmail.send",
-        "https://www.googleapis.com/auth/calendar.events.create",
+        # calendar.events.create is a granular sub-scope of calendar; Google
+        # rejects it as a standalone scope on the consent screen, but it's
+        # already implied by the broader "calendar" scope below.
         "https://www.googleapis.com/auth/calendar",
-        "https://www.googleapis.com/auth/sheets",
+        # Same story: "sheets" is a granular sub-scope of "spreadsheets".
+        # We request the broader one and Google grants everything.
+        "https://www.googleapis.com/auth/spreadsheets",
     ]
     supports_multi_account = True
 
@@ -56,15 +60,21 @@ class GoogleConnector(BaseConnector):
 
     async def handle_callback(self, code: str, state: str, redirect_uri: str) -> dict:
         client_id, client_secret = self._get_credentials()
-        payload = urllib.parse.urlencode({
+        # Token exchange must be application/x-www-form-urlencoded with all
+        # special characters properly escaped. Passing a dict to aiohttp's
+        # `data=` kwarg gets this right automatically (including URL-encoding
+        # the slashes in OAuth codes as %2F). Passing a pre-urlencoded string
+        # makes aiohttp default to text/plain — which Google's token endpoint
+        # rejects with "Invalid JSON payload received. Unexpected token."
+        payload_dict = {
             "code": code,
             "grant_type": "authorization_code",
             "client_id": client_id,
             "client_secret": client_secret,
             "redirect_uri": redirect_uri,
-        })
+        }
         async with aiohttp.ClientSession() as session:
-            async with session.post(GOOGLE_TOKEN_URL, data=payload) as resp:
+            async with session.post(GOOGLE_TOKEN_URL, data=payload_dict) as resp:
                 if resp.status != 200:
                     body = await resp.text()
                     raise Exception(f"Token exchange failed: {body}")

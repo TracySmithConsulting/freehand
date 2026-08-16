@@ -85,7 +85,15 @@ Full suite: **103 tests, 103 passing**.
 
 Full suite: **117 tests, 117 passing, 2 skipped (Windows symlink privilege)**.
 
-## [Unreleased] — 2026-08-12 — round 5 (MCP broker)
+## [Unreleased] — 2026-08-16 — round 6 (Microsoft 365 wired)
+
+### Fixed
+- **Microsoft OAuth token exchange content-type**: `MicrosoftConnector.handle_callback()` was pre-URL-encoding the token-exchange payload and passing it as a string, which made aiohttp send `Content-Type: text/plain`. Microsoft rejects this with `AADSTS900144` ("request body must contain grant_type"). Now passes a dict (same fix as Google on round 5 / commit `63b32fa`). End-to-end verified: real Microsoft 365 account (`trace-space@outlook.com`) connected via Azure broker app, 3 real emails read from Graph API. (`core/oauth/providers/microsoft.py`)
+
+### Tests
+- **Regression tests for provider token-exchange content-type**: `TestProviderTokenExchangeContentType` (2 tests) asserts every provider's `handle_callback` posts a dict (not a pre-urlencoded string). Catches the bug pattern if a new provider copies the old Microsoft code. (`tests/test_oauth_broker.py`)
+
+
 
 Implements the [[../Tracy-Personal-Wiki/concepts/freehand-mcp-broker|freehand-mcp-broker design]]: Deliverable 1 (MCP server surface) + Deliverable 2 (OAuth broker Option B).
 
