@@ -145,6 +145,8 @@ To connect an MCP client (e.g. Claude Desktop):
 
 Full suite: **164 tests, 164 passing, 2 skipped (Windows symlink privilege)**.
 
+- **Round 6.1 (commit pending, 2026-08-16)** — added `rename_connection_label()` to fix the wrong-label UX bug. `freehand rename google --from dbsa --to shazacin` renames a connection in place. 3 regression tests (rename existing, missing label, doesn't affect others). Now 173 tests passing.
+
 ## [Unreleased] — 2026-08-12 — round 5.1 (MCP end-to-end smoke + Bearer auth)
 
 End-to-end smoke test with Codex CLI caught two real bugs and added Bearer auth compatibility.

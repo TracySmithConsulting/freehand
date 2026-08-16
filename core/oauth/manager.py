@@ -104,6 +104,24 @@ def get_connection(service, label="default"):
     return result
 
 
+def rename_connection_label(service: str, old_label: str, new_label: str) -> bool:
+    """Rename a connection's label. Returns True if a row was updated.
+
+    Used when the user picks the wrong label at connect time (e.g.
+    "dbsa" when they meant "shazacin"). The (service, label) pair is
+    the primary key, so this is a single UPDATE.
+    """
+    conn = _get_conn()
+    cursor = conn.execute(
+        "UPDATE connections SET label = ? WHERE service = ? AND label = ? AND status = 'active'",
+        (new_label, service, old_label),
+    )
+    conn.commit()
+    updated = cursor.rowcount > 0
+    conn.close()
+    return updated
+
+
 def list_connections(service=None):
     conn = _get_conn()
     if service:

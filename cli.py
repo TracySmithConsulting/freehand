@@ -240,6 +240,24 @@ def connections():
 
 
 @app.command()
+def rename(
+    service: str = typer.Argument(),
+    old_label: str = typer.Option(..., "--from", help="Current label"),
+    new_label: str = typer.Option(..., "--to", help="New label"),
+):
+    """Rename a connection's label (e.g. 'dbsa' -> 'shazacin')."""
+    import sys
+    sys.path.insert(0, str(_get_project_root()))
+    from core.oauth.manager import rename_connection_label
+    ok = rename_connection_label(service, old_label, new_label)
+    if ok:
+        typer.echo(f"Renamed: {service} ({old_label}) -> ({new_label})")
+    else:
+        typer.echo(f"No connection found: {service} ({old_label})")
+        raise SystemExit(1)
+
+
+@app.command()
 def disconnect(service: str = typer.Argument(), label: str = typer.Option("default", "--label", "-l")):
     """Disconnect a service."""
     import sys

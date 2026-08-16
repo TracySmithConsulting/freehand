@@ -387,3 +387,44 @@ class TestProviderTokenExchangeContentType:
         src = inspect.getsource(GoogleConnector.handle_callback)
         assert "urlencode({" not in src
         assert "data=payload_dict" in src or "data={" in src
+
+
+class TestRenameConnectionLabel:
+    """Round 6.1: rename_connection_label() — used when user picks the wrong
+    label at connect time (e.g. adds second Gmail as 'dbsa' meaning 'shazacin').
+    The (service, label) pair is the primary key."""
+
+    def _isolated_manager(self, tmp_path, monkeypatch):
+        from core.oauth import manager
+        from core import database
+        db = tmp_path / "test.db"
+        monkeypatch.setattr(manager, "DB_PATH", db)
+        monkeypatch.setattr(database, "DB_PATH", db)
+        # Initialize schema (connections table etc.) on the isolated DB
+        database.init_db()
+        return manager
+
+    def test_rename_existing_label(self, tmp_path, monkeypatch):
+        m = self._isolated_manager(tmp_path, monkeypatch)
+        m.save_connection("google", "dbsa", {"access_token": "x", "expires_in": 3600}, ["email"])
+        assert [c["label"] for c in m.list_connections()] == ["dbsa"]
+
+        ok = m.rename_connection_label("google", "dbsa", "shazacin")
+        assert ok is True
+        labels = [c["label"] for c in m.list_connections()]
+        assert labels == ["shazacin"]
+
+    def test_rename_missing_label_returns_false(self, tmp_path, monkeypatch):
+        m = self._isolated_manager(tmp_path, monkeypatch)
+        ok = m.rename_connection_label("google", "nope", "shazacin")
+        assert ok is False
+
+    def test_rename_does_not_affect_other_labels(self, tmp_path, monkeypatch):
+        m = self._isolated_manager(tmp_path, monkeypatch)
+        m.save_connection("google", "tracy", {"access_token": "a", "expires_in": 3600}, ["email"])
+        m.save_connection("google", "dbsa", {"access_token": "b", "expires_in": 3600}, ["email"])
+        m.save_connection("google", "work",  {"access_token": "c", "expires_in": 3600}, ["email"])
+
+        m.rename_connection_label("google", "dbsa", "shazacin")
+        labels = sorted(c["label"] for c in m.list_connections())
+        assert labels == ["shazacin", "tracy", "work"]
