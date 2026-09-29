@@ -4,6 +4,25 @@ All notable changes to FreeHand will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased] — 2026-08-28
+
+### Added — Browser v2 (CDP auto-connect, validation, network capture, checkpoints)
+
+- **Feature 1 — CDP auto-connect**: `get_axtree`, `navigate`, `click`, `fill` now attempt three connection strategies in order: (1) connect to existing Chrome via `chrome://inspect/#remote-debugging` JSON API on localhost:9222 (preserves cookies/logins), (2) connect via Chrome Extension Bridge on localhost:9223 (no consent prompt needed), (3) launch fresh sandboxed Chromium (fallback). `CDP_STRATEGY` environment variable forces a specific strategy for testing.
+- **`get_validation_summary`**: Returns a structured pass/fail summary of the current page: `valid` (bool|null), `field_errors` (list of {field, message}), `aria_live_text`, `http_status`, and `recommendation`. Scans ARIA live regions, error summary divs, field-level `aria-describedby` errors, `aria-invalid`, and pass/fail keyword text. (`core/tools/browser.py`)
+- **`start_request_capture` / `get_captured_requests` / `stop_request_capture`**: Network interception tools using Playwright's `route` API. Requests matching `url_pattern` (regex or substring) are stored in memory with method, URL, request headers/body, response status, response headers/body, and timestamp. (`core/tools/browser.py`)
+- **`save_checkpoint` / `restore_checkpoint` / `list_checkpoints` / `delete_checkpoint`**: Save and restore page state without re-entering data. Captures form values, checkbox states, radio states, select values, cookies, and localStorage as JSON. Checkpoints stored in `vault/checkpoints/`. (`core/tools/browser.py`)
+- **`freehand/chrome_extension/`**: Full Chrome Extension scaffold (Manifest V3) bridging FreeHand's HTTP/JSON-RPC interface to Chrome's built-in `chrome.debugger` API. Components: `manifest.json`, `background.js` (service worker), `content_script.js`, `popup/popup.html` + `popup.js`, `freehand-nph.py` (native messaging host), and `README.md`.
+- **11 new tools registered**: `get_validation_summary`, `start_request_capture`, `get_captured_requests`, `stop_request_capture`, `save_checkpoint`, `restore_checkpoint`, `list_checkpoints`, `delete_checkpoint`, `navigate`, `click`, `fill`. Total tools: **35** (was 24).
+- **`tests/test_browser_v2.py`**: 37 tests covering CDP endpoint detection, validation regex patterns, request capture state machine, checkpoint serialization, Chrome Extension manifest structure, and tool registration.
+
+### Added — How Claude and ChatGPT Control Browsers (investigation)
+
+- **CDP (Chrome DevTools Protocol)** is the mechanism both vendors use — HTTP/WebSocket interface that Chrome exposes when started with `--remote-debugging-port=9222`.
+- **Claude Code**: launches a separate Chrome instance with the debug port flag; connects via WebSocket. Does NOT connect to user's existing browser.
+- **ChatGPT Computer Use**: uses a lightweight desktop helper app (Electron-based on Windows) for OS-level actions; uses CDP for browser. The Chrome Extension path enables "your existing browser with your logins" by bypassing the consent prompt.
+- **`chrome://inspect/#remote-debugging`** is the key URL for manual testing of CDP connections.
+- **Windows foreground constraint**: ChatGPT's Computer Use on Windows must run on the active desktop — it takes over mouse/keyboard. Background co-work is only possible on macOS/Linux.
 
 ## [Unreleased] — 2026-08-11
 
@@ -195,7 +214,7 @@ Full suite: **168 tests, 168 passing, 2 skipped (Windows symlink privilege)**.
 - **Encrypted token storage** — Fernet-encrypted OAuth tokens at rest
 - **CLI** — `freehand` command with subcommands for all operations
 - **Web UI** — single-page dashboard with Connections, Agents, Settings panels
-- **24 agent tools** — 6 write + 18 read (email, calendar, sheets, GitHub, Zoom, browser, documents, memory search)
+- **35 agent tools** — 14 write + 21 read (email, calendar, sheets, GitHub, Zoom, browser v2, documents, memory search)
 - **Install scripts** — one-command install for Windows (PowerShell) and macOS/Linux (bash)
 - **GitHub Actions CI** — test, release, and PyPI publish workflows
 

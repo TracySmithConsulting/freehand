@@ -106,12 +106,17 @@ class MicrosoftConnector(BaseConnector):
         if not refresh_token:
             return None
         token_url = MS_TOKEN_URL.format(tenant=tenant)
-        payload = urllib.parse.urlencode({
+        # Pass dict (not pre-encoded string) so aiohttp sets
+        # Content-Type: application/x-www-form-urlencoded automatically.
+        # Passing a string as data= causes aiohttp to send it as text/plain,
+        # which Microsoft rejects with AADSTS900144 "request body must contain
+        # grant_type". Same fix as handle_callback (round 5, commit 63b32fa).
+        payload = {
             "grant_type": "refresh_token",
             "client_id": client_id,
             "client_secret": client_secret,
             "refresh_token": refresh_token,
-        })
+        }
         async with aiohttp.ClientSession() as session:
             async with session.post(token_url, data=payload) as resp:
                 if resp.status != 200:
@@ -137,7 +142,15 @@ class MicrosoftConnector(BaseConnector):
 
     def parse_error(self, status_code: int, body: dict) -> str:
         err = body.get("error", "")
-        desc = body.get("error_description", "")
+        desc = body.get("error_description", "") or str(body.get("error_uri", ""))
+        # AADSTS900144: request body missing grant_type — almost always means
+        # aiohttp sent the body as text/plain instead of form-encoded.
+        if "AADSTS900144" in str(body):
+            return (
+                "Token exchange failed: Microsoft rejected the request body format "
+                "(AADSTS900144). This is an internal bug — the code was not sending "
+                "the credentials in the correct format. Please reconnect your account."
+            )
         if "admin_policy_enforced" in str(desc) or "consent_required" in str(desc):
             return (
                 "Your Microsoft 365 administrator has restricted third-party access. "

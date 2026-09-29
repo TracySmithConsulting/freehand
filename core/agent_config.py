@@ -87,10 +87,21 @@ TOOL_REGISTRY: Dict[str, str] = {
     "write_docx":         "write",
     "read_xlsx":          "read",
     "read_pptx":          "read",
-    # Browser
-    "get_axtree":         "read",
-    "extract_text":       "read",
-    "take_screenshot":    "read",
+    # Browser v2 (CDP auto-connect, validation, network capture, checkpoints)
+    "get_axtree":             "read",
+    "extract_text":           "read",
+    "take_screenshot":        "read",
+    "navigate":              "write",
+    "click":                 "write",
+    "fill":                  "write",
+    "get_validation_summary": "read",
+    "start_request_capture":  "read",
+    "get_captured_requests": "read",
+    "stop_request_capture":  "read",
+    "save_checkpoint":       "write",
+    "restore_checkpoint":     "write",
+    "list_checkpoints":      "read",
+    "delete_checkpoint":     "write",
     # Email / calendar / sheets (read-only surface exposed here)
     "read_email":         "read",
     "list_calendar_events": "read",
@@ -162,9 +173,9 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "required": ["path"],
         },
     },
-    # ── Browser ────────────────────────────────────────────────────
+    # ── Browser v2 ────────────────────────────────────────────────
     "get_axtree": {
-        "description": "Get the accessibility tree (AXTree) from a URL",
+        "description": "Get the accessibility tree (AXTree) from a URL. Uses CDP auto-connect to use your existing Chrome session if available (preserves cookies and logins). Falls back to a sandboxed Chromium.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -175,7 +186,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "extract_text": {
-        "description": "Extract readable text content from a URL",
+        "description": "Extract readable text content from a URL. Same browser session as get_axtree.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -186,7 +197,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "take_screenshot": {
-        "description": "Take a screenshot of a URL",
+        "description": "Take a screenshot of a URL.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -195,6 +206,115 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "full_page": {"type": "boolean"},
             },
             "required": ["url"],
+        },
+    },
+    "navigate": {
+        "description": "Navigate to a URL and return the AXTree plus a validation summary. Write action — requires approval.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["url"],
+        },
+    },
+    "click": {
+        "description": "Click an element on a page and return the result plus a validation summary. Write action — requires approval.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "selector": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["url", "selector"],
+        },
+    },
+    "fill": {
+        "description": "Fill a form field and return the result plus a validation summary. Write action — requires approval.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "selector": {"type": "string"},
+                "value": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["url", "selector", "value"],
+        },
+    },
+    "get_validation_summary": {
+        "description": "Get a structured pass/fail summary of the current page state. Scans for ARIA live regions, error summaries, field-level errors, and pass/fail keyword text. Returns valid (bool|null), field_errors, aria_live_text, http_status, and a recommendation for next action.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["url"],
+        },
+    },
+    "start_request_capture": {
+        "description": "Start capturing network requests and responses. All requests matching url_pattern (regex or substring) are stored. Call get_captured_requests to retrieve them.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url_pattern": {"type": "string", "description": "Regex or substring to filter requests. None captures everything."},
+            },
+            "required": [],
+        },
+    },
+    "get_captured_requests": {
+        "description": "Retrieve the most recent captured network requests since the last start_request_capture call. Each entry includes method, URL, headers, body, response status, headers, and body.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max entries to return (default 50, max 200)."},
+            },
+            "required": [],
+        },
+    },
+    "stop_request_capture": {
+        "description": "Stop capturing network requests.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "list_checkpoints": {
+        "description": "List all saved checkpoints with name, URL, timestamp, and size.",
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "save_checkpoint": {
+        "description": "Save the current page state as a named checkpoint. Captures form values, checkbox states, cookies, and localStorage. Essential for iterative form testing — restore to re-enter all data without a page reload.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "url": {"type": "string"},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["name", "url"],
+        },
+    },
+    "restore_checkpoint": {
+        "description": "Restore a saved checkpoint by name, re-applying form values, cookies, and localStorage without a page reload.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "url": {"type": "string", "description": "Verify the checkpoint matches this URL. Omit to restore regardless of current URL."},
+                "mode": {"type": "string", "enum": ["headless", "headed"]},
+            },
+            "required": ["name"],
+        },
+    },
+    "delete_checkpoint": {
+        "description": "Delete a saved checkpoint by name.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+            "required": ["name"],
         },
     },
     # ── Email / Calendar / Sheets ──────────────────────────────────

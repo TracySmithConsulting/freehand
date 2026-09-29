@@ -1,5 +1,5 @@
 """Tests for round-4 fixes (Aug 2026):
-- B2: list_available_tools() is registry-driven (24 tools visible)
+- B2: list_available_tools() is registry-driven (35 tools visible)
 - R10: sync_vault_to_sqlite skips 00_Scribble.md and .sweep_state.json
 - R11: parse_skills enforces project-root boundary (rejects symlink escape)
 - R13: sync_vault_to_sqlite end-to-end
@@ -45,7 +45,7 @@ class TestListAvailableTools:
         tools = agent_config.list_available_tools()
         names = {t["function"]["name"] for t in tools}
         assert names == set(agent_config.TOOL_REGISTRY.keys())
-        assert len(tools) == 24
+        assert len(tools) == 35
 
     def test_write_tools_visible(self):
         """The previously-dead write tools (post_to_facebook etc.) are now visible."""

@@ -8,7 +8,12 @@ import aiohttp
 from core.agent_config import get_llm_config, build_system_prompt, list_available_tools
 from core.security import get_current_tier, intercept_action, PermissionTier
 from core.tools.office import read_docx, write_docx, read_xlsx, read_pptx
-from core.tools.browser import get_axtree, extract_text, screenshot
+from core.tools.browser import (
+    get_axtree, extract_text, screenshot, navigate, click, fill,
+    get_validation_summary,
+    start_request_capture, get_captured_requests, stop_request_capture,
+    save_checkpoint, restore_checkpoint, list_checkpoints, delete_checkpoint,
+)
 from core.tools.integrations import (
     read_email, list_calendar_events, read_sheets, read_sheet_range,
     get_github_repos, list_github_issues, create_github_issue,
@@ -245,6 +250,60 @@ async def execute_tool(name: str, args: dict) -> dict:
         elif name == "search_memory":
             results = search_memory(args.get("query", ""), limit=args.get("limit", 5))
             return {"content": json.dumps(results, default=str)}
+
+        # ── Browser v2 tools ───────────────────────────────────────────
+        elif name == "navigate":
+            result = await navigate(args.get("url", ""), mode=args.get("mode", "headless"))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "click":
+            result = await click(
+                selector=args.get("selector", ""),
+                url=args.get("url", ""),
+                mode=args.get("mode", "headless"),
+            )
+            return {"content": json.dumps(result, default=str)}
+        elif name == "fill":
+            result = await fill(
+                url=args.get("url", ""),
+                selector=args.get("selector", ""),
+                value=args.get("value", ""),
+                mode=args.get("mode", "headless"),
+            )
+            return {"content": json.dumps(result, default=str)}
+        elif name == "get_validation_summary":
+            result = await get_validation_summary(
+                args.get("url", ""), mode=args.get("mode", "headless")
+            )
+            return {"content": json.dumps(result, default=str)}
+        elif name == "start_request_capture":
+            result = start_request_capture(url_pattern=args.get("url_pattern"))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "get_captured_requests":
+            result = get_captured_requests(limit=args.get("limit", 50))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "stop_request_capture":
+            result = stop_request_capture()
+            return {"content": json.dumps(result, default=str)}
+        elif name == "save_checkpoint":
+            result = await save_checkpoint(
+                name=args.get("name", ""),
+                url=args.get("url", ""),
+                mode=args.get("mode", "headless"),
+            )
+            return {"content": json.dumps(result, default=str)}
+        elif name == "restore_checkpoint":
+            result = await restore_checkpoint(
+                name=args.get("name", ""),
+                url=args.get("url"),
+                mode=args.get("mode", "headless"),
+            )
+            return {"content": json.dumps(result, default=str)}
+        elif name == "list_checkpoints":
+            result = list_checkpoints()
+            return {"content": json.dumps(result, default=str)}
+        elif name == "delete_checkpoint":
+            result = delete_checkpoint(name=args.get("name", ""))
+            return {"content": json.dumps(result, default=str)}
         else:
             return {"content": json.dumps({"error": f"Unknown tool: {name}"})}
     except Exception as e:
