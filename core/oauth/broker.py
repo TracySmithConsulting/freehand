@@ -134,7 +134,34 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     if cid and sec:
         return cid, sec, "broker"
 
+    # 4. Tier-5 fallback — OpenConnector runtime (Pitfall 21 / Round 7).
+    #    Best-effort only: never raises into caller. Tier-5 advertises the
+    #    service to FreeHand but does NOT surface tokens — FreeHand calls
+    #    through OpenConnector at request time.
+    try:
+        if _oc_available() and _oc_service_known(service):
+            return None, None, "open_connector"
+    except Exception as e:  # last-line defence
+        log.debug(f"tier-5 open-connector lookup failed for {service}: {e}")
+
     return None, None, "none"
+
+
+def _oc_available() -> bool:
+    """Is the OpenConnector runtime reachable? Stub for round 1; Round 7
+    Task 3 replaces this with a real HTTP health-check to
+    ``OOMOL_CONNECT_BASE_URL/v1/health``. Return False so tier-5 is a
+    silent no-op until the client module lands.
+    """
+    return False
+
+
+def _oc_service_known(service: str) -> bool:
+    """Does the OpenConnector runtime know about this service? Stub for
+    round 1; Round 7 Task 3 will look it up via the MCP ``list_apps``
+    call. Always False until then.
+    """
+    return False
 
 
 def broker_status() -> dict:
