@@ -67,3 +67,7 @@ htmlcov/
 *.spec.py
 dist/
 *.tar.gz
+
+# Operational bring-up logs (Round 7 dev scripts — ad-hoc, not project tools)
+*-task*.log
+run-*.sh

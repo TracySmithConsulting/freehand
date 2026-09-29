@@ -4,6 +4,24 @@ All notable changes to FreeHand will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased] — 2026-09-28
+
+### Added — Round 7: OpenConnector fallback broker
+
+- **`core/oauth/open_connector.py`** — Tier-5 client. Stdlib-only (`urllib`, no runtime dep added). Methods: `is_available()`, `service_is_known(service_id)`, plus a forward-looking `call_mcp_action(action, arguments)` helper. 30-second TTL cache. Never raises into the broker.
+- **`core/oauth/broker.py`** — Tier-5 wired into `get_client_credentials()`. Returns `(None, None, "open_connector")` when tiers 1-4 are empty AND `_oc_available()` AND `_oc_service_known()`. Pitfall 5 invariant preserved — user override still wins. New helper `broker.is_known_to_open_connector(service)` exposed for callers that want to ask "is this service tier-5?" without going through full credential resolution.
+- **`core/oauth/router.py`** — `GET /api/integrations/<service>/authorize` tier-5 redirect. Above the `ALLOWED_SERVICES` guard. If the broker reports the service as tier-5, FreeHand 302s the browser to OpenConnector's Web Console (Pitfall 24 — never a JSON dump with a URL to copy). The legacy allowlist path is preserved: `google` / `microsoft` / `zoom` / `facebook` / `instagram` / `github` / `email` continue to return the existing `{"authorize_url": ..., "state": ...}` JSON.
+- **18 new tests** — `tests/test_open_connector_broker.py` (5), `tests/test_open_connector_client.py` (9), `tests/test_tier5_router_redirect.py` (4).
+- **`docs/integrations/open-connector.md`** — Bring-up, env vars, troubleshooting guide.
+
+### Fixed
+- **`service_is_known` reads `service` key, not `id`**. Live smoke test against `oomol-lab/open-connector@main` (`#93cd3e5`) exposed the wire-format mismatch: `/v1/providers` returns `{service: "hackernews", displayName: ..., ...}` not `{id: ...}`. Fix honours both keys so the client survives any future wire-format shuffle. Regression-tested via `test_true_for_oc_real_wire_format`.
+
+### Notes
+- **Microsoft 365 / Outlook routing is unchanged**: still goes through FreeHand's first-party broker (Azure subscription is still required for that one provider). OpenConnector's hosted Slack/Notion/etc. don't change the Azure requirement for M365.
+- **No FreeHand tool registry growth**: this round does NOT auto-register OpenConnector actions as FreeHand tools (that would let `run_agent()` call `slack.post_message` directly). Round 8 candidate — out of scope here.
+- **Test count**: net +18 tests added in Round 7 (5 + 9 + 4 across three new files). Pre-Round-7 baseline was 210 unit + 37 browser-v2 = 247 collected. Post-Round-7: 230 collected, 228 passing, 2 skipped, 0 regressions.
+
 ## [Unreleased] — 2026-08-28
 
 ### Added — Browser v2 (CDP auto-connect, validation, network capture, checkpoints)
