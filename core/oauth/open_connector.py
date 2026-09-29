@@ -161,10 +161,18 @@ def service_is_known(service: str) -> bool:
     if not services:
         return False
     needle = service.strip().lower()
-    return any(
-        isinstance(s, dict) and isinstance(s.get("id"), str) and s["id"] == needle
-        for s in services
-    )
+    for s in services:
+        if not isinstance(s, dict):
+            continue
+        # /v1/providers returns each entry with a ``service`` key
+        # (NOT ``id`` — that was my first cut, verified wrong 28 Sep 2026
+        # against a live OC runtime). Some responses also surface an
+        # ``id`` key; both shapes are honoured here.
+        for field in ("service", "id"):
+            value = s.get(field)
+            if isinstance(value, str) and value.strip().lower() == needle:
+                return True
+    return False
 
 
 def call_mcp_action(action: str, arguments: dict) -> Optional[dict]:

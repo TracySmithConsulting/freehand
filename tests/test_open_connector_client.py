@@ -51,7 +51,10 @@ class _FakeOpenConnector(BaseHTTPRequestHandler):
 
     # The test sets these on the class before serving:
     HEALTH_OK = True
-    SERVICES = []  # list of dicts with at least {"id": str}
+    SERVICES = []  # list of dicts; for matching OC reality the id is
+    # under the "service" key, not "id". The client must honour both
+    # shapes — verified against a live oomol-lab/open-connector@main
+    # runtime on 28 Sep 2026.
 
     def log_message(self, *_args, **_kwargs):  # silence stderr noise
         return
@@ -153,6 +156,18 @@ class TestServiceIsKnown:
         ]
         open_connector._reset_cache_for_tests()
         assert open_connector.service_is_known("slack") is True
+
+    def test_true_for_oc_real_wire_format(self, fake_oc):
+        """Live oomol-lab/open-connector@main /v1/providers returns
+        objects with ``service`` (not ``id``) as the provider id.
+        Captured 28 Sep 2026 from curl -fsS /v1/providers."""
+        fake_oc.SERVICES = [
+            {"service": "hackernews", "displayName": "Hacker News"},
+            {"service": "github", "displayName": "GitHub"},
+        ]
+        open_connector._reset_cache_for_tests()
+        assert open_connector.service_is_known("hackernews") is True
+        assert open_connector.service_is_known("github") is True
 
     def test_false_for_catalog_miss(self, fake_oc):
         fake_oc.SERVICES = [{"id": "slack", "displayName": "Slack"}]
