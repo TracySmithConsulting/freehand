@@ -1,4 +1,5 @@
 import json
+import os
 import secrets
 import sys
 from pathlib import Path
@@ -8,7 +9,7 @@ import aiohttp
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from fastapi import APIRouter, HTTPException, Request, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from core.oauth.manager import (
     save_connection,
@@ -174,6 +175,25 @@ async def list_integrations(request: Request):
 
 @router.get("/{service}/authorize")
 async def get_authorize_url(service: str, label: str = "default", request: Request = None):
+    # Round 7 / Pitfall 24: tier-5 redirect lives ABOVE the allowlist.
+    # If the broker says tier-5 (OpenConnector) knows this service and
+    # the user lands on this URL, send them straight to OC's Web Console
+    # for one-click consent — instead of returning a JSON dump they would
+    # have to copy a URL out of.
+    #
+    # Lazy import avoids the circular core.oauth.broker ↔ core.oauth.router
+    # dependency in core/oauth/__init__.py.
+    from core.oauth import broker as _broker
+    try:
+        if _broker.is_known_to_open_connector(service):
+            oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+            target = f"{oc_base}/?authorize={service}&label={label}&from=freehand"
+            return RedirectResponse(target, status_code=302)
+    except Exception:
+        # tier-5 must NEVER break the existing flow — fall through to
+        # the standard allowlist-based handling.
+        pass
+
     if service not in ALLOWED_SERVICES:
         raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
     if label not in ("default", "work", "personal"):

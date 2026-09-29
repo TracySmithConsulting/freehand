@@ -158,6 +158,22 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     return None, None, "none"
 
 
+def is_known_to_open_connector(service: str) -> bool:
+    """Does OpenConnector's tier-5 resolution think it knows this service?
+
+    Returns True iff _oc_available() and _oc_service_known(service) both
+    succeed. Used by the OAuth router to choose the tier-5 redirect path
+    BEFORE the ALLOWED_SERVICES guard runs (Pitfall 24 + Round 7).
+
+    Never raises — both helpers are best-effort and the broker layer
+    treats any failure as a False.
+    """
+    try:
+        return bool(_oc_available() and _oc_service_known(service))
+    except Exception:
+        return False
+
+
 def broker_status() -> dict:
     """Diagnostic: which services have credentials, and where from.
 
