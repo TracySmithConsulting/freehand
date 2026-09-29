@@ -63,6 +63,12 @@ ENV_PREFIX = "FREEHAND_BROKER_"
 # monkeypatching simple. The function lives in core.oauth.router.
 from core.oauth.router import _load_oauth_settings as _load_user_settings
 
+# OpenConnector fallback client (Round 7 tier-5).
+# - is_available():   True iff the OC runtime is up + authed.
+# - service_is_known(name): True iff OC knows the service.
+from core.oauth.open_connector import is_available as _oc_available
+from core.oauth.open_connector import service_is_known as _oc_service_known
+
 
 def _broker_config_path() -> Path:
     """Path to broker_config.json — sits next to settings.json."""
@@ -95,12 +101,17 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     """Return (client_id, client_secret, source) for the given OAuth service.
 
     source is one of:
-      - "user"     — user-supplied override in settings.json
-      - "env"      — environment variable
-      - "broker"   — broker_config.json
-      - "none"     — not configured anywhere
+      - "user"           — user-supplied override in settings.json
+      - "env"            — environment variable
+      - "broker"         — broker_config.json
+      - "open_connector" — tier-5 fallback: the OpenConnector runtime
+                           on localhost:3000 advertises this service.
+                           FreeHand calls *through* the OC runtime at
+                           request time; no real secrets flow through
+                           this layer.
+      - "none"           — not configured anywhere
 
-    Always returns the user override first if both are set.
+    Always returns the user override first if multiple tiers are set.
 
     Returns (None, None, "none") if no credentials are configured.
     Caller should treat that as "user must register their own OAuth app."
@@ -134,7 +145,7 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     if cid and sec:
         return cid, sec, "broker"
 
-    # 4. Tier-5 fallback — OpenConnector runtime (Pitfall 21 / Round 7).
+    # 4. Tier-5 fallback — OpenConnector runtime (Round 7).
     #    Best-effort only: never raises into caller. Tier-5 advertises the
     #    service to FreeHand but does NOT surface tokens — FreeHand calls
     #    through OpenConnector at request time.
@@ -145,23 +156,6 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
         log.debug(f"tier-5 open-connector lookup failed for {service}: {e}")
 
     return None, None, "none"
-
-
-def _oc_available() -> bool:
-    """Is the OpenConnector runtime reachable? Stub for round 1; Round 7
-    Task 3 replaces this with a real HTTP health-check to
-    ``OOMOL_CONNECT_BASE_URL/v1/health``. Return False so tier-5 is a
-    silent no-op until the client module lands.
-    """
-    return False
-
-
-def _oc_service_known(service: str) -> bool:
-    """Does the OpenConnector runtime know about this service? Stub for
-    round 1; Round 7 Task 3 will look it up via the MCP ``list_apps``
-    call. Always False until then.
-    """
-    return False
 
 
 def broker_status() -> dict:
