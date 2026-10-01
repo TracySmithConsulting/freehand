@@ -4,6 +4,62 @@ All notable changes to FreeHand will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased] — 2026-10-01
+
+### Added — Round 8: Shared OAuth broker apps
+
+Tracy's stated goal for this round (30 Sep 2026): *"I want it to be as easy as possible for people to connect their apps. Where I can't do it, we go with option A, we say so honestly, and then they would have to do their own dance, but as far as possible, I'd go with B."* Round 8 is the broker-brokered path: FreeHand holds the shared OAuth credentials in its Fernet-encrypted vault so users get a one-click consent screen instead of the "register your own app" loop.
+
+- **Tier-1b in the broker** (`core/oauth/broker.py`) — new resolution tier between tier-1 (per-user override) and tier-2 (env vars). Returns `(client_id, client_secret, "shared_app")` when `vault/broker_config.json -> shared_apps.<service>` has an entry. **Pitfall-5 invariant preserved**: tier-1 (per-user override) still wins. Real credentials surface to the caller (unlike tier-5 OC's pointer). Inserted between tier-1 and tier-2 so the resolution order is `user > shared_app > env > broker > oc > none`.
+
+- **`core/oauth/shared_apps.py`** — new module: `load_shared_apps()` (broker-facing, decrypts secrets via `vault/encryption.key`), `add_shared_app()` / `remove_shared_app()` / `list_shared_apps()` (CLI-facing, `list` deliberately never returns the secret). `client_secret` is Fernet-encrypted on disk immediately on write — same key path as `api_key` and connection tokens. Lock-protected writes via `threading.Lock`.
+
+- **`GET /api/integrations/<service>/authorize` 503 fallback** (`core/oauth/router.py`) — when the service has neither a per-user override, a tier-1b shared app, env/broker credentials, nor an OC catalog entry, FreeHand returns **HTTP 503 with a structured body** instead of the old 404 dead-end:
+  ```json
+  {
+    "error": "no_shared_app",
+    "service": "<service>",
+    "message": "FreeHand doesn't have a shared OAuth app for <service> yet...",
+    "request_url": "https://github.com/TracySmithConsulting/freehand/issues/new?title=...&body=...",
+    "contact_email": "tracy@tracysmith.co.za",
+    "scopes_help": "https://docs.tracysmith.co.za/integrations/shared-apps.html#contributing-a-shared-app"
+  }
+  ```
+  `request_url` is a pre-filled GitHub issue URL — user clicks, reviews, submits. **FreeHand does NOT create the issue on the user's behalf** (zero auth surface). Tracy's email is the non-GitHub fallback. Built with `urllib.parse.urlencode` (stdlib, no new runtime dep — Pitfall 32).
+
+- **Tier-1b preempts tier-5 redirect** — for services NOT in `ALLOWED_SERVICES`: if broker returns `shared_app` source, FreeHand falls through to the existing connector path. If broker returns `open_connector`, FreeHand 302s to OC's Web Console. Otherwise, the 503 fallback fires. **Ordering invariant**: services in `ALLOWED_SERVICES` (Google, Microsoft, etc.) always fall through to the existing connector path — tier-1b/tier-5/503 are ONLY for services outside the allowlist. Otherwise an allowlisted service like Google that OC also knows would get hijacked by OC's redirect.
+
+- **`freehand shared-app` CLI subcommands** (`cli.py`) — `add <service> --client-id ... --client-secret ... [--scopes ...] [--registered-by ...]`, `list`, `remove <service>`. Lazy imports keep the CLI boot path fast. The CLI is the right home for these operations — Tracy is the only person who runs them, they're one-time-per-service, and the broker does the runtime lookup via `/authorize`.
+
+- **`docs/integrations/shared-apps.md`** (new) — end-user and Tracy-facing: what shared apps are, when to use them vs. per-user tier-1 vs. OC tier-5, the CLI workflow, the 503 fallback UX, the security model (`encryption.key` shared with `api_key`), "Requesting a service" subsection (GitHub pre-fill + email paths), "Contributing a shared app" path for developer PRs.
+
+- **`docs/integrations/slack-oauth-setup.md`** (new) — Slack-portal walkthrough for the shared-app registration: the four-token-type taxonomy (`xoxp`/`xoxb`/`xapp`/Client-ID), what `client_id` vs `client_secret` vs Bot User OAuth Token are for, the Reinstall trap (Pitfall 33), the Add-then-Save-URLs trap (Pitfall 33a), the missing_scope trap (Pitfall 34), and the `--scopes` alignment with Bot Token Scopes registered at api.slack.com.
+
+### Fixed
+
+- **Round 7 unknown-service 404 replaced with structured 503** — `tests/test_integration.py::TestIntegrations::test_unknown_service` and `tests/test_tier5_router_redirect.py::TestAuthoriseTier5Redirect::test_unknown_service_with_oc_*_returns_404` updated to assert 503 + structured body. The old 404 was a user dead-end with no actionable path; the new 503 gives the user a way to request the service.
+
+### Verified live
+
+Task 6 live smoke + Task 7 matrix (2026-10-01):
+
+| Service | Path | Result |
+|---|---|---|
+| `google` | tier-1 (per-user broker) | 200 JSON with Google authorize URL |
+| `slack` | tier-5 (OC) — full OAuth dance via OC | 302 to OC → Slack consent screen → token stored (`accountId: U0C56R6LTD4`, `grantedScopes: [im:history, channels:read, users:read, chat:write]`) |
+| `hackernews` | tier-5 (OC, no-auth) | 302 to OC console |
+| `linear` | tier-5 (OC) | 302 to OC console |
+| `myspace` | none → **503** | `error=no_shared_app`, `service=myspace`, pre-filled GitHub URL, `contact_email=tracy@tracysmith.co.za` |
+
+### Notes
+
+- **Microsoft 365 still routes via first-party broker** (Azure subscription requirement unchanged for that one provider).
+- **Honest scope limitation**: tier-1b works end-to-end for services that have a FreeHand connector (Google, Microsoft, Zoom, etc. — the existing `_get_credentials()` calls `broker.get_client_credentials()` and picks up tier-1b transparently). For services WITHOUT a FreeHand connector (Slack, Notion, Linear, etc.), tier-1b's broker side works but FreeHand has nothing to render the authorize URL — `get_connector(service)` returns `None` and the user gets `501 Connector not implemented`. Round 9 candidate: add per-service Python connectors for tier-1b services.
+- **Test count**: net +24 tests added in Round 8 (7 broker + 8 router + 8 CLI + 1 from Round 7's `test_tier5_router_redirect.py` shape updates). Pre-Round-8 baseline was 228 passing + 2 skipped = 230 collected. Post-Round-8: 251 passing + 2 skipped = 253 collected, 0 regressions.
+- **No FreeHand tool registry growth**: tier-1b does NOT auto-register provider actions as FreeHand tools (that would let `run_agent()` call `slack.post_message` directly via FreeHand's tool layer). That's a separate Round 9 candidate — out of scope here.
+- **Four commits**: `36a88e0` (broker wiring + helper), `41cad51` (router tier-1b preemption + 503), `6b165a0` (CLI subcommands), plus this docs commit.
+
 ## [Unreleased] — 2026-09-28
 
 ### Added — Round 7: OpenConnector fallback broker
