@@ -74,11 +74,26 @@ services:
       # Match the in-container freehand user to your host user so the
       # bind-mounted vault + agent.db are writable. Override via
       # `UID=$(id -u) GID=$(id -g) docker compose build`.
+      #
+      # CAVEAT for Windows hosts: Docker Desktop on Windows uses
+      # gRPC-FUSE which doesn't propagate host UID mappings cleanly to
+      # the container. Even with matching build-args, the host's
+      # agent.db stays owned by the host user and the in-container
+      # freehand user can't write to it. Two workarounds:
+      #   - Set `UID=0 GID=0` (the default) and override `user:` below
+      #     to "0:0" — runs FreeHand as root in the container
+      #   - OR move agent.db into ./vault/ (Round 10 candidate)
+      # Linux hosts and CI runners work correctly with non-zero UID/GID.
       args:
-        UID: ${UID:-1000}
-        GID: ${GID:-1000}
+        UID: ${UID:-0}
+        GID: ${GID:-0}
     container_name: freehand-app
     restart: unless-stopped
+    # Override the in-container user. Default to root (UID 0:0) for
+    # Windows-host compatibility. Linux hosts should override via
+    # `user: "${UID:-1000}:${GID:-1000}"` in their .env-driven override
+    # or via a docker-compose.override.yml.
+    user: "${FREEHAND_USER:-0:0}"
     depends_on:
       open-connector:
         # Don't start FreeHand until OC is healthy. avoids the
