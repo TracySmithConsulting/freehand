@@ -108,8 +108,17 @@ class TestIntegrations:
         assert d["label"] == "work"
 
     def test_unknown_service(self, client):
+        # Round 8 changed the unknown-service response from 404 to 503
+        # with a structured 'honest option A' body (pre-filled GitHub
+        # issue URL + email fallback). The old 404 was the user dead-end;
+        # 503 gives the user a way to request the service.
         r = client.get("/api/integrations/unknown/authorize")
-        assert r.status_code == 404
+        assert r.status_code == 503
+        body = r.json()
+        assert body["error"] == "no_shared_app"
+        assert body["service"] == "unknown"
+        assert "request_url" in body
+        assert "contact_email" in body
 
     def test_test_no_connection(self, client):
         r = client.post("/api/integrations/google/test")

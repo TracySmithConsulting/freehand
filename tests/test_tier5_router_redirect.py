@@ -77,30 +77,42 @@ class TestAuthoriseTier5Redirect:
             f"expected service id 'slack' in redirect URL, got {location!r}"
         )
 
-    def test_unknown_service_with_oc_unknown_returns_404(self, tmp_path, monkeypatch):
-        """OC is up but doesn't have this service — keep the legacy
-        404 behavior (Pitfall 5 invariant: silent fallback to 'none')."""
+    def test_unknown_service_with_oc_unknown_returns_503(self, tmp_path, monkeypatch):
+        """OC is up but doesn't have this service — Round 8 replaced the
+        old 404 with a 503 'honest option A' fallback (pre-filled GitHub
+        URL + email contact). This test pins the new contract so future
+        rounds don't accidentally revert to 404."""
         from core import agent_config
         vault = tmp_path / "vault"
         vault.mkdir()
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: True)
         monkeypatch.setattr(broker_mod, "_oc_service_known", lambda svc: False)
+        # Round 8 tier-1b is empty
+        monkeypatch.setattr(broker_mod, "_load_shared_apps", lambda: {})
         client = _isolated_app()
         r = client.get("/api/integrations/zzzunknown/authorize")
-        assert r.status_code == 404
+        assert r.status_code == 503, (
+            f"Round 8 expects 503 honest-option-A fallback, got {r.status_code}: {r.text}"
+        )
+        body = r.json()
+        assert body.get("error") == "no_shared_app"
+        assert "request_url" in body  # pre-filled GitHub issue URL
 
-    def test_unknown_service_with_oc_down_returns_404(self, tmp_path, monkeypatch):
-        """OC is down — broker falls through to none — user gets 404,
-        which is the correct behavior (FreeHand cannot help them)."""
+    def test_unknown_service_with_oc_down_returns_503(self, tmp_path, monkeypatch):
+        """OC is down — broker falls through to none — user gets the Round 8
+        503 honest-option-A fallback. Same shape as the OC-unknown case."""
         from core import agent_config
         vault = tmp_path / "vault"
         vault.mkdir()
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: False)
+        monkeypatch.setattr(broker_mod, "_load_shared_apps", lambda: {})
         client = _isolated_app()
         r = client.get("/api/integrations/slack/authorize")
-        assert r.status_code == 404
+        assert r.status_code == 503
+        body = r.json()
+        assert body.get("error") == "no_shared_app"
 
 
 class TestAuthoriseRegression:

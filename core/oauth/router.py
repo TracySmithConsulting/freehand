@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import sys
+import urllib.parse
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -9,7 +10,7 @@ import aiohttp
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from fastapi import APIRouter, HTTPException, Request, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from core.oauth.manager import (
     save_connection,
@@ -45,6 +46,75 @@ def _load_oauth_settings() -> dict:
 def _save_oauth_settings(data: dict) -> None:
     settings_path = Path(__file__).parent.parent.parent / "vault" / "settings.json"
     settings_path.write_text(json.dumps(data))
+
+
+# ── 503 'honest option A' fallback (Round 8) ──────────────────────────
+# When the user clicks Connect for a service that FreeHand has neither a
+# per-connector, a shared app (tier-1b), nor an OC catalog entry for
+# (tier-5), FreeHand returns 503 with a structured body that includes
+# a pre-filled GitHub issue URL the user can click to file a request,
+# plus Tracy's email as a non-GitHub path. FreeHand does NOT create the
+# issue on the user's behalf — that would require auth surface Tracy
+# hasn't agreed to. The user reviews and submits themselves.
+
+_GITHUB_REPO = "TracySmithConsulting/freehand"
+_CONTACT_EMAIL = "tracy@tracysmith.co.za"
+_SCOPES_HELP_URL = (
+    "https://docs.tracysmith.co.za/integrations/shared-apps.html#contributing-a-shared-app"
+)
+
+
+def _build_github_issue_url(service: str) -> str:
+    """Build a GitHub 'new issue' URL with title and body pre-filled.
+
+    Uses urllib.parse.quote (stdlib) — no new runtime dep. Pitfall 17
+    applies: the URL is the channel of truth for the user; the body
+    content helps Tracy triage the request without further back-and-forth.
+    """
+    title = f"Request: shared OAuth app for {service}"
+    body = (
+        f"Please add a FreeHand-managed shared OAuth app for **{service}**.\n\n"
+        f"### What I need\n"
+        f"- Service: `{service}`\n"
+        f"- OAuth scopes required: <!-- list the scopes your agent needs -->\n"
+        f"- Any provider-specific notes: <!-- e.g. paid developer account, "
+        f"workspace install, tenant restrictions -->\n\n"
+        f"### What FreeHand version\n"
+        f"- FreeHand: <!-- e.g. v0.1.8 -->\n"
+        f"- OS: <!-- Windows / macOS / Linux -->\n"
+    )
+    base = f"https://github.com/{_GITHUB_REPO}/issues/new"
+    params = urllib.parse.urlencode({"title": title, "body": body})
+    return f"{base}?{params}"
+
+
+def _no_shared_app_503(service: str) -> JSONResponse:
+    """Build the 503 response for 'FreeHand doesn't have a shared app yet'.
+
+    Body fields:
+      - error:        'no_shared_app' (machine-readable)
+      - service:      the missing service id
+      - message:      human-readable explanation
+      - request_url:  pre-filled GitHub issue URL (user clicks, reviews, submits)
+      - contact_email: Tracy's email for non-GitHub users
+      - scopes_help:  docs link explaining what Tracy needs from the requester
+    """
+    return JSONResponse(
+        status_code=503,
+        content={
+            "error": "no_shared_app",
+            "service": service,
+            "message": (
+                f"FreeHand doesn't have a shared OAuth app for {service} yet. "
+                f"You can request it — click the request_url to file a GitHub "
+                f"issue with the details pre-filled, or email Tracy if you'd "
+                f"rather not use GitHub."
+            ),
+            "request_url": _build_github_issue_url(service),
+            "contact_email": _CONTACT_EMAIL,
+            "scopes_help": _SCOPES_HELP_URL,
+        },
+    )
 
 
 # ── Pending-state TTL sweep ────────────────────────────────────────────
@@ -175,27 +245,50 @@ async def list_integrations(request: Request):
 
 @router.get("/{service}/authorize")
 async def get_authorize_url(service: str, label: str = "default", request: Request = None):
-    # Round 7 / Pitfall 24: tier-5 redirect lives ABOVE the allowlist.
-    # If the broker says tier-5 (OpenConnector) knows this service and
-    # the user lands on this URL, send them straight to OC's Web Console
-    # for one-click consent — instead of returning a JSON dump they would
-    # have to copy a URL out of.
+    # Round 8 ordering:
+    #   1. If the service is in ALLOWED_SERVICES (FreeHand has a first-party
+    #      connector for it), fall through to the legacy connector path
+    #      unconditionally. Tier-1b/tier-5/503 are ONLY for services
+    #      outside the allowlist — otherwise an allowlisted service like
+    #      Google that OC also knows would get hijacked by OC's redirect,
+    #      or a service with no broker creds would get 503'd instead of
+    #      going through the connector's authorize_url().
+    #   2. Round 8 / Pitfall 5: tier-1b (FreeHand-managed shared OAuth app)
+    #      preempts the tier-5 redirect when the broker resolves the service
+    #      to a FreeHand-shared client. Real credentials beat the runtime
+    #      pointer — the user gets FreeHand's consent-screen path, not a
+    #      redirect to OC's "configure your client first" page.
+    #   3. Round 7 / Pitfall 24: tier-5 redirect lives ABOVE the 503 guard
+    #      (one click to provider consent, no JSON dump antipattern).
+    #   4. Round 8 honest-option-A fallback: 503 with pre-filled GitHub
+    #      issue URL + email contact. Replaces the old 404 "Unknown service".
     #
-    # Lazy import avoids the circular core.oauth.broker ↔ core.oauth.router
-    # dependency in core/oauth/__init__.py.
-    from core.oauth import broker as _broker
-    try:
-        if _broker.is_known_to_open_connector(service):
-            oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
-            target = f"{oc_base}/?authorize={service}&label={label}&from=freehand"
-            return RedirectResponse(target, status_code=302)
-    except Exception:
-        # tier-5 must NEVER break the existing flow — fall through to
-        # the standard allowlist-based handling.
-        pass
-
+    # Pitfall 27 (FreeHand): lazy import avoids the circular
+    # `core.oauth.broker` ↔ `core.oauth.router` dependency in
+    # `core/oauth/__init__.py`.
     if service not in ALLOWED_SERVICES:
-        raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+        from core.oauth import broker as _broker
+        try:
+            _cid, _sec, _src = _broker.get_client_credentials(service)
+            if _src == "shared_app":
+                # Tier-1b resolves to a FreeHand-shared app. The provider
+                # connector (if any) will pick up the credentials through
+                # the broker. Fall through to the existing allowlist +
+                # connector.authorize_url() path. NOT a 302.
+                pass
+            elif _broker.is_known_to_open_connector(service):
+                oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+                target = f"{oc_base}/?authorize={service}&label={label}&from=freehand"
+                return RedirectResponse(target, status_code=302)
+            else:
+                # Neither tier-1b nor tier-5 has it. Round 8 honest-option-A
+                # fallback: 503 with pre-filled GitHub issue URL + email
+                # contact.
+                return _no_shared_app_503(service)
+        except Exception:
+            # tier-5/1b must NEVER break the existing flow — fall through to
+            # the standard connector-based handling.
+            pass
     if label not in ("default", "work", "personal"):
         if len(label) > 50:
             raise HTTPException(status_code=400, detail="Label too long (max 50 chars)")
