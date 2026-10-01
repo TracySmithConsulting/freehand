@@ -298,6 +298,87 @@ def test(service: str = typer.Argument(), label: str = typer.Option("default", "
         raise SystemExit(1)
 
 
+# ── Shared OAuth app commands (Round 8) ─────────────────────────────────
+# Tracy-managed registry of FreeHand-owned shared OAuth apps. Each entry
+# holds a client_id + Fernet-encrypted client_secret in broker_config.json.
+# `add` / `remove` / `list` round-trip the registry. `list` NEVER displays
+# secrets — only client_id + scopes + audit metadata.
+
+shared_app_app = typer.Typer(help="Manage FreeHand-managed shared OAuth apps (Round 8 tier-1b).")
+
+
+def _shared_app_imports():
+    """Lazy import — keeps the CLI boot path fast."""
+    import sys
+    sys.path.insert(0, str(_get_project_root()))
+    from core.oauth import shared_apps as _sa
+    return _sa
+
+
+@shared_app_app.command("add")
+def shared_app_add(
+    service: str = typer.Argument(..., help="Service id (e.g. slack, github, notion)"),
+    client_id: str = typer.Option(..., "--client-id", help="OAuth client_id from the developer portal"),
+    client_secret: str = typer.Option(..., "--client-secret", help="OAuth client_secret — encrypted on disk, never displayed"),
+    scopes: str = typer.Option("", "--scopes", help="Comma-separated OAuth scopes (e.g. 'chat:write,channels:read')"),
+    registered_by: str = typer.Option("tracy", "--registered-by", help="Audit: who registered this app"),
+):
+    """Register a FreeHand-managed shared OAuth app. The client_secret is
+    Fernet-encrypted in vault/broker_config.json immediately on write."""
+    if not client_id.strip() or not client_secret.strip():
+        typer.echo("client_id and client_secret are required (non-empty).")
+        raise SystemExit(1)
+    sa = _shared_app_imports()
+    scope_list = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else []
+    entry = sa.add_shared_app(
+        service=service,
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=scope_list,
+        registered_by=registered_by,
+    )
+    typer.echo(f"Added shared app: {entry['service']}")
+    typer.echo(f"  client_id:  {entry['client_id']}")
+    typer.echo(f"  scopes:     {', '.join(entry['scopes']) or '(none)'}")
+    typer.echo(f"  registered: {entry['registered_at']} by {entry['registered_by']}")
+    typer.echo("")
+    typer.echo("Secret is encrypted on disk. Use 'freehand shared-app list' to view metadata.")
+
+
+@shared_app_app.command("list")
+def shared_app_list():
+    """List all registered shared apps. Secrets are NEVER displayed."""
+    sa = _shared_app_imports()
+    entries = sa.list_shared_apps()
+    if not entries:
+        typer.echo("No shared apps registered. Use 'freehand shared-app add <service>' to add one.")
+        return
+    typer.echo(f"{'Service':<15} {'Client ID':<30} {'Scopes':<40} {'Registered':<20}")
+    typer.echo("-" * 105)
+    for e in entries:
+        scopes_str = ",".join(e["scopes"][:3])
+        if len(e["scopes"]) > 3:
+            scopes_str += f" (+{len(e['scopes']) - 3} more)"
+        typer.echo(f"{e['service']:<15} {e['client_id']:<30} {scopes_str:<40} {e['registered_by']}")
+
+
+@shared_app_app.command("remove")
+def shared_app_remove(
+    service: str = typer.Argument(..., help="Service id to remove"),
+):
+    """Remove a shared app entry. The user secret on the developer portal
+    is unaffected — this only removes the local copy from the FreeHand vault."""
+    sa = _shared_app_imports()
+    if sa.remove_shared_app(service):
+        typer.echo(f"Removed shared app: {service}")
+    else:
+        typer.echo(f"No shared app registered for: {service}")
+        raise SystemExit(1)
+
+
+app.add_typer(shared_app_app, name="shared-app")
+
+
 # ── Agent subcommands ──────────────────────────────────────────────────────────
 
 agent_app = typer.Typer(help="Manage AI agents (detection, import, status)")
