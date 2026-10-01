@@ -18,19 +18,26 @@ from core.oauth.manager import (
     list_connections,
     delete_connection,
 )
-from core.oauth.providers import get_connector
+from core.oauth.providers import get_connector, CONNECTORS
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 
-ALLOWED_SERVICES = [
-    "google",
-    "microsoft",
-    "zoom",
-    "facebook",
-    "instagram",
-    "github",
-    "email",
-]
+# ALLOWED_SERVICES is derived from the CONNECTORS registry at import
+# time so adding a new connector (Round 9: slack) automatically
+# extends the allowlist. The router uses this list in two ways:
+#
+#   1. /authorize: services in this list fall through to the FreeHand
+#      connector path; services NOT in this list go through the
+#      tier-1b / tier-5 / 503 dispatch (Round 8 ordering — Pitfall 40).
+#
+#   2. /disconnect, /test, /status, /settings: 404 if service not in
+#      this list, since these are admin actions on FreeHand-managed
+#      connections.
+#
+# Source of truth: core/oauth/providers/__init__.py's CONNECTORS dict.
+# This list is a snapshot — do NOT edit by hand; add a connector there
+# and this list updates automatically.
+ALLOWED_SERVICES = list(CONNECTORS.keys())
 
 
 def _load_oauth_settings() -> dict:

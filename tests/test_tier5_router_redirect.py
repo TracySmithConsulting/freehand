@@ -56,26 +56,31 @@ def _isolated_app():
 
 class TestAuthoriseTier5Redirect:
     def test_unknown_service_with_oc_known_returns_302(self, tmp_path, monkeypatch):
-        """User clicks 'Connect Slack' — Slack isn't in ALLOWED_SERVICES,
-        but OC knows it. Browser gets 302 to OC's web console."""
+        """OC is up and advertises a service that is NOT in
+        ALLOWED_SERVICES — FreeHand 302s to OC's web console.
+
+        Round 9 note: 'slack' used to be the canonical test service
+        here, but Round 9 added SlackConnector and slack is now in
+        ALLOWED_SERVICES (derived from CONNECTORS). The Round 9 test
+        for slack's connector path lives in test_slack_connector.py.
+        Here we use 'hackernews' which has no FreeHand connector and
+        IS advertised by OC — same Round 7 semantics, no allowlist
+        interference."""
         from core import agent_config
         vault = tmp_path / "vault"
         vault.mkdir()
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: True)
-        monkeypatch.setattr(broker_mod, "_oc_service_known", lambda svc: svc == "slack")
+        monkeypatch.setattr(broker_mod, "_oc_service_known", lambda svc: svc == "hackernews")
         client = _isolated_app()
-        r = client.get("/api/integrations/slack/authorize?label=tracy", follow_redirects=False)
+        r = client.get(
+            "/api/integrations/hackernews/authorize?label=tracy", follow_redirects=False
+        )
         assert r.status_code in (302, 307), (
-            f"expected redirect, got {r.status_code}: {r.text}"
+            f"expected tier-5 redirect, got {r.status_code}: {r.text}"
         )
         location = r.headers.get("location", "")
-        assert "localhost:3000" in location or "127.0.0.1" in location, (
-            f"expected redirect to OC origin, got {location!r}"
-        )
-        assert "slack" in location.lower(), (
-            f"expected service id 'slack' in redirect URL, got {location!r}"
-        )
+        assert "hackernews" in location.lower()
 
     def test_unknown_service_with_oc_unknown_returns_503(self, tmp_path, monkeypatch):
         """OC is up but doesn't have this service — Round 8 replaced the
@@ -101,7 +106,10 @@ class TestAuthoriseTier5Redirect:
 
     def test_unknown_service_with_oc_down_returns_503(self, tmp_path, monkeypatch):
         """OC is down — broker falls through to none — user gets the Round 8
-        503 honest-option-A fallback. Same shape as the OC-unknown case."""
+        503 honest-option-A fallback. Same shape as the OC-unknown case.
+
+        Round 9 note: uses 'hackernews' instead of 'slack' (see note in
+        test_unknown_service_with_oc_known_returns_302)."""
         from core import agent_config
         vault = tmp_path / "vault"
         vault.mkdir()
@@ -109,7 +117,7 @@ class TestAuthoriseTier5Redirect:
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: False)
         monkeypatch.setattr(broker_mod, "_load_shared_apps", lambda: {})
         client = _isolated_app()
-        r = client.get("/api/integrations/slack/authorize")
+        r = client.get("/api/integrations/hackernews/authorize")
         assert r.status_code == 503
         body = r.json()
         assert body.get("error") == "no_shared_app"

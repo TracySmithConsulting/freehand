@@ -98,7 +98,23 @@ class TestIntegrations:
         d = r.json()
         assert "connections" in d
         assert "available_services" in d
-        assert len(d["available_services"]) == 7
+        # Round 9: slack was added to CONNECTORS, so ALLOWED_SERVICES
+        # (derived from CONNECTORS at import time) now has 8 entries.
+        # Asserting a hardcoded count here is a maintenance hazard —
+        # better to assert the seven PRE-EXISTING services are present
+        # (Round 8 contract) AND slack is also present (Round 9 contract).
+        expected_pre_round9 = {
+            "google", "microsoft", "zoom", "facebook",
+            "instagram", "github", "email",
+        }
+        actual = set(d["available_services"])
+        assert expected_pre_round9.issubset(actual), (
+            f"Pre-Round-9 services missing: {expected_pre_round9 - actual}"
+        )
+        assert "slack" in actual, "Round 9: slack must be in available_services"
+        assert len(actual) == len(expected_pre_round9) + 1, (
+            f"Expected exactly 8 services (7 pre-Round-9 + slack), got {len(actual)}: {sorted(actual)}"
+        )
 
     def test_authorize_url(self, client):
         r = client.get("/api/integrations/google/authorize?label=work")
