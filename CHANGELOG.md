@@ -7,6 +7,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-10-01
 
+### Added — Round 9: Slack connector + Docker Compose
+
+Tracy's stated goal for this round (closing the gap Round 8's CHANGELOG called out as "Round 9 candidate: add per-service Python connectors for tier-1b services"): Slack gets a FreeHand-native connector that closes the loop end-to-end for tier-1b. With OC, the user clicks Connect Slack → OC's "configure your client first" page. With tier-1b + SlackConnector, the user clicks Connect Slack → FreeHand serves Slack's consent screen directly using its own credentials.
+
+Plus the operational hygiene that Round 8 punted: Docker Compose for FreeHand + OpenConnector, brought up with one command.
+
+- **`core/oauth/providers/slack.py`** — new `SlackConnector` class. Closes the gap Round 8's CHANGELOG flagged as the "Round 9 candidate" tier-1b-for-new-services work. Mirrors the existing `google.py` / `microsoft.py` shape:
+  - `_get_credentials()` reads via `broker.get_client_credentials()` so tier-1b shared apps work transparently
+  - `authorize_url()` builds `slack.com/oauth/v2_user/authorize` with deduplicated scopes (Slack rejects duplicate scopes with `invalid_scope`)
+  - `handle_callback()` POSTs to `oauth.v2.user.access` with a **dict** body (Pitfall 16 — aiohttp Content-Type trap). Surfaces Slack's `{"ok": false, "error": "..."}` response explicitly rather than swallowing.
+  - `test()` calls `auth.test`, returns True iff Slack responds `ok=true`
+  - `parse_error()` maps common Slack errors to human-readable strings with Pitfall 33 hints
+  - Default scope set per Tracy's 01 Oct 2026 decision: `im:write` included for DM-send capability. Opt-out recipe documented in `docs/integrations/slack-oauth-setup.md`.
+
+- **`core/oauth/providers/__init__.py`** — register `SlackConnector` in the `CONNECTORS` dict (8th entry, joining google/microsoft/zoom/facebook/instagram/github/email).
+
+- **`core/oauth/manager.py`** — `save_connection()` now handles `token_data` missing an `expires_in` key (or having it set to `None`). Providers like Slack whose tokens don't expire now use a 10-year far-future `expires_at` instead of crashing the dance. Three regression tests pin the contract.
+
+- **`core/oauth/router.py`** — `ALLOWED_SERVICES` is now derived from `CONNECTORS.keys()` at import time. Adding a new connector automatically extends the allowlist; the Round 8 `slack` oversight is now structurally prevented. Pitfall 41-style existing-test updates: `test_list_integrations` (was 7, now 8), `test_unknown_service_with_oc_known_returns_302` (slack → hackernews), `test_unknown_service_with_oc_down_returns_503` (slack → hackernews).
+
+- **`Dockerfile`** — multi-stage Python 3.11-slim build:
+  - `builder` stage installs pip deps + package
+  - `runtime` stage copies installed env + source, runs as `freehand:freehand` (UID/GID via build-args, default 0:0 for Windows compatibility), exposes :8000
+  - Documents the Windows bind-mount UID-mapping caveat with three workarounds (build-arg, `--user`, chmod)
+  - Smoke verified live on Docker Desktop 29.8.1 (Windows)
+
+- **`.dockerignore`** — excludes `vault/`, `agent.db`, `__pycache__`, `node_modules`, build artifacts, IDE noise so the build context is lean and secrets never leak into the image.
+
+- **`compose.yml`** — joint FreeHand + OpenConnector bring-up:
+  - Two services: `open-connector` (image pull, no build), `freehand` (local build)
+  - Healthchecks on both so FreeHand waits for OC's `/health` before starting
+  - Shared vault via `./vault:/app/vault` bind mount; agent.db via `./agent.db:/app/agent.db`
+  - OC's own `/data` is an anonymous Docker volume (managed separately from FreeHand's vault)
+  - `FREEHAND_USER` env var defaults to `0:0` so compose-up works on Windows hosts; Linux hosts override via `.env` for non-root
+  - Syntactic check: `docker compose config --quiet` exits 0
+
+- **`.env.example`** — template for `OOMOL_CONNECT_*` env vars + `UID`/`GID`/`FREEHAND_USER`. Production hardening notes (openssl rand, 32-byte Fernet key constraint).
+
+- **`docs/deployment/docker-compose.md`** (new) — full bring-up guide: quick start, service map, volume mounts, env vars, healthchecks, smoke test, backup/restore, known issues (Windows UID mapping, OC `requestedScopes` globality), when NOT to use.
+
+### Fixed
+
+- **`save_connection` crashes when token has no `expires_in`**: live dance caught `int(None)` raising TypeError, callback returning 500. Now handles `None` (10-year far-future) and missing-key (default 3600s) correctly. Regression-tested with 3 new tests in `tests/test_oauth_broker.py::TestSaveConnectionExpiresInNone`.
+
+- **`ALLOWED_SERVICES` drift from `CONNECTORS`**: was a hand-maintained 7-entry list that missed the new Slack entry. Now derived at import time, structurally can't drift.
+
+### Verified live
+
+**Task 3 — Slack OAuth dance through FreeHand** (no OC involved):
+
+```
+freehand shared-app add slack --client-id ... --client-secret ... \
+    --scopes "chat:write,channels:read,users:read,im:history,im:write"
+GET /api/integrations/slack/authorize?label=tracy
+  → 200 JSON with slack.com/oauth/v2_user/authorize URL
+  → redirect_uri: http://127.0.0.1:8000/api/integrations/slack/callback
+Browser consent → Allow → callback → token exchange → store
+  → vault/connections.db shows slack/tracy with accountId U0C56R6LTD4
+  → expires_at 2036-09-28 (10-year far-future per the fix)
+```
+
+**Task 6 — 5-service matrix against docker compose stack**:
+
+| Service | Path | Result |
+|---|---|---|
+| `google` | tier-1 broker | 200 JSON |
+| `slack` | tier-1b + SlackConnector | 200 JSON |
+| `hackernews` | tier-5 OC redirect | 302 to `http://open-connector:3001/...` |
+| `linear` | tier-5 OC redirect | 302 to OC |
+| `myspace` | none → 503 | `error=no_shared_app`, pre-filled GitHub URL, contact_email |
+
+### Notes
+
+- **Microsoft 365 still routes via first-party broker** (Azure subscription requirement unchanged for that one provider).
+- **Slack's hostname-strict redirect_uri**: `localhost` and `127.0.0.1` are different URIs to Slack. Register whichever host:port you actually hit (per Pitfall 11: redirect_uri is built from request.url at runtime).
+- **Docker Compose Windows caveat documented**: gRPC-FUSE doesn't propagate host UID mappings cleanly. `FREEHAND_USER=0:0` default + chmod 666 on agent.db are the workarounds; Linux hosts work correctly with the default non-root posture.
+- **`agent.db` consolidation into `vault/`** is a Round 10 candidate. Currently mounted as a separate bind volume — the only place where Docker UID mapping bites.
+- **No `chat.postMessage` / agent actions**: tier-1b still does NOT auto-register provider actions as FreeHand tools. Round 10+ candidate.
+- **Six commits on main**: `091ec78` (SlackConnector + tests), `6ac7f9b` (manager fix), `054a5d8` (Dockerfile + .dockerignore), `a9eb1a3` (ALLOWED_SERVICES refactor + compose.yml + .env.example), `d1ee4a3` (compose Windows compatibility), plus this docs commit.
+- **Test count**: 268 passing + 2 skipped = 270 collected, 0 regressions. Was 251 + 2 before Round 9.
+
+## [Unreleased] — 2026-10-01
+
 ### Added — Round 8: Shared OAuth broker apps
 
 Tracy's stated goal for this round (30 Sep 2026): *"I want it to be as easy as possible for people to connect their apps. Where I can't do it, we go with option A, we say so honestly, and then they would have to do their own dance, but as far as possible, I'd go with B."* Round 8 is the broker-brokered path: FreeHand holds the shared OAuth credentials in its Fernet-encrypted vault so users get a one-click consent screen instead of the "register your own app" loop.
