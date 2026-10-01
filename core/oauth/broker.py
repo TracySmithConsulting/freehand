@@ -35,9 +35,15 @@ settings.json directly.
 
 Resolution order (first wins):
   1. settings["oauth"]["providers"][service] — user-supplied override
+  1b. broker_config.json -> shared_apps[service] — FreeHand-managed
+      shared app (Round 8 tier-1b). More specific than env/broker,
+      less specific than the per-user override. Returns real client_id
+      + client_secret; FreeHand serves the provider consent screen
+      directly using these.
   2. env vars FREEHAND_BROKER_<SERVICE>_CLIENT_ID/_CLIENT_SECRET
-  3. broker_config.json next to settings.json
-  4. None, None (caller treats as "no credentials configured")
+  3. broker_config.json -> providers[service] — legacy shared admin config
+  4. (None, None, "open_connector") — tier-5 fallback (Round 7)
+  5. (None, None, "none") — caller treats as "no credentials configured"
 """
 
 import json
@@ -68,6 +74,13 @@ from core.oauth.router import _load_oauth_settings as _load_user_settings
 # - service_is_known(name): True iff OC knows the service.
 from core.oauth.open_connector import is_available as _oc_available
 from core.oauth.open_connector import service_is_known as _oc_service_known
+
+# Shared OAuth apps (Round 8 tier-1b). load_shared_apps() reads the
+# ``shared_apps`` block of broker_config.json with client_secret transparently
+# Fernet-decrypted. Returns {} on any read error — broker tier-1b falls
+# through to tiers 2-5. Bound at module level so tests can patch it
+# cleanly via ``patch.object(broker, "_load_shared_apps", ...)`` (Pitfall 29).
+from .shared_apps import load_shared_apps as _load_shared_apps
 
 
 def _broker_config_path() -> Path:
@@ -102,8 +115,13 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
 
     source is one of:
       - "user"           — user-supplied override in settings.json
+      - "shared_app"     — FreeHand-managed shared OAuth app in
+                           broker_config.json -> shared_apps (Round 8 tier-1b).
+                           FreeHand holds the shared credentials encrypted
+                           in the vault and serves the provider's consent
+                           screen directly using these.
       - "env"            — environment variable
-      - "broker"         — broker_config.json
+      - "broker"         — broker_config.json (legacy per-provider block)
       - "open_connector" — tier-5 fallback: the OpenConnector runtime
                            on localhost:3000 advertises this service.
                            FreeHand calls *through* the OC runtime at
@@ -130,6 +148,29 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     except Exception:
         # If settings can't be loaded (e.g. vault dir missing), fall through
         pass
+
+    # 1b. FreeHand-managed shared OAuth app (Round 8 tier-1b).
+    #     More specific than env/broker/OC — admin-configured shared credentials
+    #     in broker_config.json -> shared_apps. Fernet-decrypted transparently.
+    #     Real credentials flow back to the caller so FreeHand can serve the
+    #     provider's consent screen directly (vs. tier-5 which returns a pointer).
+    #     Never raises — read errors / decrypt failures / missing entries
+    #     all fall through to tier-2.
+    try:
+        shared = _load_shared_apps()
+        entry = shared.get(service)
+        if entry:
+            cid = entry.get("client_id", "")
+            sec = entry.get("client_secret", "")
+            if cid and sec:
+                return cid, sec, "shared_app"
+            # Entry present but missing client_id or client_secret — malformed.
+            log.warning(
+                "tier-1b shared app for %s is malformed (missing client_id or client_secret); falling through",
+                service,
+            )
+    except Exception as e:  # last-line defence — corrupted Fernet blob, etc.
+        log.warning("tier-1b shared-app lookup failed for %s: %s", service, e)
 
     # 2. Environment variables
     env_cid = os.environ.get(f"{ENV_PREFIX}{_upper_service(service)}_CLIENT_ID", "")
