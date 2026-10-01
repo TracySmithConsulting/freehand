@@ -1,0 +1,59 @@
+# ── Version control ────────────────────────────────────────────────────
+.git
+.gitignore
+.gitattributes
+.github
+
+# ── Vault — NEVER bake secrets into the image ──────────────────────────
+# Mounted as a volume at runtime so encryption.key, connections.db,
+# and broker_config.json persist across container restarts.
+vault/
+
+# ── Python build artifacts ─────────────────────────────────────────────
+__pycache__
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+*.egg-info
+*.egg
+build/
+dist/
+
+# ── Node.js — FreeHand's package.json is unrelated to OpenConnector ────
+node_modules/
+
+# ── Local databases (other than vault/connections.db) ─────────────────
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+agent.db
+
+# ── Local logs and operational noise ──────────────────────────────────
+*.log
+freehand-live.log
+freehand-task6.log
+
+# ── Hermes scratch and editor noise ────────────────────────────────────
+.hermes/
+three-sound-draft-1.md
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# ── Test artifacts ─────────────────────────────────────────────────────
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# ── Documentation build artifacts (not needed at runtime) ────────────
+docs/_build/
+site/
+
+# ── Plan files (kept in-repo but not needed in container) ─────────────
+.hermes/plans/
