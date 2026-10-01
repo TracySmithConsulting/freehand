@@ -428,3 +428,88 @@ class TestRenameConnectionLabel:
         m.rename_connection_label("google", "dbsa", "shazacin")
         labels = sorted(c["label"] for c in m.list_connections())
         assert labels == ["shazacin", "tracy", "work"]
+
+
+class TestSaveConnectionExpiresInNone:
+    """Round 9: save_connection must handle token_data without an
+    expires_in field (providers like Slack whose tokens don't expire).
+
+    Regression for the live dance that crashed with:
+        TypeError: int() argument must be a string, a bytes-like object
+                   or a real number, not 'NoneType'
+    at core/oauth/manager.py save_connection() line 70.
+
+    Slack bot/user tokens are valid until explicitly revoked via
+    auth.revoke — there's no expiry. The manager must treat
+    expires_in=None as "no expiry" and set a far-future expires_at.
+    """
+
+    def _isolated_manager(self, tmp_path, monkeypatch):
+        from core.oauth import manager
+        from core import database
+        db = tmp_path / "test.db"
+        monkeypatch.setattr(manager, "DB_PATH", db)
+        monkeypatch.setattr(database, "DB_PATH", db)
+        database.init_db()
+        return manager
+
+    def test_save_connection_with_expires_in_none_does_not_raise(self, tmp_path, monkeypatch):
+        """The bug that surfaced during the Round 9 live dance: int(None)
+        raised TypeError, the callback handler returned 500, and the
+        connection was never stored. This test pins the fix."""
+        m = self._isolated_manager(tmp_path, monkeypatch)
+        # Slack connector returns expires_in=None for non-expiring tokens
+        token_data = {
+            "access_token": "xoxb-fake",
+            "scope": "chat:write,channels:read",
+            "team_id": "T12345",
+            "team_name": "Test",
+            "bot_user_id": "U12345",
+            "expires_in": None,
+        }
+        # Must not raise
+        conn_id = m.save_connection("slack", "tracy", token_data, ["chat:write"])
+        assert conn_id is not None
+
+    def test_save_connection_with_no_expires_in_key_does_not_raise(self, tmp_path, monkeypatch):
+        """Even safer: token_data with NO expires_in key at all (not just
+        None) must work — covers providers that omit the key entirely."""
+        m = self._isolated_manager(tmp_path, monkeypatch)
+        token_data = {
+            "access_token": "xoxb-fake",
+            "scope": "chat:write",
+            "team_id": "T1",
+        }
+        # No expires_in key at all — save_connection should still work
+        conn_id = m.save_connection("slack", "tracy", token_data, ["chat:write"])
+        assert conn_id is not None
+
+    def test_save_connection_with_none_expires_in_sets_far_future(self, tmp_path, monkeypatch):
+        """A connection with expires_in=None must get a far-future
+        expires_at — not None, not the default 3600s-from-now."""
+        m = self._isolated_manager(tmp_path, monkeypatch)
+        token_data = {
+            "access_token": "xoxb-fake",
+            "scope": "chat:write",
+            "team_id": "T1",
+            "expires_in": None,
+        }
+        m.save_connection("slack", "tracy", token_data, ["chat:write"])
+        conn = m.get_connection("slack", "tracy")
+        assert conn is not None
+        expires_at = conn["expires_at"]
+        # expires_at must be a string parseable as datetime, and must
+        # be at least 5 years in the future (proves we didn't fall back
+        # to the 3600s default).
+        from datetime import datetime, timezone
+        if expires_at.endswith("Z"):
+            expires_at = expires_at[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(expires_at)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        years_ahead = (parsed - now).days / 365.25
+        assert years_ahead >= 5, (
+            f"Non-expiring token should have far-future expires_at, got "
+            f"{expires_at!r} which is only {years_ahead:.2f} years ahead"
+        )

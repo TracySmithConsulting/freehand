@@ -67,7 +67,16 @@ def save_connection(service, label, token_data, scopes, user_id=""):
     expires_in = token_data.get("expires_in", 3600)
     expires_at = token_data.get("expires_at")
     if not expires_at:
-        expires_at = datetime.now(timezone.utc).timestamp() + int(expires_in)
+        if expires_in is None:
+            # Provider doesn't expire tokens (e.g. Slack bot/user tokens
+            # are valid until explicitly revoked via auth.revoke).
+            # Use a 10-year far-future so the connection stays "active"
+            # in the DB without forcing the user to refresh.
+            expires_at = (
+                datetime.now(timezone.utc).timestamp() + (10 * 365 * 24 * 3600)
+            )
+        else:
+            expires_at = datetime.now(timezone.utc).timestamp() + int(expires_in)
         expires_at = datetime.utcfromtimestamp(expires_at).isoformat()
     conn = _get_conn()
     cursor = conn.execute(
