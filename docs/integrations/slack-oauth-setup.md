@@ -36,10 +36,10 @@ From the **Basic Information** page, you need two values. Push both to
 your clipboard (Pitfall 17 — chat scrolls, screen-readers don't reliably
 land on inline code spans, the clipboard is the channel of truth).
 
-- **Client ID** — numeric, e.g. `12163424302743.12172831634723`. Already
+- **Client ID** — numeric, e.g. `<workspace_id>.<app_id>`. Already
   visible on the page.
 - **Client Secret** — hex string. Click **Show** next to "Client Secret",
-  then **Copy**. Looks like `1c31102f1872f1ebc169683447ae8a12`.
+  then **Copy**. Looks like `<hex_string>`.
 
 **Do NOT** use the Bot User OAuth Token (`xoxb-...`) or the Signing Secret
 in this step. Both are wrong credentials for the OAuth dance:
@@ -127,9 +127,9 @@ Verify with:
 
 ```bash
 freehand shared-app list
-# Service  Client ID                     Scopes                                  Registered
+# Service  Client ID          Scopes                                  Registered
 # ----------------------------------------------------------------------------------------
-# slack    12163424302743.12172831634723 chat:write,channels:read,users:read,... tracy
+# slack    <your-client-id>   chat:write,channels:read,users:read,... tracy
 ```
 
 Secrets are never displayed in `list` output.

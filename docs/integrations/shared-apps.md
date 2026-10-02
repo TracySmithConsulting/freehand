@@ -63,8 +63,8 @@ The `client_secret` is Fernet-encrypted on disk immediately. Example for Slack:
 
 ```bash
 freehand shared-app add slack \
-    --client-id "12163424302743.12172831634723" \
-    --client-secret "1c31102f1872f1ebc169683447ae8a12" \
+    --client-id "<your-client-id-from-api.slack.com>" \
+    --client-secret "<your-client-secret-from-api.slack.com>" \
     --scopes "chat:write,channels:read,users:read,im:history" \
     --registered-by tracy
 ```
@@ -75,7 +75,7 @@ freehand shared-app add slack \
 freehand shared-app list
 # Service        Client ID                      Scopes                                  Registered
 # -----------------------------------------------------------------------------------------------------
-# slack          12163424302743.12172831634723  chat:write,channels:read,users:read,... tracy
+# slack          <your-client-id>               chat:write,channels:read,users:read,... tracy
 ```
 
 **Secrets are NEVER displayed** — only client_id, scopes, and audit metadata. The encryption is intentional: there's no reason to surface a secret to a user who can re-add it from the portal if needed.
