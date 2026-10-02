@@ -379,6 +379,104 @@ def shared_app_remove(
 app.add_typer(shared_app_app, name="shared-app")
 
 
+# ── Credential store commands (Round 10 PR 2) ──────────────────────────
+# Per-service, per-label credentials. Tracy can wire two GitHub accounts
+# (work, personal) or two Slack workspaces under different labels.
+# Secrets are Fernet-encrypted on disk; list NEVER displays them.
+
+credential_app = typer.Typer(help="Manage FreeHand credentials (Round 10 PR 2: multi-credential, Fernet-encrypted).")
+
+
+def _credential_imports():
+    """Lazy import — keeps CLI boot path fast."""
+    import sys
+    sys.path.insert(0, str(_get_project_root()))
+    from core.oauth import credential_store as _cs
+    return _cs
+
+
+@credential_app.command("add")
+def credential_add(
+    service: str = typer.Argument(..., help="Service id (e.g. github, slack, notion, anthropic)"),
+    token: str = typer.Option(..., "--token", help="API key / token / OAuth access token — Fernet-encrypted on disk, never displayed"),
+    label: str = typer.Option("default", "--label", "-l", help="Account label (e.g. work, personal, default)"),
+    registered_by: str = typer.Option("tracy", "--registered-by", help="Audit: who registered this credential"),
+):
+    """Register a FreeHand credential (API key, PAT, or OAuth token).
+
+    Secrets are Fernet-encrypted in vault/credential_store.json
+    immediately on write. The CLI never displays secrets in any
+    output.
+    """
+    if not token.strip():
+        typer.echo("Token is required (non-empty).")
+        raise SystemExit(1)
+    cs = _credential_imports()
+    entry = cs.add(
+        service=service,
+        label=label,
+        secret=token,
+        auth_type="api_key",  # CLI 'add' is for API keys; OAuth tokens come from the dance
+        registered_by=registered_by,
+    )
+    typer.echo(f"Added credential: {entry['service']}/{entry['label']}")
+    typer.echo(f"  auth_type:    {entry['auth_type']}")
+    typer.echo(f"  registered:   {entry['registered_at']} by {entry['registered_by']}")
+    typer.echo("")
+    typer.echo("Secret is encrypted on disk. Use 'freehand credential list' to view metadata.")
+
+
+@credential_app.command("list")
+def credential_list():
+    """List all registered credentials. Secrets are NEVER displayed."""
+    cs = _credential_imports()
+    entries = cs.list_all()
+    if not entries:
+        typer.echo("No credentials registered. Use 'freehand credential add <service> --token <key>' to add one.")
+        return
+    typer.echo(f"{'Service':<15} {'Label':<15} {'Auth Type':<12} {'Registered':<20}")
+    typer.echo("-" * 62)
+    for e in entries:
+        typer.echo(f"{e['service']:<15} {e['label']:<15} {e['auth_type']:<12} {e['registered_by']}")
+
+
+@credential_app.command("remove")
+def credential_remove(
+    service: str = typer.Argument(..., help="Service id to remove"),
+    label: str = typer.Option("default", "--label", "-l", help="Account label"),
+):
+    """Remove a credential. The token on the provider's portal is unaffected —
+    this only removes the local copy from the FreeHand vault.
+    """
+    cs = _credential_imports()
+    if cs.remove(service, label):
+        typer.echo(f"Removed credential: {service}/{label}")
+    else:
+        typer.echo(f"No credential registered for: {service}/{label}")
+        raise SystemExit(1)
+
+
+@credential_app.command("rename")
+def credential_rename(
+    service: str = typer.Argument(..., help="Service id"),
+    from_label: str = typer.Option(..., "--from", help="Current label"),
+    to_label: str = typer.Option(..., "--to", help="New label"),
+):
+    """Move a credential from one label to another. Same shape as Round 6.1's
+    `freehand rename` for OAuth connections. Useful when the user picked
+    the wrong label at connect time.
+    """
+    cs = _credential_imports()
+    if cs.rename(service, from_label, to_label):
+        typer.echo(f"Renamed: {service}/{from_label} -> {service}/{to_label}")
+    else:
+        typer.echo(f"No credential found: {service}/{from_label}")
+        raise SystemExit(1)
+
+
+app.add_typer(credential_app, name="credential")
+
+
 # ── Agent subcommands ──────────────────────────────────────────────────────────
 
 agent_app = typer.Typer(help="Manage AI agents (detection, import, status)")
