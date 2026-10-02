@@ -4,35 +4,24 @@
 # Stage 2 (runtime): copy the venv + source, run as a non-root user
 #                    (UID/GID configurable via build-args), expose :8000.
 #
-# Two persistent host paths the container needs at runtime:
-#   1. vault/   — encryption key, connections DB, broker config.
+# Round 10 (PR 1): agent.db moved from project root into vault/.
+# Single persistent host path the container needs at runtime:
+#   1. vault/   — encryption key, connections DB, broker config,
+#                 credential store, AND agent.db (SQLite FTS5).
 #                 Mount as a volume; permissions are managed by the
 #                 container's `chown -R freehand:freehand /app/vault`.
-#   2. agent.db — the SQLite FTS5 database for memories. FreeHand
-#                 reads DB_PATH = <project_root>/agent.db (resolved
-#                 relative to the source file). On the host, this is
-#                 the project root; in the container, it's /app/agent.db.
-#                 Mount the host's agent.db into the container at
-#                 /app/agent.db, OR consolidate it into the vault in a
-#                 future round.
 #
-# The agent.db bind-mount is the one place host-vs-container ownership
-# matters. If the host file is owned by a different UID, the
-# `freehand` user inside the container can't open it for write.
-# Workarounds (any one of these):
-#   - Pass --build-arg UID=$(id -u) --build-arg GID=$(id -g) so the
-#     in-container freehand user matches your host user
-#   - Run with `docker run --user $(id -u):$(id -g)` to override
-#   - chmod 666 the host agent.db before mounting (last resort)
-# The compose file (compose.yml) handles this automatically via
-# user: "${UID:-1000}:${GID:-1000}".
+# Why one mount: Round 9 had two mounts (./vault + ./agent.db) which
+# couldn't both honour the on-disk file's host owner on Docker Desktop
+# Windows (gRPC-FUSE doesn't propagate host UID mappings cleanly).
+# Round 10 puts agent.db inside vault/ — one mount, container owns
+# the whole thing, Linux hosts work with FREEHAND_USER=${UID}:${GID}.
 #
 # Standalone usage (single container, no OpenConnector):
 #   docker build --build-arg UID=$(id -u) --build-arg GID=$(id -g) \
 #     -t freehand:dev .
-#   docker run --rm -p 8765:8000 \
+#   docker run --rm -p 8000:8000 \
 #     -v "$(pwd)/vault:/app/vault" \
-#     -v "$(pwd)/agent.db:/app/agent.db" \
 #     freehand:dev
 #
 # Joint FreeHand + OpenConnector:
@@ -64,11 +53,11 @@ RUN pip install --no-cache-dir .
 FROM python:3.11-slim AS runtime
 
 # Build-args let the host's UID/GID match the in-container freehand
-# user, so bind-mounted agent.db is writable. Default 1000 for a
-# typical Linux desktop user; override on the build command with
+# user. Round 10: default 0:0 for Windows-host compatibility (kept);
+# Linux hosts override at build time with
 # --build-arg UID=$(id -u) --build-arg GID=$(id -g).
-ARG UID=1000
-ARG GID=1000
+ARG UID=0
+ARG GID=0
 
 WORKDIR /app
 
@@ -84,8 +73,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy the FreeHand source. The vault/ directory is intentionally NOT
 # copied — it's mounted as a volume at runtime so encryption.key,
-# connections.db, and broker_config.json persist across container
-# restarts.
+# connections.db, broker_config.json, credential_store.json, AND
+# agent.db all persist across container restarts.
 COPY --chown=freehand:freehand . /app/
 
 # Ensure the vault dir exists with the right ownership. The host mount

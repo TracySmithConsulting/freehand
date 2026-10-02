@@ -26,8 +26,7 @@ cd freehand
 cp .env.example .env
 # Edit .env if you need real OC tokens (see "Environment variables" below)
 
-# 3. Make sure the host's agent.db is writable (Windows hosts only)
-chmod 666 agent.db
+# 3. (Round 10 PR 1: no chmod needed — agent.db now lives inside ./vault/)
 
 # 4. Bring up the stack
 docker compose up -d --build
@@ -74,7 +73,7 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 │  │                        │     │ broker_config.json         │  │
 │  └────────────────────────┘     └────────────────────────────┘  │
 │                                                                  │
-│  FreeHand ALSO bind-mounts: ./agent.db → /app/agent.db            │
+│  Round 10 PR 1: agent.db is INSIDE ./vault (no separate mount).  │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -82,11 +81,12 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 
 | Host path | Container path | Owner | Purpose |
 |---|---|---|---|
-| `./vault` | `/app/vault` | `freehand:freehand` | FreeHand's encrypted vault — Fernet key, connection tokens, broker config |
-| `./agent.db` | `/app/agent.db` | `freehand:freehand` (target) | FreeHand's SQLite FTS5 DB for memories |
+| `./vault` | `/app/vault` | `freehand:freehand` | FreeHand's encrypted vault — encryption.key, connection tokens, broker config, credential store, AND agent.db (Round 10 PR 1 consolidated these into one directory) |
 | (anonymous) | `/data` (in OC) | OC's runtime user | OC's own SQLite store |
 
-**The `./vault` and `./agent.db` mounts are bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/data` is an anonymous Docker volume (named `freehand-oc-data`) that survives `down` but is removed by `down -v`.
+**`./vault` is bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/data` is an anonymous Docker volume (named `freehand-oc-data`) that survives `down` but is removed by `down -v`.
+
+> **Round 10 PR 1 note**: Round 9 had two separate bind-mounts (`./vault` and `./agent.db`) which forced the Windows-only `FREEHAND_USER=0:0` workaround because Docker Desktop on Windows uses gRPC-FUSE and doesn't propagate host UID mappings cleanly across two mounts. Round 10 puts agent.db inside `./vault` — one mount covers everything, no Windows workaround needed for that reason alone.
 
 ## Environment variables
 
@@ -128,7 +128,7 @@ If `freehand` is stuck in `Restarting`, check the logs:
 ```bash
 docker compose logs freehand
 ```
-The most common cause is the bind-mount `agent.db` being read-only — see "Known issue: Windows bind-mount UID mapping" below.
+The most common cause is a different vault/agent.db bind-mount issue — see "Known issue: Windows bind-mount UID mapping" below.
 
 ## Smoke test (verifies the stack after every change)
 
@@ -160,7 +160,7 @@ done
 
 ## Known issue: Windows bind-mount UID mapping
 
-Docker Desktop on Windows uses **gRPC-FUSE** for bind mounts and doesn't propagate host UID mappings to the container cleanly. The result: even when the host's `agent.db` is `chmod 666`, the in-container `freehand` user can't write to it.
+Docker Desktop on Windows uses **gRPC-FUSE** for bind mounts and doesn't propagate host UID mappings to the container cleanly. Round 10 PR 1 fixed this for the agent.db path (one mount, container owns the whole vault), but Windows hosts still hit it for other files like FreeHand's python source — the container's `freehand` user can't write to `COPY --chown=freehand:freehand . /app/` outputs unless the build context is chmod'd on the host.
 
 **Symptom:** `freehand-app` is stuck in `Restarting (N)` status. Logs show:
 
@@ -170,11 +170,13 @@ File "/app/core/database.py", line 12, in init_db
 sqlite3.OperationalError: attempt to write a readonly database
 ```
 
+(or similar — could be `permissions denied` on any other write).
+
 **Workaround (default):** `compose.yml` sets `FREEHAND_USER=0:0` by default, which makes FreeHand run as root inside the container. Root can write to anything, so the bind-mount writable issue is bypassed. The trade-off: FreeHand is no longer running as a non-root user inside the container.
 
-**Proper fix (Round 10 candidate):** move `agent.db` into `./vault/` and bind-mount `./vault` only. Single mount, ownership set by the container's `chown -R freehand:freehand /app/vault` line. No UID-mapping issue, non-root works.
-
 **Linux hosts and macOS:** not affected. UID mapping propagates cleanly. Override `FREEHAND_USER=${UID}:${GID}` in `.env` for non-root.
+
+**Future fix**: a Round 11+ candidate could read `UID`/`GID` from `.env` and chown the COPY'd sources accordingly. Not blocking.
 
 ## Known issue: OC's `requestedScopes` is global
 
@@ -182,14 +184,16 @@ When you `PUT /api/oauth/configs/<service>` with `requestedScopes: [...]`, OC st
 
 ## Backup and restore
 
-**Backup** (vault + agent.db are the things to preserve):
+**Backup** (the vault is the thing to preserve; Round 10 PR 1 moved agent.db into vault/ so one tar covers everything):
 
 ```bash
 # Stop the stack first (clean snapshot)
 docker compose down
 
-# Copy the vault and agent.db to a backup location
-tar -czf freehand-vault-$(date +%Y%m%d).tar.gz vault/ agent.db
+# Archive the vault directory — encryption.key, connections.db,
+# broker_config.json, credential_store.json, AND agent.db all live
+# inside vault/ now.
+tar -czf freehand-vault-$(date +%Y%m%d).tar.gz vault/
 ```
 
 **Restore**:
@@ -199,7 +203,7 @@ tar -czf freehand-vault-$(date +%Y%m%d).tar.gz vault/ agent.db
 docker compose down
 
 # Wipe the current state (CAREFUL — this is destructive)
-rm -rf vault/* agent.db
+rm -rf vault/*
 
 # Extract the backup
 tar -xzf freehand-vault-YYYYMMDD.tar.gz

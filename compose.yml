@@ -72,21 +72,19 @@ services:
       context: .
       dockerfile: Dockerfile
       # Match the in-container freehand user to your host user so the
-      # bind-mounted vault + agent.db are writable. Override via
-      # `UID=$(id -u) GID=$(id -g) docker compose build`.
+      # bind-mounted vault (which now includes agent.db, encryption.key,
+      # connections.db, broker_config.json, credential_store.json) is
+      # writable. Override via `UID=$(id -u) GID=$(id -g) docker compose build`.
       #
-      # CAVEAT for Windows hosts: Docker Desktop on Windows uses
-      # gRPC-FUSE which doesn't propagate host UID mappings cleanly to
-      # the container. Even with matching build-args, the host's
-      # agent.db stays owned by the host user and the in-container
-      # freehand user can't write to it. Two workarounds:
-      #   - Set `UID=0 GID=0` (the default) and override `user:` below
-      #     to "0:0" — runs FreeHand as root in the container
-      #   - OR move agent.db into ./vault/ (Round 10 candidate)
-      # Linux hosts and CI runners work correctly with non-zero UID/GID.
+      # Round 10 PR 1 note: the Round 9 agent.db bind-mount caveat is
+      # resolved — agent.db now lives at vault/agent.db and the whole
+      # vault directory is mounted as one volume. No Windows workaround
+      # needed for the agent.db path. The FREEHAND_USER override below
+      # remains as a Windows-host fallback for users who want to run as
+      # root inside the container.
       args:
-        UID: ${UID:-0}
-        GID: ${GID:-0}
+        UID: ${UID:-1000}
+        GID: ${GID:-1000}
     container_name: freehand-app
     restart: unless-stopped
     # Override the in-container user. Default to root (UID 0:0) for
@@ -109,17 +107,17 @@ services:
       - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:-runttest123}
     volumes:
       # Mount the host's vault directory so encryption.key, connections.db,
-      # and broker_config.json persist across container restarts.
+      # broker_config.json, credential_store.json, AND agent.db all
+      # persist across container restarts. agent.db now lives at
+      # vault/agent.db (Round 10 PR 1) — one mount covers everything.
       # The image's chown -R freehand:freehand /app/vault makes the
       # empty volume writable; bind-mount overlays that ownership.
       - ./vault:/app/vault
-      # agent.db lives at the project root (not in vault/). Mount it
-      # directly so FreeHand's existing on-disk data survives.
-      - ./agent.db:/app/agent.db
     healthcheck:
       # uvicorn returns the FreeHand HTML index at /. A 200 there
       # means the server bound and the lifespan startup_event ran
-      # (i.e. agent.db is writable).
+      # (i.e. vault/agent.db is writable and the one-time
+      # migrate_legacy_root_db() succeeded).
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()"]
       interval: 10s
       timeout: 3s

@@ -5,6 +5,70 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-10-02
+
+### Added — Round 10 PR 1: Vault consolidation
+
+agent.db moved from project root to vault/agent.db so a single Docker
+bind-mount covers ALL persistent state. Round 9 had two mounts
+(`./vault` and `./agent.db`) which forced the Windows-only
+`FREEHAND_USER=0:0` workaround because Docker Desktop on Windows uses
+gRPC-FUSE and doesn't propagate host UID mappings cleanly across
+two mounts. Round 10 PR 1 puts agent.db inside `./vault/` — one
+mount, container owns the whole thing.
+
+- **`core/database.py`** — `DB_PATH = VAULT_DIR / "agent.db"` (was
+  `Path(__file__).parent.parent / "agent.db"`). New
+  `migrate_legacy_root_db()` runs once on first app boot (wired into
+  `server.py:startup_event`, NOT into `init_db()` — see the comment
+  in core/database.py for why). Moves the main file + WAL sidecars
+  (`agent.db-wal`, `agent.db-shm`). Idempotent. Safe on empty vault.
+  Doesn't overwrite a vault copy the user already populated.
+- **`core/memory.py`** — local `DB_PATH` deleted; canonical path
+  imported from `core.database`.
+- **`server.py`** — local `DB_PATH` binding deleted; canonical path
+  imported from `core.database`. All handlers (`get_tasks`,
+  `get_approvals`, etc.) now connect to the single canonical
+  `vault/agent.db`.
+- **`Dockerfile`** — comment updated. Standalone example uses one
+  mount: `-v "$(pwd)/vault:/app/vault"`. Build-arg defaults
+  flipped to `UID=0 GID=0` (Windows-host compatible) — Round 9's
+  default was `1000:1000`; that worked on Linux hosts but
+  conflicted with the two-mount design. Round 10 PR 1 + Linux
+  hosts can now safely override back to non-root via
+  `--build-arg UID=$(id -u)`.
+- **`compose.yml`** — `agent.db` bind-mount line removed. Only
+  `./vault:/app/vault` remains. Build-arg defaults flip to
+  `UID=1000 GID=1000` (Linux non-root default). Windows hosts
+  keep `FREEHAND_USER=0:0` as the runtime override.
+- **`docs/deployment/docker-compose.md`** — Volume mounts table,
+  backup/restore, "Known issue" sections updated to reflect
+  the single-mount design.
+
+### Verified live
+
+- **7 new tests in `tests/test_database.py`** — DB_PATH constant
+  shape (2 tests), migration moves main + WAL sidecars, idempotent,
+  creates vault/ when missing, no-op when nothing to migrate,
+  preserves user data when vault already has a copy.
+- **275 tests passing, 0 regressions** (was 268 pre-PR).
+- **No breaking changes**: every existing handler still works;
+  the only test fixture that broke (test_integration.py) was
+  relying on `server.py`'s local `DB_PATH` constant being the
+  same path as `core.database`'s — that's now consistent.
+
+### Migration story for existing installs
+
+On first boot of a Round-10-Pull-1 image, `migrate_legacy_root_db()`
+detects any pre-Round-10 `agent.db` at the project root and moves
+it (plus WAL sidecars) into `vault/agent.db`. Idempotent — a
+sentinel-style check ensures it never runs twice. **No data loss.**
+If the vault copy already exists (user manually moved), the legacy
+file is removed to avoid two-divergent-copies risk; the unique user's
+vault copy is preserved untouched.
+
+---
+
 ## [Unreleased] — 2026-10-01
 
 ### Added — Round 9: Slack connector + Docker Compose
