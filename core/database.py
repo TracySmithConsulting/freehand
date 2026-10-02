@@ -3,11 +3,79 @@ from pathlib import Path
 from datetime import datetime
 
 
-DB_PATH = Path(__file__).parent.parent / "agent.db"
+# Round 10 (PR 1): agent.db moved from project root into vault/ so a
+# single Docker bind-mount covers ALL persistent state (encryption.key,
+# connections.db, broker_config.json, credential_store.json, agent.db).
+PROJECT_ROOT = Path(__file__).parent.parent
+VAULT_DIR = PROJECT_ROOT / "vault"
+DB_PATH = VAULT_DIR / "agent.db"
+
+
+def migrate_legacy_root_db() -> bool:
+    """One-time migration: move <project_root>/agent.db into vault/.
+
+    Round 9 and earlier stored agent.db at the project root. Round 10
+    consolidated persistent state into vault/. This function detects a
+    legacy on-disk DB at the project root and moves it (main file +
+    WAL sidecars) into vault/. Idempotent — running twice is a no-op
+    once the file has been moved.
+
+    Returns True if a file was moved, False otherwise.
+
+    Safety rules:
+    - If vault/agent.db already exists (user manually moved), DON'T
+      overwrite. Leave the user's copy alone; remove the legacy file
+      so we don't end up with two copies.
+    - Move both the main file and the WAL sidecars (agent.db-wal,
+      agent.db-shm). Missing them would make SQLite reject the
+      migrated DB.
+    - WAL mode means the main file might not contain all committed
+      data on disk; the -wal file has the rest. Both must move.
+    """
+    legacy = PROJECT_ROOT / "agent.db"
+    target = VAULT_DIR / "agent.db"
+
+    # No legacy file: nothing to do.
+    if not legacy.exists():
+        return False
+
+    # Vault already has agent.db — don't overwrite user data.
+    # Remove the legacy to avoid two copies diverging.
+    if target.exists():
+        legacy.unlink()
+        wal = PROJECT_ROOT / "agent.db-wal"
+        shm = PROJECT_ROOT / "agent.db-shm"
+        if wal.exists():
+            wal.unlink()
+        if shm.exists():
+            shm.unlink()
+        return False
+
+    # Create vault/ if it doesn't exist (fresh install case).
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Move main file + WAL sidecars.
+    legacy.rename(target)
+    for suffix in ("-wal", "-shm"):
+        legacy_sidecar = PROJECT_ROOT / f"agent.db{suffix}"
+        if legacy_sidecar.exists():
+            legacy_sidecar.rename(VAULT_DIR / f"agent.db{suffix}")
+
+    return True
 
 
 def init_db() -> sqlite3.Connection:
-    """Initialize SQLite database with FTS5 enabled and create required tables."""
+    """Initialize SQLite database with FTS5 enabled and create required tables.
+
+    NOTE: One-time migration of legacy agent.db (Round 9 and earlier
+    stored it at the project root) into vault/agent.db. This used to
+    be called here, but that broke test fixtures that monkeypatch
+    DB_PATH — the migration would touch the REAL project root, not
+    the test's tmp_path. The migration is now wired into
+    server.py:startup_event so it runs ONCE per app boot, not on every
+    init_db() call. Tests that need to trigger it explicitly can call
+    migrate_legacy_root_db() themselves.
+    """
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

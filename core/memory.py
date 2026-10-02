@@ -1,13 +1,16 @@
 import sqlite3
 import os
 import re
+import sys
 from pathlib import Path
 from typing import List, Dict, Optional
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from core.database import DB_PATH  # canonical vault/agent.db path (Round 10 PR 1)
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
 VAULT_DIR = PROJECT_ROOT / "vault"
-DB_PATH = PROJECT_ROOT / "agent.db"
 
 
 def _get_conn() -> sqlite3.Connection:

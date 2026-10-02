@@ -11,7 +11,7 @@ import sys
 from importlib import resources as importlib_resources
 
 sys.path.insert(0, str(Path(__file__).parent))
-from core.database import init_db
+from core.database import init_db, DB_PATH  # DB_PATH is the canonical path from core.database (vault/agent.db)
 from core.memory import sync_vault_to_sqlite, search_memory, parse_skills
 from core.scheduler import get_scheduler, process_scribble
 from core.security import (
@@ -71,7 +71,7 @@ app = FastAPI(
     version="0.1.0"
 )
 
-DB_PATH = Path(__file__).parent / "agent.db"
+# DB_PATH is imported from core.database (canonical vault/agent.db path)
 VAULT_DIR = Path(__file__).parent / "vault"
 SCRIBBLE_PATH = VAULT_DIR / "00_Scribble.md"
 
@@ -252,6 +252,12 @@ app.include_router(
 
 @app.on_event("startup")
 async def startup_event():
+    # Round 10 (PR 1): one-time migration of legacy agent.db from the
+    # project root into vault/agent.db. Runs ONCE per app boot, not on
+    # every init_db() call (test fixtures monkeypatch DB_PATH and would
+    # otherwise touch real files). Idempotent — no-op after first run.
+    from core.database import migrate_legacy_root_db, init_db
+    migrate_legacy_root_db()
     init_db()
     VAULT_DIR.mkdir(exist_ok=True)
     if not SCRIBBLE_PATH.exists():
