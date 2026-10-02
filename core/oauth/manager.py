@@ -5,12 +5,15 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from datetime import datetime, timezone, timedelta
+import logging
 
 from cryptography.fernet import Fernet
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from core.database import DB_PATH
+
+log = logging.getLogger(__name__)
 
 
 VAULT_DIR = Path(__file__).parent.parent.parent / "vault"
@@ -239,3 +242,131 @@ def get_connection_status(service, label="default"):
         "name": user_info.get("name", "") or user_info.get("displayName", "") or user_info.get("login", ""),
         "expired": expired,
     }
+
+
+# ── Legacy connections.db migration (Round 10 PR 2) ──────────────────
+
+
+def migrate_legacy_connections_db(skip: bool = False) -> int:
+    """One-time migration: read vault/connections.db rows, write them
+    to vault/credential_store.json as OAuth credentials.
+
+    Round 5-9 stored OAuth connection tokens in vault/connections.db
+    (SQLite, with Fernet-encrypted token_data column). Round 10
+    introduces vault/credential_store.json as the new first-class
+    registry. This function moves existing rows to the new store
+    so the broker + tool layer can find them under the (service,
+    label) shape.
+
+    Returns the number of rows migrated (0 if nothing to do, or if
+    the migration was previously run, or if skip=True).
+
+    Idempotency:
+    - A sentinel ``"_migrated": true`` flag in
+      ``vault/credential_store.json`` gates the migration. Once
+      the migration has run, the sentinel is set and subsequent
+      calls return 0 without touching anything.
+    - For an interrupted run (some rows migrated, sentinel not
+      written), the next call's "skip if already in store" check
+      prevents double-migration.
+
+    Security:
+    - The legacy token_data is Fernet-encrypted under the SAME key
+      as the new store. We decrypt to plaintext, then re-encrypt
+      into the new store. Both ciphertexts are independent Fernet
+      outputs against the same key.
+    - The legacy vault/connections.db file is NOT deleted. The
+      legacy table will keep working until Round 11+ removes it.
+    - The flag ``skip=True`` is for users who want a fresh start
+      (e.g. after rotating the encryption key). It marks the
+      migration as done without reading the legacy file.
+
+    Coexistence with existing credential_store entries:
+    - If (service, label) already exists in credential_store.json,
+      the migration SKIPS that row (preserves the newer entry).
+      This handles the case where a user re-ran the OAuth dance
+      against a Round-10 build and the new token already landed
+      in the new store.
+    """
+    if skip:
+        _mark_migration_done()
+        return 0
+
+    # Already migrated? Read the sentinel and bail early.
+    storage = _read_credential_store_safe()
+    if storage.get("_migrated") is True:
+        return 0
+
+    legacy_db = DB_PATH
+    if not legacy_db.exists():
+        # No legacy file — nothing to migrate. Mark done so we
+        # don't re-check on every boot.
+        _mark_migration_done()
+        return 0
+
+    # Open the legacy DB read-only.
+    try:
+        conn = sqlite3.connect(f"file:{legacy_db}?mode=ro", uri=True)
+    except sqlite3.OperationalError as e:
+        log.warning("migrate_legacy_connections_db: cannot open %s: %s", legacy_db, e)
+        return 0
+
+    try:
+        rows = conn.execute(
+            "SELECT service, label, token_data, scopes FROM connections"
+        ).fetchall()
+    except sqlite3.OperationalError:
+        # Table doesn't exist — empty legacy db
+        rows = []
+    finally:
+        conn.close()
+
+    # Lazy import to avoid circular dependency (manager -> credential_store
+    # is fine, but doing it at module level would force credential_store
+    # to load before manager finishes initializing).
+    from core.oauth import credential_store as _cs
+
+    migrated = 0
+    for service, label, token_data_enc, scopes_csv in rows:
+        # Skip rows that already exist in the new store (preserves
+        # any newer registrations).
+        if _cs.has(service, label):
+            continue
+        # Decrypt the legacy token_data (it's a JSON-serialized dict
+        # of {access_token, scope, refresh_token, ...}).
+        try:
+            token_data = json.loads(decrypt(token_data_enc))
+        except Exception as e:
+            log.warning(
+                "migrate_legacy_connections_db: skipping %s/%s (decrypt failed): %s",
+                service, label, e,
+            )
+            continue
+        # Re-encrypt into the new store as an OAuth credential.
+        _cs.add(
+            service=service,
+            label=label,
+            secret=json.dumps(token_data),
+            auth_type="oauth",
+        )
+        migrated += 1
+
+    _mark_migration_done()
+    log.info("migrate_legacy_connections_db: migrated %d rows", migrated)
+    return migrated
+
+
+def _read_credential_store_safe() -> dict:
+    """Read credential_store.json without forcing the credential_store
+    module to be imported. Used by the migration's sentinel check.
+    """
+    from core.oauth import credential_store as _cs
+    return _cs._read_storage()
+
+
+def _mark_migration_done() -> None:
+    """Set the _migrated sentinel in credential_store.json."""
+    from core.oauth import credential_store as _cs
+    storage = _cs._read_storage()
+    storage["_migrated"] = True
+    _cs._write_storage(storage)
