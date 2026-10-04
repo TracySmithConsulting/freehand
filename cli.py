@@ -477,6 +477,117 @@ def credential_rename(
 app.add_typer(credential_app, name="credential")
 
 
+# ── Tool discovery commands (Round 10 PR 2) ────────────────────────────
+# Mirrors the credential CLI shape. Tracy can see what tools are
+# registered, opt-in to sensitive/destructive actions, and disable
+# entire services when done.
+
+tools_app = typer.Typer(help="Manage LLM-visible tools (OC-discovered actions, Round 10 PR 2).")
+
+
+def _tools_imports():
+    """Lazy import — keeps CLI boot path fast."""
+    import sys
+    sys.path.insert(0, str(_get_project_root()))
+    from core.tools import registry as _reg
+    return _reg
+
+
+@tools_app.command("list")
+def tools_list(
+    service: str = typer.Argument(None, help="Filter by service id (e.g. slack)"),
+):
+    """List currently-active LLM tools. By default shows all
+    registered tools. Pass a service to filter.
+
+    Reads from vault/tool_registry.json — the same store that
+    bootstrap() reads at server startup. Tools only appear here
+    after freehand tools refresh has probed OpenConnector.
+    """
+    reg = _tools_imports()
+    tools = reg.list_tools(service=service)
+    if not tools:
+        if service:
+            typer.echo(f"No tools registered for {service}.")
+            typer.echo("Run 'freehand tools refresh' to discover tools from OpenConnector.")
+        else:
+            typer.echo("No tools registered.")
+            typer.echo("Run 'freehand tools refresh' to discover tools from OpenConnector.")
+        return
+    typer.echo(f"{'Service':<14} {'Label':<14} {'Tool':<48} {'Auth':<10}")
+    typer.echo("-" * 88)
+    for t in tools:
+        typer.echo(
+            f"{t['service']:<14} {t['label']:<14} {t['tool_name']:<48} {'api_key' if 'api_key' in t['tool_name'] else 'oauth'}"
+        )
+
+
+@tools_app.command("enable-writes")
+def tools_enable_writes(
+    service: str = typer.Argument(..., help="Service id to enable sensitive/destructive actions for"),
+    label: str = typer.Option("default", "--label", "-l", help="Account label"),
+):
+    """Promote sensitive and destructive actions for a service from
+    'pending writes' to the active tool list.
+
+    By default, only risk='standard' actions are auto-registered
+    as read tools. This command lets the user opt in to chat:write,
+    chat:delete, channels:history, and other higher-impact actions.
+
+    Returns the count of newly-enabled tools.
+    """
+    reg = _tools_imports()
+    promoted = reg.enable_writes(service, label)
+    if promoted == 0:
+        typer.echo(f"No pending writes for {service}/{label}.")
+        typer.echo("Either no credential is registered, or OC has no sensitive/destructive actions for this service.")
+        raise SystemExit(1)
+    typer.echo(f"Enabled {promoted} write/sensitive tools for {service}/{label}.")
+    typer.echo("Use 'freehand tools list' to view them.")
+
+
+@tools_app.command("disable")
+def tools_disable(
+    service: str = typer.Argument(..., help="Service id to disable"),
+    label: str = typer.Option("default", "--label", "-l", help="Account label"),
+):
+    """Remove ALL tools (read + write) for a service/label. The OC
+    credential and OAuth token are unaffected — this only hides
+    the tools from the LLM.
+
+    Re-enable with 'freehand tools refresh'.
+    """
+    reg = _tools_imports()
+    removed = reg.disable(service, label)
+    if removed == 0:
+        typer.echo(f"No tools registered for {service}/{label}.")
+        raise SystemExit(1)
+    typer.echo(f"Disabled {removed} tools for {service}/{label}.")
+
+
+@tools_app.command("refresh")
+def tools_refresh():
+    """Re-probe OpenConnector for every credentialed service. Adds
+    new actions, drops actions OC no longer exposes.
+
+    Typical use: after OC ships new actions, or after a credential
+    is added/removed via 'freehand credential add' / 'remove'.
+    """
+    reg = _tools_imports()
+    summary = reg.refresh()
+    added = summary.get("added", 0)
+    removed = summary.get("removed", 0)
+    updated = summary.get("updated", 0)
+    typer.echo(
+        f"Refresh complete: {added} added, {removed} removed, {updated} re-probed."
+    )
+    if added or removed:
+        typer.echo("Run 'freehand tools list' to see the current active set.")
+
+
+app.add_typer(tools_app, name="tools")
+
+
 # ── Agent subcommands ──────────────────────────────────────────────────────────
 
 agent_app = typer.Typer(help="Manage AI agents (detection, import, status)")
