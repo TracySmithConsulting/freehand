@@ -110,6 +110,30 @@ def _isolated_registry(tmp_path, monkeypatch):
     return vault
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_tool_state():
+    """Each test sees a fresh TOOL_SCHEMAS + TOOL_REGISTRY.
+
+    The registry mutates core.agent_config.TOOL_SCHEMAS and
+    TOOL_REGISTRY to inject discovered tools. Without this fixture,
+    mutations from one test leak into the next (e.g.
+    test_round4_fixes::test_all_24_tools_visible_to_llm fails when
+    OC-discovered tools from earlier tests are still in the dict).
+    We snapshot both dicts before each test and restore them after.
+    """
+    from core import agent_config
+    saved_schemas = dict(agent_config.TOOL_SCHEMAS)
+    saved_registry = dict(agent_config.TOOL_REGISTRY)
+    yield
+    # Pop any keys that weren't in the snapshot
+    new_schemas = [k for k in agent_config.TOOL_SCHEMAS if k not in saved_schemas]
+    new_registry = [k for k in agent_config.TOOL_REGISTRY if k not in saved_registry]
+    for k in new_schemas:
+        agent_config.TOOL_SCHEMAS.pop(k, None)
+    for k in new_registry:
+        agent_config.TOOL_REGISTRY.pop(k, None)
+
+
 # ── Action classification ───────────────────────────────────────────────
 
 
@@ -226,7 +250,8 @@ class TestDiscoverTools:
         pending = result["pending_writes"]
 
         # 2 risk=standard actions registered: channels:read, users:read
-        names = sorted(t["function"]["name"] for t in registered)
+        # Each registered entry is {"schema": ..., "risk": ...}
+        names = sorted(e["schema"]["function"]["name"] for e in registered)
         assert names == [
             "oc_slack_default_channels:read",
             "oc_slack_default_users:read",

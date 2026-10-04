@@ -263,6 +263,20 @@ async def startup_event():
     if not SCRIBBLE_PATH.exists():
         SCRIBBLE_PATH.write_text("# 00_Scribble\n\n> Agent scratchpad\n\n## Quick Notes\n\n- [ ] Task to remember\n")
     get_scheduler()
+    # Round 10 (PR 2): one-time migration of legacy connections.db rows
+    # into vault/credential_store.json. Idempotent — no-op after the
+    # first run (sentinel "_migrated": true is set in storage).
+    from core.oauth.manager import migrate_legacy_connections_db
+    migrate_legacy_connections_db()
+    # Round 10 (PR 2): bootstrap the tool registry so OC-discovered
+    # tools persist across FreeHand restarts. bootstrap() reads
+    # vault/tool_registry.json (written by `freehand tools refresh` /
+    # `enable-writes` / `disable`) and injects the stored tools into
+    # core.agent_config.TOOL_SCHEMAS + TOOL_REGISTRY. After this runs,
+    # list_available_tools() includes the OC-discovered tools and
+    # intercept_action() can gate them on read/write permissions.
+    from core.tools import registry as _tool_registry
+    _tool_registry.bootstrap()
     # Log any expired connections on startup
     from core.oauth.manager import list_connections, is_token_expired
     all_conns = list_connections()

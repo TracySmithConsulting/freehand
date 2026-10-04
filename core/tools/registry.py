@@ -270,7 +270,7 @@ def discover_tools(service: str, label: str = "default") -> dict:
         kind = classify_action(action)
         schema = build_tool_schema(service, label, action)
         if kind == "read":
-            registered.append(schema)
+            registered.append({"schema": schema, "risk": action.get("risk", "standard")})
         else:
             pending_writes.append(action)
 
@@ -288,11 +288,16 @@ def discover_tools(service: str, label: str = "default") -> dict:
     return {"registered": registered, "pending_writes": pending_writes}
 
 
-def _persist_registered(service: str, label: str, schemas: List[dict]) -> None:
+def _persist_registered(service: str, label: str, registered: List[dict]) -> None:
     """Write the registered schemas to vault/tool_registry.json, scoped
     to (service, label). Removes any prior (service, label) entry
     before adding the new one — discover_tools is idempotent on
     re-run for the same (service, label).
+
+    Each persisted entry also stores the OC action's ``risk`` so
+    bootstrap() can re-classify tools on next startup (the schema
+    itself doesn't carry the risk signal — function-calling format
+    only has description + parameters).
     """
     with _lock:
         storage = _read_storage()
@@ -300,47 +305,52 @@ def _persist_registered(service: str, label: str, schemas: List[dict]) -> None:
             t for t in storage.get("tools", [])
             if not (t.get("service") == service and t.get("label") == label)
         ]
-        for schema in schemas:
+        for entry in registered:
+            schema = entry["schema"]
             tools.append({
                 "service": service,
                 "label": label,
                 "tool_name": schema["function"]["name"],
                 "schema": schema,
+                "risk": entry.get("risk", "standard"),
             })
         storage["tools"] = tools
         _write_storage(storage)
 
 
-def _merge_into_global_schemas(service: str, label: str, schemas: List[dict]) -> None:
+def _merge_into_global_schemas(service: str, label: str, registered: List[dict]) -> None:
     """Inject the discovered tools into core.agent_config.TOOL_SCHEMAS
     and TOOL_REGISTRY. This is what makes ``list_available_tools()``
     pick them up — it iterates TOOL_SCHEMAS and merges into the
     function-calling shape.
+
+    Each entry in ``registered`` is a ``{"schema": ..., "risk": ...}``
+    dict. The schema has function-calling shape; the risk is the
+    OC action's risk field (``standard`` | ``sensitive`` |
+    ``destructive``) which determines TOOL_REGISTRY's read/write
+    classification (Pitfall: a sensitive OC action might be a
+    "read" tool to the LLM but still needs the write permission
+    gate in intercept_action).
 
     Companion function ``_unmerge_from_global_schemas`` strips the
     same entries (used by disable()).
     """
     _ensure_sys_path()
     from core import agent_config  # type: ignore
-    for schema in schemas:
+    for entry in registered:
+        schema = entry["schema"]
+        risk = entry.get("risk", "standard")
         name = schema["function"]["name"]
         agent_config.TOOL_SCHEMAS[name] = {
             "description": schema["function"]["description"],
             "parameters": schema["function"]["parameters"],
         }
-        # All OC-discovered tools that auto-register are reads.
-        # Sensitive/destructive actions stay in the 'pending' list
-        # and only enter TOOL_REGISTRY after enable_writes().
-        kind = classify_action(_find_action_for_tool(schemas, name))
-        agent_config.TOOL_REGISTRY[name] = "read" if kind == "read" else "write"
-
-
-def _find_action_for_tool(schemas: List[dict], tool_name: str) -> dict:
-    for s in schemas:
-        if s["function"]["name"] == tool_name:
-            return s  # caller uses classify_action on the schema, but
-                      # schema lacks 'risk' — return schema's source if any
-    return {}
+        # Classification: standard = read, anything else = write.
+        # Even a sensitive READ (e.g. channels:history) needs the
+        # write permission gate, because the underlying action is
+        # not in the read-only tier.
+        kind = "read" if risk == "standard" else "write"
+        agent_config.TOOL_REGISTRY[name] = kind
 
 
 def enable_writes(service: str, label: str = "default") -> int:
@@ -361,13 +371,17 @@ def enable_writes(service: str, label: str = "default") -> int:
     for action in actions:
         kind = classify_action(action)
         if kind == "write":
-            promoted_schemas.append(build_tool_schema(service, label, action))
+            schema = build_tool_schema(service, label, action)
+            promoted_schemas.append({"schema": schema, "risk": action.get("risk", "sensitive")})
 
     if not promoted_schemas:
         return 0
 
-    _persist_registered(service, label, _read_active_schemas_for(service, label) + promoted_schemas)
-    _merge_into_global_schemas(service, label, promoted_schemas)
+    # Read existing registered entries for (service, label) and merge
+    existing = _read_active_registered_for(service, label)
+    combined = existing + promoted_schemas
+    _persist_registered(service, label, combined)
+    _merge_into_global_schemas(service, label, combined)
     log.info(
         "registry: %s/%s — promoted %d writes",
         service, label, len(promoted_schemas),
@@ -375,13 +389,16 @@ def enable_writes(service: str, label: str = "default") -> int:
     return len(promoted_schemas)
 
 
-def _read_active_schemas_for(service: str, label: str) -> List[dict]:
-    """Read the currently-active (service, label) schemas from storage."""
+def _read_active_registered_for(service: str, label: str) -> List[dict]:
+    """Read the currently-active (service, label) registered entries
+    from storage. Each entry is a dict ``{"schema": ..., "risk": ...}``
+    — same shape passed to _persist_registered."""
     storage = _read_storage()
-    return [
-        t["schema"] for t in storage.get("tools", [])
-        if t.get("service") == service and t.get("label") == label
-    ]
+    out: List[dict] = []
+    for t in storage.get("tools", []):
+        if t.get("service") == service and t.get("label") == label:
+            out.append({"schema": t["schema"], "risk": t.get("risk", "standard")})
+    return out
 
 
 def disable(service: str, label: str = "default") -> int:
@@ -410,7 +427,8 @@ def disable(service: str, label: str = "default") -> int:
 
 def _unmerge_from_global_schemas(schemas: List[dict]) -> None:
     """Inverse of _merge_into_global_schemas — remove from TOOL_SCHEMAS
-    and TOOL_REGISTRY."""
+    and TOOL_REGISTRY. Takes raw schema dicts (not the registered
+    wrapper) since disable() already has the schemas from storage."""
     _ensure_sys_path()
     from core import agent_config  # type: ignore
     for schema in schemas:
@@ -436,7 +454,7 @@ def refresh() -> dict:
     # Track which (service, label) the catalog currently knows about
     catalog_keys = set()
     for service, label in pairs:
-        before_count = len(_read_active_schemas_for(service, label))
+        before_count = len(_read_active_registered_for(service, label))
         result = discover_tools(service, label)
         after_count = len(result["registered"])
         if after_count > before_count:
@@ -445,8 +463,8 @@ def refresh() -> dict:
             removed += before_count - after_count
         else:
             updated += 1
-        for schema in result["registered"]:
-            catalog_keys.add(schema["function"]["name"])
+        for entry in result["registered"]:
+            catalog_keys.add(entry["schema"]["function"]["name"])
 
     # Drop tools whose (service, label) no longer has a credential
     storage = _read_storage()
@@ -493,6 +511,10 @@ def bootstrap() -> int:
     the in-memory TOOL_SCHEMAS / TOOL_REGISTRY. Called once at server
     startup so tools registered across CLI invocations persist across
     FreeHand restarts. Returns count merged.
+
+    Each stored entry has ``{"schema": ..., "risk": ...}`` — the
+    risk is the OC action's risk field, used to re-classify the
+    tool in TOOL_REGISTRY.
     """
     storage = _read_storage()
     tools = storage.get("tools", [])
@@ -503,12 +525,15 @@ def bootstrap() -> int:
     grouped: Dict[tuple, List[dict]] = {}
     for t in tools:
         key = (t.get("service"), t.get("label"))
-        grouped.setdefault(key, []).append(t["schema"])
+        grouped.setdefault(key, []).append({
+            "schema": t["schema"],
+            "risk": t.get("risk", "standard"),
+        })
 
     count = 0
-    for (service, label), schemas in grouped.items():
-        _merge_into_global_schemas(service, label, schemas)
-        count += len(schemas)
+    for (service, label), registered in grouped.items():
+        _merge_into_global_schemas(service, label, registered)
+        count += len(registered)
 
     log.info("registry: bootstrap merged %d tools", count)
     return count

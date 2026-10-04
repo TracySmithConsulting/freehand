@@ -77,6 +77,22 @@ def _stub_credentials(monkeypatch, present_pairs):
     )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_global_tool_state():
+    """Mirror the fixture in test_tool_registry.py — keep TOOL_SCHEMAS
+    and TOOL_REGISTRY clean across tests in this file too."""
+    from core import agent_config
+    saved_schemas = dict(agent_config.TOOL_SCHEMAS)
+    saved_registry = dict(agent_config.TOOL_REGISTRY)
+    yield
+    new_schemas = [k for k in agent_config.TOOL_SCHEMAS if k not in saved_schemas]
+    new_registry = [k for k in agent_config.TOOL_REGISTRY if k not in saved_registry]
+    for k in new_schemas:
+        agent_config.TOOL_SCHEMAS.pop(k, None)
+    for k in new_registry:
+        agent_config.TOOL_REGISTRY.pop(k, None)
+
+
 # ── tools list ────────────────────────────────────────────────────────
 
 
