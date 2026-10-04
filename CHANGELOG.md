@@ -67,6 +67,104 @@ If the vault copy already exists (user manually moved), the legacy
 file is removed to avoid two-divergent-copies risk; the unique user's
 vault copy is preserved untouched.
 
+### Added — Round 10 PR 2: Credential store + tool registry
+
+**What changed**: FreeHand now has a first-class, Fernet-encrypted
+multi-credential store and an LLM-facing tool registry. Tracy can
+register multiple accounts per service (e.g. two GitHub accounts
+under labels "work" and "personal") and the LLM sees each as a
+distinct tool namespace. OC-discovered actions are auto-classified
+by risk and gated behind explicit opt-in for sensitive /
+destructive actions.
+
+**Why**: Round 5-9 had two parallel storage paths — vault/connections.db
+for OAuth dance results, plus a static set of GitHub-PAT tools in
+`core/agent_config.py`. They were per-flow (not per-(service,label))
+and the LLM could only see one GitHub account. Round 10 PR 2 unifies
+this around a single credential store + a dynamic tool registry that
+reads OpenConnector's action catalog.
+
+**New modules**:
+- **`core/oauth/credential_store.py`** (304 lines) — Fernet-encrypted
+  store at `vault/credential_store.json`. Per-(service, label)
+  namespace. Two `auth_type`s: `oauth` (full token_data dict) and
+  `api_key` (raw token string). Same Fernet key as `shared_apps.py`
+  and `manager.py`. Lock-protected atomic writes.
+- **`core/tools/registry.py`** (505 lines) — the bridge between
+  OpenConnector's action catalog and FreeHand's LLM-facing tool
+  list. Probes OC for a service, classifies actions by risk,
+  registers them as `oc_<service>_<label>_<action>` tools.
+- **`tests/test_credential_store.py`** (13 tests),
+  **`tests/test_credential_cli.py`** (12),
+  **`tests/test_migrate_legacy.py`** (9),
+  **`tests/test_tool_registry.py`** (14),
+  **`tests/test_tools_cli.py`** (9),
+  **`tests/test_registry_bootstrap.py`** (5) — 62 new tests total.
+
+**New CLI subcommands**:
+- `freehand credential add <service> --token <key> [--label <name>]`
+  — register an API key / PAT. Secret Fernet-encrypted on write.
+- `freehand credential list` — show service, label, auth_type,
+  registered_by for all credentials. **Never the decrypted secret.**
+- `freehand credential remove <service> [--label <name>]`
+- `freehand credential rename <service> --from <old> --to <new>`
+- `freehand tools refresh` — re-probe OC for every credentialed
+  service. Adds new actions, drops actions OC no longer exposes.
+- `freehand tools list [service]` — show currently-active tools.
+- `freehand tools enable-writes <service>` — opt in to sensitive
+  / destructive actions (chat:write, chat:delete, channels:history).
+- `freehand tools disable <service>` — remove all tools for service.
+
+**Classification rule** (Tracy 02 Oct 2026, refined from live OC probe):
+  `risk == "standard"` → auto-register as read tool.
+  `risk in {"sensitive", "destructive"}` → behind `enable-writes`.
+  Slack's `defaultSelected` is OC's consent-screen UX signal, NOT a
+  safety signal. Slack uses `risk=sensitive` for read actions like
+  `channels:history` — we don't auto-register those.
+
+**Tool naming**: `oc_<service>_<label>_<action>` always, even for
+single-credential services (label="default" is implicit). Uniform
+shape for the LLM.
+
+**Schema format**: OpenAI function-calling shape — matches the
+existing `TOOL_SCHEMAS` in `core/agent_config.py`. No translation
+layer for the dispatch loop.
+
+**Server wiring**:
+- `server.py:startup_event()` now calls
+  `core.oauth.manager.migrate_legacy_connections_db()` so the
+  Round 5-9 OAuth connections in `vault/connections.db` get
+  migrated to the new credential store on first boot of a
+  Round-10-Pull-2 image.
+- `server.py:startup_event()` now calls
+  `core.tools.registry.bootstrap()` so OC-discovered tools persist
+  across FreeHand restarts. After bootstrap, `list_available_tools()`
+  includes them and `intercept_action()` gates them on read/write
+  permissions.
+
+**Migration story for existing installs**:
+On first boot of a Round-10-Pull-2 image:
+1. `migrate_legacy_root_db()` runs (PR 1's job — moves agent.db).
+2. `migrate_legacy_connections_db()` reads `vault/connections.db`
+   and writes its rows to `vault/credential_store.json` as
+   `auth_type="oauth"` entries. Idempotent — sentinel `{"_migrated": true}`
+   in credential_store.json gates the run. Skips rows that already
+   exist in the new store (preserves newer registrations). The
+   legacy `connections.db` file is **NOT deleted** — the legacy
+   connections table keeps working until Round 11+ removes it.
+3. `registry.bootstrap()` reads `vault/tool_registry.json` and
+   injects stored tools into `TOOL_SCHEMAS` / `TOOL_REGISTRY`.
+   First boot with no `tool_registry.json` is a no-op (return 0).
+
+**Test status**: **337 tests passing, 2 skipped, 0 regressions**
+(was 275 after PR 1; +62 from PR 2).
+
+**No breaking changes**: every existing handler still works. The
+new `oc_*` tools coexist with the static `list_github_repos` etc.
+tools. Round 11 will rename / re-namespace the dispatch loop to use
+the registry exclusively; PR 2 ships the new infrastructure
+alongside the old.
+
 ---
 
 ## [Unreleased] — 2026-10-01
