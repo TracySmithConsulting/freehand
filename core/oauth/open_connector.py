@@ -33,6 +33,7 @@ import logging
 import os
 import threading
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 import urllib.error
@@ -215,3 +216,80 @@ def call_mcp_action(action: str, arguments: dict) -> Optional[dict]:
     except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError) as e:
         log.debug("open-connector mcp call %s failed: %s", action, e)
         return None
+
+
+def get_provider_actions(service_id: str, label: str = "default") -> list:
+    """Fetch a service's authorizationOptions from OpenConnector.
+
+    Used by ``core.tools.registry.discover_tools`` to register tools
+    without each service needing a FreeHand-side provider class
+    (Round 10 PR 2 closes the Round 9 "no new provider since Slack"
+    gap — every OC-supported service auto-registers on the next
+    `freehand tools refresh`).
+
+    Authentication: this is an admin-tier call. Uses the admin
+    token from ``_load_admin_token()`` (env override or
+    ``vault/broker_config.json``). The runtime token (per-user
+    tier-1b) is not used here because the catalog is global, not
+    per-credential.
+
+    Returns:
+        List of authorizationOptions dicts (each with id, label,
+        description, risk, defaultSelected, required, requires).
+        Empty list on:
+        - HTTP 404 (service not in OC's catalog)
+        - Connection error (OC down)
+        - Parse error (unexpected response shape)
+    """
+    admin_token = _load_admin_token()
+    if not admin_token:
+        log.debug("get_provider_actions: no admin token, returning []")
+        return []
+    url = f"{_BASE_URL}/v1/providers/{urllib.parse.quote(service_id, safe='')}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "Authorization": f"Bearer {admin_token}",
+            "Accept": "application/json",
+        },
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            if resp.status != 200:
+                log.debug("get_provider_actions %s: status %d", service_id, resp.status)
+                return []
+            raw = resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, urllib.error.HTTPError, ConnectionError, OSError) as e:
+        log.debug("get_provider_actions %s: %s", service_id, e)
+        return []
+    try:
+        body = json.loads(raw)
+    except json.JSONDecodeError as e:
+        log.warning("get_provider_actions %s: bad JSON: %s", service_id, e)
+        return []
+    return body.get("auth", {}).get("authorizationOptions", []) or []
+
+
+def _load_admin_token() -> Optional[str]:
+    """Load the admin token for catalog-level OC calls.
+
+    Order: env (OOMOL_CONNECT_ADMIN_TOKEN) → vault/broker_config.json
+    → None. Same shape as _load_runtime_token but for the admin role.
+    """
+    env = os.environ.get("OOMOL_CONNECT_ADMIN_TOKEN")
+    if env:
+        return env
+    broker_config = Path(__file__).parent.parent.parent / "vault" / "broker_config.json"
+    if broker_config.exists():
+        try:
+            data = json.loads(broker_config.read_text(encoding="utf-8"))
+            shared_apps = data.get("shared_apps", {}) or {}
+            return (
+                shared_apps.get("_admin_token")
+                or data.get("admin_token")
+                or data.get("open_connector_admin_token")
+            )
+        except (json.JSONDecodeError, OSError):
+            return None
+    return None
