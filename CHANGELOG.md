@@ -165,6 +165,73 @@ tools. Round 11 will rename / re-namespace the dispatch loop to use
 the registry exclusively; PR 2 ships the new infrastructure
 alongside the old.
 
+### Added — Round 11: Dynamic OC tool dispatch (plumbing only, NOT verified live)
+
+**What changed**: The LLM dispatch loop now has an `oc_` branch that
+routes any tool name starting with `oc_` to a new dispatch module
+which looks up the credential in `credential_store` and calls
+OpenConnector's MCP endpoint. Static tools keep their explicit
+branches — Round 11 is additive only.
+
+**What did NOT change**: The actual end-to-end round-trip does
+**not** work yet. The plumbing is in place and the unit tests pass,
+but the live Slack smoke (intended as the final Task 4 verification)
+failed because the wire format FreeHand ships doesn't match OC's
+actual MCP interface. See `.hermes/plans/2026-10-05_round-11-live-smoke-discovery.md`
+for the full writeup.
+
+**The 3 things Round 11 ships**:
+
+1. **`core/oauth/open_connector.py:get_provider_actions(service, label)`**
+   — real catalog probe. GET against `OC /v1/providers/<service>`,
+   returns the `authorizationOptions` list. Empty list on 404 / OC
+   down / parse error. Closes the stub that Round 10's registry
+   depended on (Round 10 tests passed only because they monkeypatched
+   the stub).
+
+2. **`core/tools/dispatch.py:dispatch_oc_tool(name, args)`** — parses
+   the `oc_<service>_<label>_<action>` triple, looks up the credential
+   from `credential_store`, calls OC's MCP endpoint. Uniform
+   `{ok, content|error}` envelope. Error codes: `malformed_name`,
+   `no_credential`, `oc_unreachable`, `oc_error`, `exception`.
+
+3. **`core/agent.py:execute_tool()`** — one new branch at the end
+   of the dispatch chain. Any tool name starting with `oc_` routes
+   to `dispatch_oc_tool`. Static tools (`read_docx`, `navigate`,
+   `list_github_repos`, etc.) keep their explicit branches.
+
+**The 1 thing Round 11 does NOT do**: the actual Slack round-trip.
+The dispatch layer's wire format (Round 11's `call_mcp_action`)
+sends `params.name = "<authorizationOptions_id>"`, e.g.
+`"channels:read"`. OC's actual MCP interface expects
+`params.name = "execute_action"` with the action id nested inside
+`arguments.actionId` in `service.action_name` format (e.g.
+`"slack.list_channels"`). The live smoke confirmed this with a
+real `curl` probe.
+
+**Plus an operational surprise**: OC's catalog now has **1568
+providers and 18345 actions** (up from the ~30 I estimated when
+writing the Round 10 plan). The Round 12 work needs to switch
+from `authorizationOptions[].risk` to the per-action `operationType`
+from `search_actions` / `get_action_guide`, and add an action-id
+translation table for the wire format mismatch.
+
+**Tests**: 16 new tests across 3 files (4 + 9 + 3).
+**353 passed, 2 skipped, 0 regressions** (was 337 after Round 10 PR 2).
+
+**Verified live**: **No.** Discovery writeup in
+`.hermes/plans/2026-10-05_round-11-live-smoke-discovery.md` documents
+what the live probe of OC revealed. Round 12 will fix the wire
+format, register a Slack connection in OC's runtime, and re-run
+the smoke.
+
+**No breaking changes**: A user with the new `oc_` tools sees them
+in `list_available_tools()` and the LLM can attempt to call them.
+If the call fails (which it currently does, due to the wire format
+mismatch), the dispatch returns a clean `oc_error` envelope, not a
+Python traceback. Round 11 ships additive plumbing; Round 12 fixes
+the wire.
+
 ---
 
 ## [Unreleased] — 2026-10-01
