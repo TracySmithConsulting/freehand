@@ -304,6 +304,23 @@ async def execute_tool(name: str, args: dict) -> dict:
         elif name == "delete_checkpoint":
             result = delete_checkpoint(name=args.get("name", ""))
             return {"content": json.dumps(result, default=str)}
+        # ── Round 11: dynamic OC tool dispatch ────────────────
+        # Routes any tool name starting with 'oc_' to the registry's
+        # dynamic dispatch. Static tools (read_docx, navigate,
+        # list_github_repos, etc.) keep their explicit branches above.
+        if name.startswith("oc_"):
+            from core.tools import dispatch as _oc_dispatch
+            oc_result = _oc_dispatch.dispatch_oc_tool(name, args)
+            if oc_result.get("ok"):
+                return {"content": oc_result["content"]}
+            # Error envelope — surface as the dispatch contract expects.
+            err = oc_result.get("error", {})
+            return {
+                "content": json.dumps({
+                    "error": err.get("code", "oc_error"),
+                    "message": err.get("message", "OC call failed"),
+                }, default=str)
+            }
         else:
             return {"content": json.dumps({"error": f"Unknown tool: {name}"})}
     except Exception as e:
