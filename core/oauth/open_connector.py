@@ -293,3 +293,81 @@ def _load_admin_token() -> Optional[str]:
         except (json.JSONDecodeError, OSError):
             return None
     return None
+
+
+def execute_action(action_id: str, input_data: dict, connection_name: Optional[str] = None) -> Optional[dict]:
+    """Run one provider action by id against the provider's API.
+
+    This is OC's `execute_action` MCP tool. Live-verified 06 Oct 2026:
+    the wire format is
+
+      params.name = 'execute_action'
+      params.arguments = {
+        'actionId': '<service>.<action_name>',   # e.g. 'slack.list_channels'
+        'input': {...},                          # the action's input parameters
+        'connectionName': '<connection_name>',   # optional; OC uses service default if omitted
+      }
+
+    Authentication: uses the RUNTIME token (per-user tier-1b), not
+    the admin token. Different from get_provider_actions which uses
+    the admin token for catalog probes.
+
+    Returns:
+        The parsed {"ok": True, "data": {...}} or {"ok": False, "error": {...}}
+        envelope that OC returns inside its MCP content[0].text JSON.
+        None on any transport / auth failure (caller treats as
+        tier-5 silent-no-op, matching call_mcp_action's contract).
+
+    action_id format is OC's `service.action_name` (e.g. 'slack.list_channels',
+    'hackernews.get_item'), NOT OAuth scope names ('channels:read').
+    FreeHand's dispatch layer translates from its own `authorizationOptions[].id`
+    via the search_actions lookup at registry time - see
+    core/tools/registry.py for the translation.
+    """
+    token = _load_runtime_token()
+    if not token:
+        log.debug("execute_action: no runtime token, returning None")
+        return None
+    arguments = {"actionId": action_id, "input": input_data}
+    if connection_name is not None:
+        arguments["connectionName"] = connection_name
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "execute_action", "arguments": arguments},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_BASE_URL}/mcp",
+        data=body,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "Accept": _MCP_ACCEPT,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            if resp.status != 200:
+                log.debug("execute_action %s: status %d", action_id, resp.status)
+                return None
+            raw = resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, urllib.error.HTTPError, ConnectionError, OSError) as e:
+        log.debug("execute_action %s: %s", action_id, e)
+        return None
+    for line in raw.splitlines():
+        if line.startswith("data:"):
+            try:
+                envelope = json.loads(line[len("data:"):].strip())
+            except json.JSONDecodeError as e:
+                log.warning("execute_action %s: bad SSE JSON: %s", action_id, e)
+                return None
+            content = envelope.get("result", {}).get("content", [])
+            if not content:
+                return None
+            text = content[0].get("text", "")
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                log.warning("execute_action %s: bad inner JSON: %s", action_id, e)
+                return None
+    return None
