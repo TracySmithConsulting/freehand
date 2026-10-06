@@ -91,12 +91,42 @@ GITHUB_CATALOG_OPTIONS = [
 
 
 def _stub_oc_catalog(monkeypatch, by_service):
-    """Stub core.oauth.open_connector.get_provider_actions to return canned data."""
+    """Stub core.oauth.open_connector.get_provider_actions to return canned data.
+
+    Round 12 also stubs _search_actions so the translation step has
+    a non-empty input. The fake creates OC action ids that don't
+    trivially match the authopt (so the translation's matching logic
+    is exercised, not bypassed by identical descriptions)."""
     def fake_get_actions(service_id, label="default"):
         return by_service.get(service_id, [])
     monkeypatch.setattr(
         "core.tools.registry._get_provider_actions",
         fake_get_actions,
+    )
+    def fake_search_actions(service_id, label="default"):
+        authopts = by_service.get(service_id, [])
+        out = []
+        for a in authopts:
+            # Round 12 translation pairs each authopt with an OC action.
+            # Use a slightly reworded description so the translation
+            # has to do real work (not just match the authopt's own
+            # description to itself).
+            authopt_id = a.get("id", "")
+            label = a.get("label", authopt_id)
+            # Build a description that contains the label's keywords
+            # (so strategy 2 finds a match) but isn't identical to
+            # the authopt's description.
+            out.append({
+                "id": f"{service_id}.{authopt_id.replace(':', '_')}",
+                "service": service_id,
+                "operationType": a.get("risk", "standard"),
+                "name": label,
+                "description": f"OC action: {label} for {service_id}.",
+            })
+        return out
+    monkeypatch.setattr(
+        "core.tools.registry._search_actions",
+        fake_search_actions,
     )
 
 

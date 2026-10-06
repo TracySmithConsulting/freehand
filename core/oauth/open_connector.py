@@ -371,3 +371,54 @@ def execute_action(action_id: str, input_data: dict, connection_name: Optional[s
                 log.warning("execute_action %s: bad inner JSON: %s", action_id, e)
                 return None
     return None
+
+
+def search_actions(service_id: str, label: str = "default") -> list:
+    """Search OC's catalog for actions matching a service.
+
+    Returns a list of action dicts. Each has:
+      - id: '<service>.<action_name>' (e.g. 'slack.list_channels')
+      - service: the service id
+      - operationType: 'read' | 'write' | 'destructive'
+      - name: the action's display name
+      - description: human-readable description
+
+    Returns [] on any error.
+    """
+    token = _load_runtime_token()
+    if not token:
+        return []
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "search_actions",
+                   "arguments": {"service": service_id, "limit": 50}},
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        f"{_BASE_URL}/mcp", data=body,
+        headers={"Authorization": f"Bearer {token}",
+                 "Content-Type": "application/json",
+                 "Accept": _MCP_ACCEPT},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            if resp.status != 200:
+                return []
+            raw = resp.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, urllib.error.HTTPError, ConnectionError, OSError):
+        return []
+    for line in raw.splitlines():
+        if line.startswith("data:"):
+            try:
+                envelope = json.loads(line[len("data:"):].strip())
+            except json.JSONDecodeError:
+                return []
+            content = envelope.get("result", {}).get("content", [])
+            if not content:
+                return []
+            try:
+                inner = json.loads(content[0].get("text", ""))
+            except json.JSONDecodeError:
+                return []
+            return inner.get("data", []) or []
+    return []

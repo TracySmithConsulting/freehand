@@ -200,6 +200,63 @@ def _get_provider_actions(service_id: str, label: str = "default"):
     return get_provider_actions(service_id, label)
 
 
+def _search_actions(service_id: str, label: str = "default"):
+    """Lazy-imported wrapper around OC's search_actions MCP tool.
+
+    Returns a list of {"id", "service", "operationType", "name", "description"}
+    dicts. Empty list on OC down / no token / parse error.
+
+    Round 12: this is the source of the per-action operationType that
+    replaces Round 10's authorizationOptions[].risk as the
+    read/write/destructive classification signal.
+    """
+    _ensure_sys_path()
+    from core.oauth.open_connector import search_actions  # type: ignore
+    return search_actions(service_id, label)
+
+
+def translate_authopt_id_to_oc_action_id(
+    service: str, authopt: dict, search_results: list
+):
+    """Translate FreeHand's authorizationOptions[].id to OC's service.action_name.
+
+    Three strategies, in order of confidence:
+    1. Exact label match (case-insensitive): both have a 'label' field
+    2. Substring match on description (case-insensitive)
+    3. Substring match on name (e.g. authopt 'channels:read' -> OC 'list_channels'
+       if the OC name is 'list_channels' and the authopt label contains 'list')
+
+    Returns None if no confident match - the authopt is dropped from
+    the registry rather than registered with a wrong action id.
+
+    Round 12 design choice: dropping > guessing. A wrong match would
+    route Slack read calls to a Slack write action, which is the
+    exact wire-format bug we're trying to avoid. Better to discover
+    fewer tools than to call the wrong ones.
+    """
+    authopt_id = authopt.get("id", "")
+    authopt_label = (authopt.get("label", "") or "").lower()
+    authopt_desc = (authopt.get("description", "") or "").lower()
+
+    # Strategy 1: exact label match
+    for sr in search_results:
+        sr_label = (sr.get("name", "") or "").lower()
+        sr_desc = (sr.get("description", "") or "").lower()
+        if authopt_label and (authopt_label in sr_desc or sr_label in authopt_desc):
+            return sr.get("id")
+
+    # Strategy 2: substring match on description keywords
+    keywords = [w for w in authopt_label.split() if len(w) > 3]
+    if not keywords:
+        return None
+    for sr in search_results:
+        sr_desc = (sr.get("description", "") or "").lower()
+        if all(k in sr_desc for k in keywords):
+            return sr.get("id")
+
+    return None
+
+
 def _has_credential(service: str, label: str) -> bool:
     """Cheap existence check: is there a credential for (service, label)?"""
     _ensure_sys_path()
@@ -264,13 +321,36 @@ def discover_tools(service: str, label: str = "default") -> dict:
         log.warning("registry: OC probe failed for %s: %s", service, e)
         return {"registered": [], "pending_writes": []}
 
+    # Round 12: also probe OC's search_actions for the per-action
+    # service.action_name list. The translation from FreeHand's
+    # authorizationOptions[].id to OC's action id happens here at
+    # discover time, not at dispatch time.
+    try:
+        search_results = _search_actions(service, label)
+    except Exception as e:
+        log.warning("registry: OC search_actions failed for %s: %s", service, e)
+        search_results = []
+
     registered: List[dict] = []
     pending_writes: List[dict] = []
     for action in actions:
         kind = classify_action(action)
         schema = build_tool_schema(service, label, action)
+        oc_action_id = translate_authopt_id_to_oc_action_id(service, action, search_results)
+        if oc_action_id is None:
+            # No confident translation - drop the tool. Better to skip
+            # than to register a tool that calls the wrong action.
+            log.debug(
+                "registry: no OC action id for %s/%s, dropping",
+                service, action.get("id"),
+            )
+            continue
         if kind == "read":
-            registered.append({"schema": schema, "risk": action.get("risk", "standard")})
+            registered.append({
+                "schema": schema,
+                "risk": action.get("risk", "standard"),
+                "oc_action_id": oc_action_id,
+            })
         else:
             pending_writes.append(action)
 
@@ -313,6 +393,7 @@ def _persist_registered(service: str, label: str, registered: List[dict]) -> Non
                 "tool_name": schema["function"]["name"],
                 "schema": schema,
                 "risk": entry.get("risk", "standard"),
+                "oc_action_id": entry.get("oc_action_id"),  # Round 12
             })
         storage["tools"] = tools
         _write_storage(storage)
@@ -502,6 +583,7 @@ def list_tools(service: str = None, label: str = None) -> List[dict]:
             "label": t.get("label"),
             "tool_name": t.get("tool_name"),
             "schema": schema,
+            "oc_action_id": t.get("oc_action_id"),  # Round 12
         })
     return out
 

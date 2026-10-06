@@ -66,6 +66,25 @@ def _stub_oc_catalog(monkeypatch, by_service):
         "core.tools.registry._get_provider_actions",
         fake_get_actions,
     )
+    # Round 12: also stub _search_actions so the translation step has input.
+    def fake_search_actions(service_id, label="default"):
+        authopts = by_service.get(service_id, [])
+        out = []
+        for a in authopts:
+            authopt_id = a.get("id", "")
+            label = a.get("label", authopt_id)
+            out.append({
+                "id": f"{service_id}.{authopt_id.replace(':', '_')}",
+                "service": service_id,
+                "operationType": a.get("risk", "standard"),
+                "name": label,
+                "description": f"OC action: {label} for {service_id}.",
+            })
+        return out
+    monkeypatch.setattr(
+        "core.tools.registry._search_actions",
+        fake_search_actions,
+    )
 
 
 def _stub_credentials(monkeypatch, present_pairs):
