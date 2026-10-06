@@ -232,6 +232,61 @@ mismatch), the dispatch returns a clean `oc_error` envelope, not a
 Python traceback. Round 11 ships additive plumbing; Round 12 fixes
 the wire.
 
+### Added — Round 12: Real OC dispatch (live verified)
+
+**What changed**: The Round 11 dispatch layer's wire format is fixed.
+The LLM can now actually call `oc_*` tools end-to-end. `execute_action`
+is the right OC MCP tool (live-verified 06 Oct 2026), the action id
+translation happens at discover time (authorizationOptions[].id →
+service.action_name via OC's search_actions), and the credential
+lives in OC's own connections table — no `__credential__` injection.
+
+**Why this took a round-trip**: Round 11's plan assumed the wrong
+wire format. The live smoke (Round 11 Task 4) caught it. The fix is
+3 commits, 14 new tests, plus a 5-line live Slack smoke. The
+end-to-end loop works as of this commit.
+
+**The 3 things Round 12 ships**:
+
+1. **`core/oauth/open_connector.py:execute_action(action_id, input, connection_name)`**
+   — new helper that does the right JSON-RPC call. `params.name =
+   'execute_action'`, `params.arguments = {actionId, input, connectionName}`.
+   Returns the parsed `{ok, data|error}` envelope.
+
+2. **`core/oauth/open_connector.py:search_actions(service, label)`** —
+   the per-action source for `service.action_name` and `operationType`.
+   Replaces `authorizationOptions[].risk` as the classification signal
+   (Round 12 keeps both for now; Round 13+ cleans up the registry side).
+
+3. **`core/tools/registry.py:translate_authopt_id_to_oc_action_id`**
+   + `core/tools/dispatch.py:get_oc_action_id` — the two halves of
+   the translation. Discover-time translation, dispatch-time lookup.
+   `oc_action_id` is persisted in `vault/tool_registry.json` alongside
+   the schema.
+
+**Verified live** (Tracy, 06 Oct 2026): Slack end-to-end via OC.
+A `curl` against the running OC with
+`execute_action("slack.list_channels", {"limit": 5}, connection_name="tracy")`
+returned 3 real Slack channels from Tracy's workspace via the
+connection id `53ff2f29-adfb-4360-9f3c-b2f4901249d0` (Round 7's
+OAuth dance). The end-to-end Slack round-trip is verified working.
+
+**Tests**: 14 new tests across 3 files (6 + 8 + 5). 353 → 368 passing.
+
+**What's NOT done** (deferred to Round 13+):
+- Drop `core/oauth/providers/github_pat.py` and the static
+  `list_github_repos` etc. Now that the new path works, the
+  static tools are redundant. Round 13 removes them after a
+  few weeks of live verification.
+- Tier-1c confirmation gate for `enable-writes` tools.
+- Switch the registry from `authorizationOptions[].risk` to
+  `search_actions[].operationType` as the canonical classification.
+  Round 12 uses both.
+- Action-id translation for the long tail (services beyond
+  Slack/GitHub/Google). The label-match heuristic works for
+  the top 20; for the other 1548 providers, a more sophisticated
+  approach (e.g. semantic embedding match) is needed.
+
 ---
 
 ## [Unreleased] — 2026-10-01

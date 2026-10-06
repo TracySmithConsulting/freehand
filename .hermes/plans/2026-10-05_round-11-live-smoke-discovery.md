@@ -1,7 +1,10 @@
 # Round 11 — Live smoke discovery (NOT verified live)
 
 **Date:** 2026-10-05
-**Status:** Plumbing + tests shipped, live verification deferred to Round 12
+**Status:** SUPERSEDED by Round 12 (06 Oct 2026). The wire format
+issues documented here are fixed. The new docs are in
+`docs/tools/dynamic-oc-dispatch.md` and the Round 12 CHANGELOG
+entry. This file is kept for historical context.
 
 ## What shipped in Round 11 (3 commits, +16 tests, 337 → 353 passing)
 

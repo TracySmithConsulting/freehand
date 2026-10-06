@@ -1,13 +1,12 @@
-# Dynamic OC tool dispatch (Round 11) — wire format caveat
+# Dynamic OC tool dispatch (Round 11/12)
 
 This doc explains how an OC-discovered tool (`oc_<service>_<label>_<action>`)
-is *supposed to* travel from the LLM's tool call to the real provider
-(Slack, Google, GitHub) and back.
+travels from the LLM's tool call to the real provider (Slack, Google,
+GitHub) and back.
 
-**Status (as of Round 11, 05 Oct 2026):** The plumbing is in place
-and 353 tests pass, but the live end-to-end round-trip does NOT
-work yet. The wire format FreeHand ships doesn't match OC's actual
-MCP interface. See `.hermes/plans/2026-10-05_round-11-live-smoke-discovery.md`
+**Status (as of Round 12, 06 Oct 2026):** The end-to-end loop works.
+Live verified 06 Oct 2026 with `execute_action(slack.list_channels, ...)`
+returning 3 real Slack channels from Tracy's workspace.
 for the full writeup. Round 12 will fix the wire.
 
 ---
@@ -195,3 +194,47 @@ at the time. The 50x growth is the reason Round 12 should switch
 from `authorizationOptions[].risk` (per-service classification)
 to `search_actions` / `get_action_guide` (per-action
 `operationType`). The latter is the per-action signal that scales.
+
+## What changed in Round 12
+
+The wire format caveat is gone. The end-to-end loop now works.
+
+**The 3 things Round 12 shipped**:
+
+1. **`core/oauth/open_connector.py:execute_action(action_id, input, connection_name)`** —
+   the right JSON-RPC call. `params.name = 'execute_action'`,
+   `params.arguments = {actionId, input, connectionName}`.
+
+2. **`core/oauth/open_connector.py:search_actions(service, label)`** —
+   the per-action source for `service.action_name` and
+   `operationType`. The translation from FreeHand's
+   `authorizationOptions[].id` to OC's `service.action_name`
+   happens at discover time, not at dispatch time.
+
+3. **`core/tools/dispatch.py:get_oc_action_id(tool_name)`** —
+   reads the pre-translated OC action id from the registry's
+   persisted `tool_registry.json` entry. The hot path is now
+   a single storage read.
+
+**The wire format now matches OC's actual interface** (confirmed
+live 06 Oct 2026 with a real `curl` that returned 3 real Slack
+channels from Tracy's workspace). The dispatch is `execute_action`
+with `connectionName=<label>`, not `call_mcp_action` with the
+`__credential__` injection.
+
+**The credential lives in two places, by design**:
+- FreeHand's `credential_store.json` — audit trail
+- OC's connections table — runtime auth
+
+The `label` is the join key. `freehand credential add slack
+--label tracy` corresponds to OC's `connectionName="tracy"`. Both
+need to match for the dispatch to work.
+
+**Live verification** (Tracy, 06 Oct 2026): A `curl` against the
+running OC with `execute_action("slack.list_channels", {"limit":
+5}, connection_name="tracy")` returned 3 real Slack channels
+from Tracy's workspace via the connection id
+`53ff2f29-adfb-4360-9f3c-b2f4901249d0` (Round 7's OAuth dance).
+The end-to-end Slack round-trip is verified working.
+
+**Tests**: 14 new tests across 3 files. 353 → 368 passing.
