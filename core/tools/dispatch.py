@@ -1,13 +1,19 @@
-"""Dynamic OC tool dispatch (Round 11 of FreeHand maintenance).
+"""Dynamic OC tool dispatch (Round 11/12 of FreeHand maintenance).
 
 The single entry point the LLM dispatch loop calls when the tool
 name starts with ``oc_``. Parses the (service, label, action)
 triple from the name, looks up the credential from
 credential_store, and routes the call through OpenConnector's
-MCP endpoint.
+``execute_action`` MCP tool.
+
+Round 12 fix: Round 11's dispatch used call_mcp_action with the
+wrong wire format. Round 12 uses execute_action with the label
+as connectionName. The OC action id is looked up from the
+registry's persisted tool entry (where the registry stored it at
+discover_tools time, see core/tools/registry.py).
 
 Static tools (read_docx, navigate, list_github_repos, etc.)
-do NOT flow through this module — they keep their if/elif
+do NOT flow through this module - they keep their if/elif
 branches in core/agent.execute_tool(). This module is ONLY
 for the oc_<service>_<label>_<action> tool names that Round 10
 PR 2 ships via the tool registry.
@@ -28,12 +34,20 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
+import sys
 from typing import Optional
 
 log = logging.getLogger(__name__)
 
 # Public re-export for tests that patch it
-from core.oauth.open_connector import call_mcp_action  # noqa: F401
+from core.oauth.open_connector import execute_action  # noqa: F401
+
+
+def _ensure_sys_path():
+    """Late-bind sys.path so this module works when imported via tests/*."""
+    if str(Path(__file__).parent.parent.parent) not in sys.path:
+        sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 
 def parse_oc_tool_name(tool_name: str) -> tuple:
@@ -69,19 +83,41 @@ def parse_oc_tool_name(tool_name: str) -> tuple:
     return service, label, action
 
 
+def get_oc_action_id(tool_name: str) -> Optional[str]:
+    """Read the OC action id for a tool_name from the registry's persisted store.
+
+    The registry (core/tools/registry.py) writes one tool_registry.json
+    entry per (service, label) pair. Each entry has:
+      - tool_name: the FreeHand-side name (oc_<svc>_<label>_<action>)
+      - oc_action_id: the OC-side id (e.g. 'slack.list_channels')
+      - schema, risk, etc.
+
+    The translation (authorizationOptions[].id -> service.action_name)
+    happens at discover_tools() time via OC's search_actions endpoint.
+    This function is the dispatch-side reader.
+
+    Returns None if the tool isn't in the registry (the LLM typed a
+    name that wasn't registered, or the registry hasn't been bootstrapped).
+    """
+    _ensure_sys_path()
+    from core.tools import registry as _registry
+    storage = _registry._read_storage()
+    for t in storage.get("tools", []):
+        if t.get("tool_name") == tool_name:
+            return t.get("oc_action_id")
+    return None
+
+
 def _get_credential_for_dispatch(service: str, label: str) -> Optional[dict]:
     """Read the credential for (service, label) from credential_store.
 
     Returns the full entry dict (with 'secret', 'auth_type', etc.)
-    or None if no credential is registered. The dispatch module
-    doesn't care about the secret content — OC's MCP endpoint
-    knows how to handle its own auth — but we check the credential
-    exists so we can return a useful no_credential error envelope.
-
-    Imported lazily so this module can be loaded without dragging
-    in credential_store's Fernet dependency.
+    or None. The secret is NOT passed to OC - OC has its own
+    connections table. The credential_store entry is checked for
+    existence so the dispatch can return a clean no_credential
+    error, and for the audit trail (which account is being used).
     """
-    from core.oauth import credential_store  # noqa: E402
+    from core.oauth import credential_store
     return credential_store.get(service, label)
 
 
@@ -92,18 +128,30 @@ def dispatch_oc_tool(tool_name: str, args: dict) -> dict:
       On success: {"ok": True, "content": <json string from OC>}
       On error:   {"ok": False, "error": {"code": <str>, "message": <str>}}
 
-    Error codes:
-      "malformed_name" — tool name didn't match the oc_<svc>_<label>_<action> shape
-      "no_credential"  — no entry in credential_store for (service, label)
-      "oc_error"       — OC returned an error envelope (passthrough)
-      "oc_unreachable" — OC's MCP endpoint timed out / refused
-      "exception"      — anything else (caught broadly so the LLM
-                         doesn't see Python tracebacks)
+    Error codes (Round 12):
+      "malformed_name"  - tool name didn't match oc_<svc>_<label>_<action>
+      "unknown_tool"    - tool_name not in registry (no oc_action_id)
+      "no_credential"   - no entry in credential_store for (service, label)
+      "oc_unreachable"  - OC's MCP endpoint timed out / refused / no token
+      "oc_error"        - OC returned an error envelope (passthrough)
     """
     try:
-        service, label, action = parse_oc_tool_name(tool_name)
+        service, label, _authopt_id = parse_oc_tool_name(tool_name)
     except ValueError as e:
         return {"ok": False, "error": {"code": "malformed_name", "message": str(e)}}
+
+    oc_action_id = get_oc_action_id(tool_name)
+    if oc_action_id is None:
+        return {
+            "ok": False,
+            "error": {
+                "code": "unknown_tool",
+                "message": (
+                    f"Tool '{tool_name}' is not registered. "
+                    f"Run 'freehand tools refresh' to discover tools from OpenConnector."
+                ),
+            },
+        }
 
     cred = _get_credential_for_dispatch(service, label)
     if cred is None:
@@ -119,17 +167,10 @@ def dispatch_oc_tool(tool_name: str, args: dict) -> dict:
             },
         }
 
-    # Inject the secret as an extra argument so OC's MCP endpoint
-    # can authenticate the call. The endpoint is responsible for
-    # using it (or ignoring it if the connection's already
-    # authenticated upstream).
-    call_args = dict(args)
-    call_args["__credential__"] = cred.get("secret")
-
     try:
-        result = call_mcp_action(action, call_args)
+        result = execute_action(oc_action_id, args, connection_name=label)
     except Exception as e:
-        log.warning("dispatch_oc_tool %s: OC call raised: %s", tool_name, e)
+        log.warning("dispatch_oc_tool %s: execute_action raised: %s", tool_name, e)
         return {
             "ok": False,
             "error": {"code": "oc_unreachable", "message": str(e)[:200]},
@@ -144,15 +185,13 @@ def dispatch_oc_tool(tool_name: str, args: dict) -> dict:
             },
         }
 
-    # OC's MCP endpoint returns either {"result": ...} on success or
-    # {"error": {...}} on failure. The Round 7 call_mcp_action helper
-    # parses both into the envelope we use here.
-    if "error" in result:
-        return {"ok": False, "error": result["error"]}
+    if not result.get("ok", False):
+        # OC returned an error envelope - pass it through.
+        return {"ok": False, "error": result.get("error", {
+            "code": "oc_error", "message": "OC call failed",
+        })}
 
-    # Successful call — result is the OC payload. Wrap it as a JSON
-    # string for the LLM dispatch loop's contract.
-    content = result.get("result", result)
-    if not isinstance(content, str):
-        content = json.dumps(content, default=str)
+    # Successful call - result.data is the OC payload.
+    data = result.get("data", {})
+    content = json.dumps(data, default=str) if not isinstance(data, str) else data
     return {"ok": True, "content": content}
