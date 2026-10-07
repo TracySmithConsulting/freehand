@@ -10,7 +10,7 @@ error, which broker treats as ``tier-5 silent-no-op``.
 Configuration (all optional; default behaviour matches the OpenConnector
 dev defaults):
 
-- ``OOMOL_CONNECT_BASE_URL`` — defaults to ``http://127.0.0.1:3000``.
+- ``OOMOL_CONNECT_BASE_URL`` — defaults to ``http://127.0.0.1:3001``.
 - ``OOMOL_CONNECT_RUNTIME_TOKEN`` — defaults to empty; if unset, tier-5
   advertises as down (cannot call the runtime without a token).
 - ``OOMOL_CONNECT_HEALTH_TIMEOUT_SECONDS`` — defaults to 1.5.
@@ -41,7 +41,7 @@ import urllib.request
 
 log = logging.getLogger("freehand.open_connector")
 
-_BASE_URL = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+_BASE_URL = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3001").rstrip("/")
 _HEALTH_TIMEOUT = float(os.environ.get("OOMOL_CONNECT_HEALTH_TIMEOUT_SECONDS", "1.5"))
 _CACHE_TTL = float(os.environ.get("OOMOL_CONNECT_CACHE_TTL_SECONDS", "30"))
 
@@ -50,6 +50,9 @@ _MCP_ACCEPT = "application/json, text/event-stream"
 # In-process cache. Keyed by string. Value: (timestamp, payload).
 _cache_lock = threading.Lock()
 _cache: dict[str, tuple[float, Any]] = {}
+# Public alias so tests can clear it between cases without reaching
+# for the underscore name (which lint flags).
+_CACHE = _cache
 
 _runtime_token: Optional[str] = None
 
@@ -293,6 +296,72 @@ def _load_admin_token() -> Optional[str]:
         except (json.JSONDecodeError, OSError):
             return None
     return None
+
+
+def get_service_actions(service_id: str) -> list:
+    """Fetch a service's runtime action catalog from OpenConnector.
+
+    Round 13: replaces ``get_provider_actions``. The /v1/providers/<svc>
+    endpoint Round 11 was probing returns 404 — that endpoint does not
+    exist. The real endpoint is ``GET /v1/actions?service=<svc>``,
+    returning RuntimeActionMetadata dicts (one per action).
+
+    Each action has:
+      - id: ``<service>.<action_name>`` (e.g. ``slack.list_channels``)
+      - operationType: ``read`` | ``write`` | ``destructive``
+      - requiredScopes: list of OAuth scopes (e.g. ``["channels:read"]``)
+      - inputSchema: JSON Schema for the action's input
+
+    Authentication: /v1/* is gated by the runtime token (per-user
+    tier-1b), not the admin token. See file header for the full
+    auth model.
+
+    Returns:
+        List of RuntimeActionMetadata dicts (one per action).
+        Empty list on:
+        - HTTP 404 (service not in OC's catalog)
+        - Connection error (OC down)
+        - No runtime token configured
+        - Parse error (unexpected response shape)
+    """
+    def _loader() -> list:
+        token = _load_runtime_token()
+        if not token:
+            log.debug("get_service_actions %s: no runtime token, returning []", service_id)
+            return []
+        url = f"{_BASE_URL}/v1/actions?service={urllib.parse.quote(service_id, safe='')}"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5.0) as resp:
+                if resp.status != 200:
+                    log.debug("get_service_actions %s: status %d", service_id, resp.status)
+                    return []
+                raw = resp.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                log.debug("get_service_actions %s: service not in catalog", service_id)
+            else:
+                log.debug("get_service_actions %s: HTTP %d", service_id, e.code)
+            return []
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            log.debug("get_service_actions %s: %s", service_id, e)
+            return []
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError as e:
+            log.warning("get_service_actions %s: bad JSON: %s", service_id, e)
+            return []
+        data = body.get("data", [])
+        return data if isinstance(data, list) else []
+
+    return _cached(f"service_actions:{service_id}", _loader)
 
 
 def execute_action(action_id: str, input_data: dict, connection_name: Optional[str] = None) -> Optional[dict]:
