@@ -75,7 +75,15 @@ def init_db() -> sqlite3.Connection:
     server.py:startup_event so it runs ONCE per app boot, not on every
     init_db() call. Tests that need to trigger it explicitly can call
     migrate_legacy_root_db() themselves.
+
+    Fresh-checkout path: vault/ is gitignored, so a fresh checkout (or
+    a CI runner, or a machine before the first server boot) has no
+    vault/ directory at all. sqlite3.connect() cannot create the DB
+    file without its parent directory, so create it here. The
+    migration path above has its own mkdir for the legacy-DB case;
+    this one covers the no-legacy-DB case.
     """
+    VAULT_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

@@ -35,4 +35,9 @@ jobs:
           "
 
       - name: Run core tests
-        run: python test_all.py
+        # Round 14: CI ran `python test_all.py` — a Round-7-era
+        # 7-endpoint smoke script, NOT the pytest suite. The 372+
+        # tests in tests/ were never exercised by CI. Point at
+        # pytest; the "Initialize database" step above remains as
+        # the fresh-checkout init_db() canary.
+        run: python -m pytest tests/ -v --tb=short
