@@ -131,12 +131,21 @@ def _stub_oc_catalog(monkeypatch, by_service):
 
 
 def _isolated_registry(tmp_path, monkeypatch):
-    """Redirect registry storage to a tmp dir. The registry persists its
-    enabled-tools list in vault/tool_registry.json."""
+    """Redirect registry + credential_store storage to a tmp dir.
+
+    Both modules keep a module-level STORAGE_PATH that points to
+    vault/. Without this, tests leak the production credential list
+    into each other (e.g. Round 12 test_refresh_re_runs_discovery
+    was seeing the pre-registered ``slack/tracy`` credential and
+    double-counting it as an extra (service, label) pair)."""
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setattr(registry, "VAULT_DIR", vault)
     monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
+    from core.oauth import credential_store
+    monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
+    monkeypatch.setattr(credential_store, "STORAGE_PATH",
+                        vault / "credential_store.json")
     return vault
 
 

@@ -227,11 +227,11 @@ def get_provider_actions(service_id: str, label: str = "default") -> list:
     gap — every OC-supported service auto-registers on the next
     `freehand tools refresh`).
 
-    Authentication: this is an admin-tier call. Uses the admin
-    token from ``_load_admin_token()`` (env override or
-    ``vault/broker_config.json``). The runtime token (per-user
-    tier-1b) is not used here because the catalog is global, not
-    per-credential.
+    Authentication: uses the RUNTIME token (per-user tier-1b).
+    Per the OC docstring (line 20 of this file), ``/v1/*`` endpoints
+    need the runtime token, not the admin token. The admin token
+    is for OC's local config endpoints (``/api/oauth/configs``)
+    that aren't part of the runtime API.
 
     Returns:
         List of authorizationOptions dicts (each with id, label,
@@ -241,15 +241,15 @@ def get_provider_actions(service_id: str, label: str = "default") -> list:
         - Connection error (OC down)
         - Parse error (unexpected response shape)
     """
-    admin_token = _load_admin_token()
-    if not admin_token:
-        log.debug("get_provider_actions: no admin token, returning []")
+    runtime_token = _load_runtime_token()
+    if not runtime_token:
+        log.debug("get_provider_actions: no runtime token, returning []")
         return []
     url = f"{_BASE_URL}/v1/providers/{urllib.parse.quote(service_id, safe='')}"
     req = urllib.request.Request(
         url,
         headers={
-            "Authorization": f"Bearer {admin_token}",
+            "Authorization": f"Bearer {runtime_token}",
             "Accept": "application/json",
         },
         method="GET",
