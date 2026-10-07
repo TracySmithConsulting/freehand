@@ -91,9 +91,15 @@ def _cached(key: str, loader) -> Any:
 
 
 def _reset_cache_for_tests() -> None:
-    """Clear the cache so tests don't leak state between calls."""
+    """Clear the cache so tests don't leak state between calls.
+
+    Round 13: also reset the module-level _runtime_token so
+    tests that delete the env var see a None token (not a stale
+    value from a prior test)."""
+    global _runtime_token
     with _cache_lock:
         _cache.clear()
+    _runtime_token = None
 
 
 def is_available() -> bool:
