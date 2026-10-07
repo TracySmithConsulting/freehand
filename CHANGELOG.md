@@ -315,6 +315,14 @@ per action, named `oc_<service>_<label>_<action_name>`.
    profile (karma 157316, etc.). 113 tools registered across
    8 services.
 
+5. **Slack live smoke verified** (07 Oct 2026): `slack/tracy`
+   re-connected with a real Bot User OAuth Token (`xoxb-...`)
+   via OC's api-key route, renamed to `tracy` in OC's store.
+   `execute_action("slack.list_channels", {}, "tracy")` returns
+   three real channels in the TracySmithConsulting workspace
+   (`new-channel`, `all-tracysmithconsulting`, `social`),
+   `status: active`, `authType: api_key`.
+
 **Why this took another round-trip**: Round 11/12's design assumed
 the OC `authorizationOptions` model would be the source of truth,
 with action-id translation happening at discover time. The real
@@ -328,12 +336,6 @@ buggy. Round 13 drops it.
 - Drop `core/oauth/providers/github_pat.py` and the static
   `list_github_repos` etc. Now that the new path works, the
   static tools are redundant.
-- Real Slack smoke. Tracy's `slack/tracy` credential in OC is
-  the Slack app `client_id:client_secret` string, not a Bot
-  User OAuth Token (`xoxb-...`). OC returns 401 ("Configure slack
-  credentials first") when the dispatch tries to call
-  `slack.list_channels` end-to-end. Need a real `xoxb-` token
-  from Slack's OAuth & Permissions page.
 - Tier-1c confirmation gate for `enable-writes` tools.
 - Action discovery for the long tail (services with 50+ actions
   should be paginated or limited in the LLM tool list).
