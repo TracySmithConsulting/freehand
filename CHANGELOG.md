@@ -273,19 +273,70 @@ OAuth dance). The end-to-end Slack round-trip is verified working.
 
 **Tests**: 14 new tests across 3 files (6 + 8 + 5). 353 → 368 passing.
 
-**What's NOT done** (deferred to Round 13+):
+---
+
+### Added — Round 13: Action-centric OC discovery
+
+**What changed**: Round 11/12's `get_provider_actions` was probing
+the wrong OC endpoint (`/v1/providers/<svc>` returns 404). The real
+endpoint is `/v1/actions?service=<svc>`, returning OC's
+RuntimeActionMetadata — one row per action, with its own `id`
+(`slack.list_channels`), `operationType` (`read`/`write`/`destructive`),
+`requiredScopes`, and `inputSchema`. Round 13 drops the
+`authorizationOptions` translation round-trip and registers one tool
+per action, named `oc_<service>_<label>_<action_name>`.
+
+**The 4 things Round 13 ships**:
+
+1. **`core/oauth/open_connector.py:get_service_actions(service_id)`** —
+   new helper calling `GET /v1/actions?service=<svc>`. Replaces
+   `get_provider_actions`. Also fixes `_BASE_URL` default from
+   port 3000 to 3001 (OC's actual dev port). +7 tests.
+
+2. **`core/tools/registry.py:discover_tools`** — now reads
+   `operationType` (OC's source of truth) instead of
+   `authorizationOption.risk`. One tool per action. Test fixtures
+   `SLACK_ACTIONS` / `GITHUB_ACTIONS` replace the old authopt
+   fixtures. +5 tests updated.
+
+3. **`core/tools/registry.py:_known_labels_for(service)`** + parser
+   fix in **`core/tools/dispatch.py:parse_oc_tool_name`** — when
+   the tool name has an underscore-separated action
+   (`oc_slack_tracy_list_channels`) and a single-word label
+   (`tracy`), the old "last underscore" rule wrongly split
+   the action in two. The fix anchors the split on a real
+   label from the registry. +2 tests.
+
+4. **Live smoke verified** with HackerNews (no OAuth setup needed):
+   `dispatch("oc_hackernews_default_get_max_item_id", {})` returns
+   `{"ok": true, "content": "{\"max_item_id\": 49993326}"}` and
+   `dispatch("oc_hackernews_default_get_user_by_username",
+   {"username": "pg"})` returns Paul Graham's real HackerNews
+   profile (karma 157316, etc.). 113 tools registered across
+   8 services.
+
+**Why this took another round-trip**: Round 11/12's design assumed
+the OC `authorizationOptions` model would be the source of truth,
+with action-id translation happening at discover time. The real
+OC catalog has 27 actions per service (not 18), with their own
+canonical ids. The translation round-trip was unnecessary — and
+buggy. Round 13 drops it.
+
+**Tests**: 372 passing (368 → 372).
+
+**What's NOT done** (deferred to Round 14+):
 - Drop `core/oauth/providers/github_pat.py` and the static
   `list_github_repos` etc. Now that the new path works, the
-  static tools are redundant. Round 13 removes them after a
-  few weeks of live verification.
+  static tools are redundant.
+- Real Slack smoke. Tracy's `slack/tracy` credential in OC is
+  the Slack app `client_id:client_secret` string, not a Bot
+  User OAuth Token (`xoxb-...`). OC returns 401 ("Configure slack
+  credentials first") when the dispatch tries to call
+  `slack.list_channels` end-to-end. Need a real `xoxb-` token
+  from Slack's OAuth & Permissions page.
 - Tier-1c confirmation gate for `enable-writes` tools.
-- Switch the registry from `authorizationOptions[].risk` to
-  `search_actions[].operationType` as the canonical classification.
-  Round 12 uses both.
-- Action-id translation for the long tail (services beyond
-  Slack/GitHub/Google). The label-match heuristic works for
-  the top 20; for the other 1548 providers, a more sophisticated
-  approach (e.g. semantic embedding match) is needed.
+- Action discovery for the long tail (services with 50+ actions
+  should be paginated or limited in the LLM tool list).
 
 ---
 
