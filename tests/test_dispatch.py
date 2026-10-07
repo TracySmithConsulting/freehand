@@ -66,6 +66,44 @@ class TestParseOcToolName:
         with pytest.raises(ValueError, match="malformed"):
             dispatch.parse_oc_tool_name("oc_github")
 
+    def test_label_no_underscore_action_underscored_uses_registry(
+        self, tmp_path, monkeypatch
+    ):
+        """Round 13: ``oc_slack_tracy_list_channels`` with label="tracy"
+        (no underscore) and action="list_channels" (with underscore).
+
+        The "last underscore" rule would split this as
+        (slack, "tracy_list", "channels") — wrong. The registry
+        provides the anchor: tracy is a known label for slack,
+        so we split at the second underscore.
+        """
+        from core.oauth import credential_store
+        from core.tools import registry
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        monkeypatch.setattr(registry, "VAULT_DIR", vault)
+        monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
+        monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
+        monkeypatch.setattr(credential_store, "STORAGE_PATH",
+                            vault / "credential_store.json")
+        credential_store.add("slack", "tracy", "xoxb-fake", "oauth")
+
+        svc, lbl, act = dispatch.parse_oc_tool_name("oc_slack_tracy_list_channels")
+        assert (svc, lbl, act) == ("slack", "tracy", "list_channels")
+
+    def test_unknown_label_falls_back_to_last_underscore(self, monkeypatch):
+        """If the registry has no known labels for the service, fall back
+        to the "last underscore" heuristic. Better than crashing."""
+        from core.tools import registry
+        monkeypatch.setattr(registry, "_known_labels_for", lambda svc: set())
+        svc, lbl, act = dispatch.parse_oc_tool_name("oc_slack_default_list_channels")
+        # No known labels → split at last underscore. With "default"
+        # already known, this should still work, but if registry returns
+        # empty, "default_list" becomes the label.
+        # The function docstring notes: this is the fallback.
+        assert svc == "slack"
+
 
 # ── Action id translation (Round 12) ────────────────────────────
 

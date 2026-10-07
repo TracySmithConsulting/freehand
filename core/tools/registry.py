@@ -587,6 +587,25 @@ def list_tools(service: str = None, label: str = None) -> List[dict]:
     return out
 
 
+def _known_labels_for(service: str) -> set:
+    """Return the set of credential labels known for ``service``.
+
+    Used by core.tools.dispatch.parse_oc_tool_name to disambiguate
+    the label/action split in tool names (e.g. ``oc_slack_tracy_list_channels``
+    — without this hint, "last underscore" wrongly splits the action
+    in two). Reads the credential_store (no OC round-trip).
+
+    Returns an empty set if no labels are registered for the service.
+    """
+    _ensure_sys_path()
+    from core.oauth import credential_store  # type: ignore
+    try:
+        all_creds = credential_store.list_all()
+    except Exception:
+        return set()
+    return {c["label"] for c in all_creds if c.get("service") == service}
+
+
 def bootstrap() -> int:
     """Read vault/tool_registry.json and merge ALL stored tools into
     the in-memory TOOL_SCHEMAS / TOOL_REGISTRY. Called once at server

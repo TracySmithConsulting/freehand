@@ -60,6 +60,12 @@ def parse_oc_tool_name(tool_name: str) -> tuple:
     - Action IDs with underscores work ("get_user_by_id" → action="get_user_by_id")
     - Action IDs with colons work too ("reactions:add:name" → action="reactions:add:name")
 
+    Round 13 fix: when the label has NO underscores and the action
+    name has underscores (e.g. ``oc_slack_tracy_list_channels``),
+    the "last underscore" rule breaks. To disambiguate, look up
+    the tool's known (service, label) pair from the registry and
+    use it to anchor the split.
+
     Raises ValueError if the name doesn't start with "oc_" or has
     fewer than 3 parts.
     """
@@ -76,11 +82,25 @@ def parse_oc_tool_name(tool_name: str) -> tuple:
     last_us = after_service.rfind("_")
     if last_us < 0:
         raise ValueError(f"malformed oc_ tool name: {tool_name!r}")
-    label = after_service[:last_us]
-    action = after_service[last_us + 1:]
-    if not service or not label or not action:
+    candidate_label = after_service[:last_us]
+    candidate_action = after_service[last_us + 1:]
+    if not service or not candidate_label or not candidate_action:
         raise ValueError(f"malformed oc_ tool name: {tool_name!r}")
-    return service, label, action
+    # Try the registry-anchored split: if the label matches a known
+    # label for this service, use it. Otherwise fall back to the
+    # "last underscore" heuristic.
+    _ensure_sys_path()
+    from core.tools import registry as _registry
+    known_labels = _registry._known_labels_for(service)
+    if known_labels and candidate_label not in known_labels:
+        # Try to find a label that, when stripped, leaves a valid
+        # action. Sort labels longest-first to prefer multi-word labels
+        # like "work_v2" over single-word matches.
+        for label in sorted(known_labels, key=len, reverse=True):
+            prefix = f"{service}_{label}_"
+            if rest.startswith(prefix):
+                return service, label, rest[len(prefix):]
+    return service, candidate_label, candidate_action
 
 
 def get_oc_action_id(tool_name: str) -> Optional[str]:
