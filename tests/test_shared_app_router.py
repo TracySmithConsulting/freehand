@@ -30,12 +30,15 @@ from core.oauth import broker as broker_mod
 
 # Pitfall 27 (FreeHand): `core.oauth/__init__.py` shadows the `router` module
 # name with the APIRouter object. Load router by file path via importlib.
-# CI fix (Round 14): build the path with os.path.join — the old
-# backslash-joined raw string only worked on Windows (on macOS the
-# literal backslashes made an invalid path and collection failed).
-import os
+# CI fix (Round 14): derive the path from __file__ — the original
+# backslash-joined raw string only worked on Windows. Joining onto
+# sys.path[0] was also unsafe: every test file does
+# sys.path.insert(0, r"C:\...Windows path..."), which on POSIX runners
+# lands in sys.path as a *relative* component and poisons sys.path[0].
 import importlib.util as _importlib_util
-_router_path = os.path.join(sys.path[0], "core", "oauth", "router.py")
+import pathlib
+_project_root = pathlib.Path(__file__).resolve().parent.parent
+_router_path = str(_project_root / "core" / "oauth" / "router.py")
 _router_spec = _importlib_util.spec_from_file_location("core.oauth.router", _router_path)
 router_module = _importlib_util.module_from_spec(_router_spec)
 sys.modules["core.oauth.router"] = router_module
