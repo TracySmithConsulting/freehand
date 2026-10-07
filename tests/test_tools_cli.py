@@ -14,6 +14,7 @@ sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
 
 from cli import app  # noqa: E402
 from core.tools import registry  # noqa: E402
+from tests.test_tool_registry import SLACK_ACTIONS, GITHUB_ACTIONS  # noqa: E402
 
 
 def _runner():
@@ -21,42 +22,16 @@ def _runner():
 
 
 def _isolated_registry(tmp_path, monkeypatch):
-    """Redirect registry storage to a tmp vault."""
+    """Redirect registry + credential_store storage to a tmp dir."""
     vault = tmp_path / "vault"
     vault.mkdir()
     monkeypatch.setattr(registry, "VAULT_DIR", vault)
     monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
+    from core.oauth import credential_store
+    monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
+    monkeypatch.setattr(credential_store, "STORAGE_PATH",
+                        vault / "credential_store.json")
     return vault
-
-
-# Live OC catalog fixture — same as tests/test_tool_registry.py
-SLACK_CATALOG_OPTIONS = [
-    {"id": "channels:read", "label": "Public channels",
-     "description": "List public Slack channels and read their metadata.",
-     "required": True, "defaultSelected": True, "risk": "standard"},
-    {"id": "channels:history", "label": "Public channel messages",
-     "description": "Read message history in public Slack channels.",
-     "required": False, "defaultSelected": True, "risk": "sensitive",
-     "requires": ["channels:read"]},
-    {"id": "chat:write", "label": "Send messages",
-     "description": "Send messages as the connected Slack user.",
-     "required": False, "defaultSelected": True, "risk": "sensitive"},
-    {"id": "chat:delete", "label": "Delete messages",
-     "description": "Delete messages sent by the app.",
-     "required": False, "defaultSelected": False, "risk": "destructive"},
-    {"id": "users:read", "label": "User directory",
-     "description": "Read Slack user profiles and directory information.",
-     "required": False, "defaultSelected": True, "risk": "standard"},
-]
-
-GITHUB_CATALOG_OPTIONS = [
-    {"id": "read:user", "label": "User profile",
-     "description": "Read the authenticated user's profile.",
-     "required": True, "defaultSelected": True, "risk": "standard"},
-    {"id": "repo", "label": "Repository access",
-     "description": "Read and write access to repositories.",
-     "required": True, "defaultSelected": True, "risk": "sensitive"},
-]
 
 
 def _stub_oc_catalog(monkeypatch, by_service):
@@ -94,6 +69,14 @@ def _stub_credentials(monkeypatch, present_pairs):
         "core.tools.registry._has_credential",
         lambda service, label: (service, label) in pairs,
     )
+    # Round 13: refresh() also calls credential_store.list_all() to
+    # find (service, label) pairs. Stub that too.
+    from core.oauth import credential_store
+    monkeypatch.setattr(
+        credential_store,
+        "list_all",
+        lambda: [{"service": s, "label": l} for s, l in present_pairs],
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -123,7 +106,7 @@ class TestToolsList:
 
     def test_list_shows_registered_tools(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
-        _stub_oc_catalog(monkeypatch, {"slack": SLACK_CATALOG_OPTIONS})
+        _stub_oc_catalog(monkeypatch, {"slack": SLACK_ACTIONS})
         _stub_credentials(monkeypatch, [("slack", "default")])
 
         # Register tools
@@ -131,18 +114,18 @@ class TestToolsList:
 
         result = _runner().invoke(app, ["tools", "list"])
         assert result.exit_code == 0
-        # Tool names appear
-        assert "oc_slack_default_channels:read" in result.stdout
-        assert "oc_slack_default_users:read" in result.stdout
+        # Tool names appear (action-centric naming)
+        assert "oc_slack_default_list_channels" in result.stdout
+        assert "oc_slack_default_get_user_info" in result.stdout
         # Pending writes do NOT appear in list
-        assert "oc_slack_default_channels:history" not in result.stdout
-        assert "oc_slack_default_chat:write" not in result.stdout
+        assert "oc_slack_default_post_message" not in result.stdout
+        assert "oc_slack_default_delete_message" not in result.stdout
 
     def test_list_filter_by_service(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
         _stub_oc_catalog(monkeypatch, {
-            "slack": SLACK_CATALOG_OPTIONS,
-            "github": GITHUB_CATALOG_OPTIONS,
+            "slack": SLACK_ACTIONS,
+            "github": GITHUB_ACTIONS,
         })
         _stub_credentials(monkeypatch, [("slack", "default"),
                                         ("github", "default")])
@@ -153,8 +136,8 @@ class TestToolsList:
         result = _runner().invoke(app, ["tools", "list", "slack"])
         assert result.exit_code == 0
         # Only slack tools appear
-        assert "oc_slack_default_channels:read" in result.stdout
-        assert "oc_github_default_read:user" not in result.stdout
+        assert "oc_slack_default_list_channels" in result.stdout
+        assert "oc_github_default_get_user" not in result.stdout
 
 
 # ── tools enable-writes ──────────────────────────────────────────────
@@ -163,20 +146,20 @@ class TestToolsList:
 class TestToolsEnableWrites:
     def test_enable_writes_promotes_pending(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
-        _stub_oc_catalog(monkeypatch, {"slack": SLACK_CATALOG_OPTIONS})
+        _stub_oc_catalog(monkeypatch, {"slack": SLACK_ACTIONS})
         _stub_credentials(monkeypatch, [("slack", "default")])
         registry.discover_tools("slack", "default")
 
-        # chat:write is in pending, not list
+        # post_message is in pending, not list
         before = _runner().invoke(app, ["tools", "list"])
-        assert "oc_slack_default_chat:write" not in before.stdout
+        assert "oc_slack_default_post_message" not in before.stdout
 
         result = _runner().invoke(app, ["tools", "enable-writes", "slack"])
         assert result.exit_code == 0
 
-        # After enable, chat:write IS in list
+        # After enable, post_message IS in list
         after = _runner().invoke(app, ["tools", "list"])
-        assert "oc_slack_default_chat:write" in after.stdout
+        assert "oc_slack_default_post_message" in after.stdout
 
     def test_enable_writes_unknown_service_exits_nonzero(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
@@ -190,7 +173,7 @@ class TestToolsEnableWrites:
 class TestToolsDisable:
     def test_disable_removes_all(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
-        _stub_oc_catalog(monkeypatch, {"slack": SLACK_CATALOG_OPTIONS})
+        _stub_oc_catalog(monkeypatch, {"slack": SLACK_ACTIONS})
         _stub_credentials(monkeypatch, [("slack", "default")])
         registry.discover_tools("slack", "default")
         _runner().invoke(app, ["tools", "enable-writes", "slack"])
@@ -200,8 +183,8 @@ class TestToolsDisable:
 
         # All slack tools gone
         after = _runner().invoke(app, ["tools", "list"])
-        assert "oc_slack_default_channels:read" not in after.stdout
-        assert "oc_slack_default_chat:write" not in after.stdout
+        assert "oc_slack_default_list_channels" not in after.stdout
+        assert "oc_slack_default_post_message" not in after.stdout
 
     def test_disable_unknown_service_exits_nonzero(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
@@ -216,8 +199,8 @@ class TestToolsRefresh:
     def test_refresh_probes_all_credentialed_services(self, tmp_path, monkeypatch):
         _isolated_registry(tmp_path, monkeypatch)
         _stub_oc_catalog(monkeypatch, {
-            "slack": SLACK_CATALOG_OPTIONS,
-            "github": GITHUB_CATALOG_OPTIONS,
+            "slack": SLACK_ACTIONS,
+            "github": GITHUB_ACTIONS,
         })
         _stub_credentials(monkeypatch, [("slack", "default"),
                                         ("github", "default")])
@@ -226,8 +209,8 @@ class TestToolsRefresh:
         assert result.exit_code == 0
         # Both services have tools registered
         listed = _runner().invoke(app, ["tools", "list"])
-        assert "oc_slack_default_channels:read" in listed.stdout
-        assert "oc_github_default_read:user" in listed.stdout
+        assert "oc_slack_default_list_channels" in listed.stdout
+        assert "oc_github_default_get_user" in listed.stdout
 
     def test_refresh_handles_no_credentials(self, tmp_path, monkeypatch):
         """No credentials registered → refresh is a no-op, exits 0."""

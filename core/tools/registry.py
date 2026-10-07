@@ -136,7 +136,7 @@ def build_tool_schema(service: str, label: str, action: dict) -> dict:
           "type": "function",
           "function": {
             "name": "oc_<service>_<label>_<action_id>",
-            "description": "<action.label>: <action.description>",
+            "description": "<action.name>: <action.description>",
             "parameters": {
               "type": "object",
               "properties": {...},
@@ -145,32 +145,54 @@ def build_tool_schema(service: str, label: str, action: dict) -> dict:
           }
         }
 
-    If OC provides ``inputFields`` (parameter definitions), they
-    populate ``parameters.properties`` and ``parameters.required``.
-    Otherwise parameters is empty (just ``type`` and ``required``).
-    """
-    name = build_tool_name(service, label, action["id"])
-    description = f"{action.get('label', action['id'])}: {action.get('description', '')}"
+    Round 13: action id (e.g. ``slack.list_channels``) is used as-is,
+    with ``.`` replaced by ``_`` for tool-naming compatibility
+    (``oc_slack_tracy_list_channels``).
 
-    input_fields = action.get("inputFields", []) or []
+    If OC provides ``inputSchema`` (JSON Schema object), it populates
+    ``parameters.properties`` and ``parameters.required``. Otherwise
+    parameters is empty (just ``type`` and ``required``).
+    """
+    # Round 13 uses service.action_name format. Replace "." with "_"
+    # for tool-naming (OpenAI function names don't allow dots).
+    raw_action_id = action["id"]
+    # Strip the "<service>." prefix since we already include service+label.
+    if "." in raw_action_id:
+        action_id_only = raw_action_id.split(".", 1)[1]
+    else:
+        action_id_only = raw_action_id
+
+    name = build_tool_name(service, label, action_id_only)
+    description = f"{action.get('name', raw_action_id)}: {action.get('description', '')}"
+
+    # Round 13: OC returns inputSchema (full JSON Schema). We pull
+    # out properties + required. Older OC versions used inputFields
+    # (Round 10 style); fall back to that if inputSchema is missing.
     properties: Dict[str, dict] = {}
     required: List[str] = []
-    for field in input_fields:
-        fname = field.get("name", "")
-        if not fname:
-            continue
-        prop: Dict[str, object] = {
-            "type": _json_schema_type(field.get("type", "string")),
-        }
-        if "description" in field:
-            prop["description"] = field["description"]
-        if "enum" in field:
-            prop["enum"] = field["enum"]
-        if "default" in field:
-            prop["default"] = field["default"]
-        properties[fname] = prop
-        if field.get("required"):
-            required.append(fname)
+    input_schema = action.get("inputSchema")
+    if isinstance(input_schema, dict):
+        properties = dict(input_schema.get("properties", {}) or {})
+        req = input_schema.get("required", []) or []
+        required = list(req) if isinstance(req, list) else []
+    else:
+        input_fields = action.get("inputFields", []) or []
+        for field in input_fields:
+            fname = field.get("name", "")
+            if not fname:
+                continue
+            prop: Dict[str, object] = {
+                "type": _json_schema_type(field.get("type", "string")),
+            }
+            if "description" in field:
+                prop["description"] = field["description"]
+            if "enum" in field:
+                prop["enum"] = field["enum"]
+            if "default" in field:
+                prop["default"] = field["default"]
+            properties[fname] = prop
+            if field.get("required"):
+                required.append(fname)
 
     return {
         "type": "function",
@@ -190,25 +212,29 @@ def build_tool_schema(service: str, label: str, action: dict) -> dict:
 
 
 def _get_provider_actions(service_id: str, label: str = "default"):
-    """Probe OC for one service's authorizationOptions.
+    """Probe OC for one service's runtime action catalog.
+
+    Round 13: renamed from "authorizationOptions" fetch to the actual
+    RuntimeActionMetadata fetch. The old name persists for test
+    fixture compatibility but the implementation now returns OC
+    action dicts (id, operationType, requiredScopes, inputSchema),
+    not authorizationOptions.
 
     Lazy-imports core.oauth.open_connector so this module's
     test-time imports don't pay the cost.
     """
     _ensure_sys_path()
-    from core.oauth.open_connector import get_provider_actions  # type: ignore
-    return get_provider_actions(service_id, label)
+    from core.oauth.open_connector import get_service_actions  # type: ignore
+    return get_service_actions(service_id)
 
 
 def _search_actions(service_id: str, label: str = "default"):
-    """Lazy-imported wrapper around OC's search_actions MCP tool.
+    """Legacy helper — preserved for any test fixture that mocked it.
 
-    Returns a list of {"id", "service", "operationType", "name", "description"}
-    dicts. Empty list on OC down / no token / parse error.
-
-    Round 12: this is the source of the per-action operationType that
-    replaces Round 10's authorizationOptions[].risk as the
-    read/write/destructive classification signal.
+    Round 13: discover_tools doesn't need translation anymore
+    because each action comes back with its OC id already
+    (e.g. ``slack.list_channels``). This helper still calls
+    search_actions in case anyone is using it directly.
     """
     _ensure_sys_path()
     from core.oauth.open_connector import search_actions  # type: ignore
@@ -218,43 +244,17 @@ def _search_actions(service_id: str, label: str = "default"):
 def translate_authopt_id_to_oc_action_id(
     service: str, authopt: dict, search_results: list
 ):
-    """Translate FreeHand's authorizationOptions[].id to OC's service.action_name.
+    """Round 13: NO-OP stub. Kept so test fixtures that mock this
+    name don't break.
 
-    Three strategies, in order of confidence:
-    1. Exact label match (case-insensitive): both have a 'label' field
-    2. Substring match on description (case-insensitive)
-    3. Substring match on name (e.g. authopt 'channels:read' -> OC 'list_channels'
-       if the OC name is 'list_channels' and the authopt label contains 'list')
-
-    Returns None if no confident match - the authopt is dropped from
-    the registry rather than registered with a wrong action id.
-
-    Round 12 design choice: dropping > guessing. A wrong match would
-    route Slack read calls to a Slack write action, which is the
-    exact wire-format bug we're trying to avoid. Better to discover
-    fewer tools than to call the wrong ones.
+    The old translation (authopt.id -> service.action_name) is
+    obsolete: Round 13's action-centric model uses OC's action id
+    directly. The function returns ``authopt.get('id')`` (which is
+    expected to already be an OC action id in the new model).
     """
-    authopt_id = authopt.get("id", "")
-    authopt_label = (authopt.get("label", "") or "").lower()
-    authopt_desc = (authopt.get("description", "") or "").lower()
-
-    # Strategy 1: exact label match
-    for sr in search_results:
-        sr_label = (sr.get("name", "") or "").lower()
-        sr_desc = (sr.get("description", "") or "").lower()
-        if authopt_label and (authopt_label in sr_desc or sr_label in authopt_desc):
-            return sr.get("id")
-
-    # Strategy 2: substring match on description keywords
-    keywords = [w for w in authopt_label.split() if len(w) > 3]
-    if not keywords:
-        return None
-    for sr in search_results:
-        sr_desc = (sr.get("description", "") or "").lower()
-        if all(k in sr_desc for k in keywords):
-            return sr.get("id")
-
-    return None
+    # Round 13: action-centric model — the input's "id" IS the OC
+    # action id. No translation needed.
+    return authopt.get("id")
 
 
 def _has_credential(service: str, label: str) -> bool:
@@ -292,12 +292,17 @@ def _write_storage(storage: dict) -> None:
 
 
 def discover_tools(service: str, label: str = "default") -> dict:
-    """Probe OC for ``service``'s action catalog. Register standard-risk
-    actions as tools (auto-classified as 'read'). Hold sensitive /
-    destructive actions in a 'pending writes' list (the user enables
-    them via ``freehand tools enable-writes <service>``).
+    """Probe OC for ``service``'s runtime action catalog. Register
+    read-type actions as tools. Hold write/destructive actions in a
+    'pending writes' list (the user enables them via
+    ``freehand tools enable-writes <service>``).
 
     Returns ``{"registered": List[schema], "pending_writes": List[action]}``.
+
+    Round 13 (action-centric): each OC action has its own id
+    (e.g. ``slack.list_channels``). We register one tool per action
+    — no scope-to-action translation needed. Read tools auto-register;
+    write/destructive tools are queued until explicitly enabled.
 
     Pre-condition: a credential for (service, label) must exist
     (we don't probe OC for services without credentials — those are
@@ -321,34 +326,22 @@ def discover_tools(service: str, label: str = "default") -> dict:
         log.warning("registry: OC probe failed for %s: %s", service, e)
         return {"registered": [], "pending_writes": []}
 
-    # Round 12: also probe OC's search_actions for the per-action
-    # service.action_name list. The translation from FreeHand's
-    # authorizationOptions[].id to OC's action id happens here at
-    # discover time, not at dispatch time.
-    try:
-        search_results = _search_actions(service, label)
-    except Exception as e:
-        log.warning("registry: OC search_actions failed for %s: %s", service, e)
-        search_results = []
-
     registered: List[dict] = []
     pending_writes: List[dict] = []
     for action in actions:
-        kind = classify_action(action)
+        # Round 13: classify by operationType, not by authorizationOption risk.
+        # OC's RuntimeActionMetadata.operationType is the source of truth.
+        op_type = action.get("operationType", "read")
+        kind = "read" if op_type == "read" else "write"
+
         schema = build_tool_schema(service, label, action)
-        oc_action_id = translate_authopt_id_to_oc_action_id(service, action, search_results)
-        if oc_action_id is None:
-            # No confident translation - drop the tool. Better to skip
-            # than to register a tool that calls the wrong action.
-            log.debug(
-                "registry: no OC action id for %s/%s, dropping",
-                service, action.get("id"),
-            )
-            continue
+        # The action's own id IS the OC action id (e.g. "slack.list_channels").
+        oc_action_id = action.get("id")
+
         if kind == "read":
             registered.append({
                 "schema": schema,
-                "risk": action.get("risk", "standard"),
+                "risk": "standard" if op_type == "read" else op_type,
                 "oc_action_id": oc_action_id,
             })
         else:
@@ -450,10 +443,16 @@ def enable_writes(service: str, label: str = "default") -> int:
 
     promoted_schemas: List[dict] = []
     for action in actions:
-        kind = classify_action(action)
+        # Round 13: classify by operationType, not by authorizationOption risk.
+        op_type = action.get("operationType", "read")
+        kind = "read" if op_type == "read" else "write"
         if kind == "write":
             schema = build_tool_schema(service, label, action)
-            promoted_schemas.append({"schema": schema, "risk": action.get("risk", "sensitive")})
+            promoted_schemas.append({
+                "schema": schema,
+                "risk": op_type,
+                "oc_action_id": action.get("id"),
+            })
 
     if not promoted_schemas:
         return 0
