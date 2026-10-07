@@ -9,7 +9,7 @@ from core.security import intercept_action, get_current_tier, PermissionTier
 
 READ_ONLY = frozenset({
     "read_email", "list_calendar_events", "list_facebook_pages",
-    "list_instagram_accounts", "get_github_repos", "list_zoom_meetings",
+    "list_instagram_accounts", "list_zoom_meetings",
     "get_email_folders",
 })
 
@@ -18,7 +18,6 @@ WRITE_ACTIONS = {
     "create_meeting": ("oauth_access", "Create meeting via {service} ({label})"),
     "post_to_facebook": ("oauth_access", "Post to Facebook page via {service} ({label})"),
     "post_to_instagram": ("oauth_access", "Post to Instagram via {service} ({label})"),
-    "create_github_issue": ("oauth_access", "Create GitHub issue in {repo} via {service} ({label})"),
     "schedule_zoom_meeting": ("oauth_access", "Schedule Zoom meeting via {service} ({label})"),
 }
 
@@ -275,42 +274,6 @@ async def post_to_instagram(service: str = "instagram", label: str = "default", 
     return {"error": "Instagram requires media_url for posting"}
 
 
-async def get_github_repos(service: str = "github", label: str = "default", private: bool = False) -> dict:
-    _check_write_permission("get_github_repos", service, label)
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    type_param = "all" if private else "owner"
-    url = f"https://api.github.com/user/repos?type={type_param}&sort=updated&per_page=20"
-    result = await _call_api(
-        token_data, "GET", url,
-        headers={"Accept": "application/vnd.github.v3+json"}
-    )
-    if "error" in result:
-        return result
-    return result
-
-
-async def create_github_issue(service: str = "github", label: str = "default", repo: str = "", title: str = "", body: str = "") -> dict:
-    check = _check_write_permission("create_github_issue", service, label)
-    if not check.get("allowed"):
-        return {"error": "Approval required to create GitHub issue", "approval": check}
-    if not repo or not title:
-        return {"error": "repo and title are required"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = f"https://api.github.com/repos/{repo}/issues"
-    payload = {"title": title, "body": body or title}
-    return await _call_api(
-        token_data, "POST", url,
-        body=payload,
-        headers={"Accept": "application/vnd.github.v3+json"}
-    )
-
-
 async def list_zoom_meetings(service: str = "zoom", label: str = "default", page_size: int = 30) -> dict:
     _check_write_permission("list_zoom_meetings", service, label)
     conn, err = await _ensure_token(service, label)
@@ -388,40 +351,6 @@ async def read_sheet_range(service: str = "google", label: str = "default", spre
     token_data = conn["token_data"]
     url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_str}"
     return await _call_api(token_data, "GET", url)
-
-
-async def list_github_issues(service: str = "github", label: str = "default", repo: str = "", state: str = "open") -> dict:
-    _check_write_permission("list_github_issues", service, label)
-    if not repo:
-        return {"error": "repo is required (format: owner/repo)"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = f"https://api.github.com/repos/{repo}/issues?state={state}&sort=created&per_page=10"
-    return await _call_api(
-        token_data, "GET", url,
-        headers={"Accept": "application/vnd.github.v3+json"}
-    )
-
-
-async def create_github_pull_request(service: str = "github", label: str = "default", repo: str = "", title: str = "", head: str = "", base: str = "", body: str = "") -> dict:
-    check = _check_write_permission("create_github_pull_request", service, label)
-    if not check.get("allowed"):
-        return {"error": "Approval required to create GitHub PR", "approval": check}
-    if not repo or not title or not head or not base:
-        return {"error": "repo, title, head, and base are required"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    payload = {"title": title, "head": head, "base": base, "body": body}
-    url = f"https://api.github.com/repos/{repo}/pulls"
-    return await _call_api(
-        token_data, "POST", url,
-        body=payload,
-        headers={"Accept": "application/vnd.github.v3+json"}
-    )
 
 
 async def list_zoom_recordings(service: str = "zoom", label: str = "default") -> dict:

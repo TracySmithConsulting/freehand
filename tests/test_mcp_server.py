@@ -4,7 +4,7 @@ freehand-mcp-broker design).
 Covers:
 - /mcp endpoint accepts JSON-RPC 2.0 requests
 - initialize handshake returns protocolVersion + capabilities
-- tools/list returns all 35 tools in MCP format
+- tools/list returns all 31 tools in MCP format
 - tools/call dispatches to execute_tool() with permission check
 - resources/list + resources/read serve vault files
 - Auth: X-API-Key required (same as /api/*)
@@ -69,9 +69,9 @@ class TestJsonRpcDispatch:
 # ── tools/list ────────────────────────────────────────────────────────
 
 class TestMcpToolsList:
-    def test_returns_all_24_tools(self):
+    def test_returns_all_31_tools(self):
         tools = mcp_server._mcp_tools()
-        assert len(tools) == 35
+        assert len(tools) == 31
 
     def test_tool_shape_matches_mcp_spec(self):
         """Each tool must have name, description, inputSchema."""
@@ -84,10 +84,13 @@ class TestMcpToolsList:
                 f"Tool {tool['name']} inputSchema must be type=object"
 
     def test_includes_write_tools(self):
-        """The 10 previously-dead write tools must be in the MCP list."""
+        """The previously-dead write tools must be in the MCP list.
+
+        The 2 GitHub write tools were dropped in Round 14 - GitHub now
+        routes through oc_github_default_* OC actions."""
         names = {t["name"] for t in mcp_server._mcp_tools()}
         write_tools = [
-            "write_docx", "create_github_issue", "create_github_pull_request",
+            "write_docx",
             "schedule_zoom_meeting", "post_to_facebook", "post_to_instagram",
         ]
         for name in write_tools:
@@ -283,7 +286,7 @@ class TestMcpHttpEndpoint:
         body = r.json()
         assert "result" in body
         assert "tools" in body["result"]
-        assert len(body["result"]["tools"]) == 35
+        assert len(body["result"]["tools"]) == 31
 
     def test_mcp_batch_request(self):
         """JSON-RPC supports batch requests; we must return a batch."""

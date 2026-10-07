@@ -161,10 +161,11 @@ gate.
 
 ## What didn't change
 
-- `core/oauth/providers/github_pat.py` — still in place. The
-  static `list_github_repos`, `create_github_issue`, etc. still
-  work. Round 11 ships the new `oc_github_*` tools alongside
-  the old.
+- ~~`core/oauth/providers/github_pat.py`~~ — dropped in Round 14.
+  The static `list_github_repos`, `create_github_issue`, etc. are
+  gone from `agent_config.py` / `agent.py` / `integrations.py`.
+  GitHub now routes exclusively through the `oc_github_*` OC
+  actions (81 tools, `github/default` connection in the OC store).
 - `core/oauth/manager.py` — Round 10 PR 2's tier-1b dance still
   handles OAuth dance. The dispatch module only uses
   `credential_store`, not `manager.py`.

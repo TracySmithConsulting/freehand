@@ -170,11 +170,13 @@ freehand tools disable <service> [--label <name>]
 
 ## What's not done yet (Round 11+)
 
-- **`core/oauth/providers/github_pat.py`** and the static
-  `list_github_repos` / `create_github_issue` etc. in
-  `core/agent_config.py` are still in place. PR 2 ships the new
-  registry alongside the old; Round 11 will rename / re-namespace
-  the dispatch loop to use the registry exclusively.
+- ~~`core/oauth/providers/github_pat.py` and the static
+  `list_github_repos` / `create_github_issue` etc.~~ — dropped in
+  Round 14. GitHub now connects through OC's api_key path
+  (`github` connection in the OC store) and the 81 `oc_github_*`
+  tools registered by `discover_tools`. The four static tools and
+  the PAT connector are gone; `connect github` in `cli.py` now
+  points the user to the OC flow.
 - **OC provider request**: Currently the registry reads
   `get_provider_actions(service, label)` which returns the
   authorizationOptions. When OC ships its full action catalog

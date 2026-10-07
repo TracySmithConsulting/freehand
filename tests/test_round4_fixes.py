@@ -1,5 +1,6 @@
 """Tests for round-4 fixes (Aug 2026):
-- B2: list_available_tools() is registry-driven (35 tools visible)
+- B2: list_available_tools() is registry-driven (31 tools visible;
+      Round 14 dropped the 4 static GitHub tools)
 - R10: sync_vault_to_sqlite skips 00_Scribble.md and .sweep_state.json
 - R11: parse_skills enforces project-root boundary (rejects symlink escape)
 - R13: sync_vault_to_sqlite end-to-end
@@ -40,21 +41,23 @@ class TestListAvailableTools:
         orphans = sch - reg
         assert not orphans, f"Schemas without registry entries: {orphans}"
 
-    def test_all_24_tools_visible_to_llm(self):
-        """The LLM should see exactly the tools in TOOL_REGISTRY."""
+    def test_all_31_tools_visible_to_llm(self):
+        """The LLM should see exactly the tools in TOOL_REGISTRY.
+
+        Round 14 dropped the 4 static GitHub tools (35 -> 31); GitHub
+        now routes through the oc_github_default_* OC actions."""
         tools = agent_config.list_available_tools()
         names = {t["function"]["name"] for t in tools}
         assert names == set(agent_config.TOOL_REGISTRY.keys())
-        assert len(tools) == 35
+        assert len(tools) == 31
 
     def test_write_tools_visible(self):
         """The previously-dead write tools (post_to_facebook etc.) are now visible."""
         tools = {t["function"]["name"] for t in agent_config.list_available_tools()}
-        # The 10 previously-dead tools
+        # The previously-dead tools (the 2 GitHub write tools were dropped
+        # in Round 14 - GitHub now routes through oc_github_default_* actions)
         previously_dead = [
             "read_sheet_range",
-            "create_github_issue",
-            "create_github_pull_request",
             "list_zoom_recordings",
             "schedule_zoom_meeting",
             "list_facebook_pages",

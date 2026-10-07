@@ -235,7 +235,9 @@ def broker_status() -> dict:
         "broker_config_exists": p.exists(),
         "services": {},
     }
-    for service in ("google", "microsoft", "zoom", "facebook", "instagram", "github", "email"):
+    # Round 14: github left this loop - it connects via OpenConnector
+    # (api_key), not the FreeHand OAuth broker.
+    for service in ("google", "microsoft", "zoom", "facebook", "instagram", "email"):
         cid, sec, source = get_client_credentials(service)
         out["services"][service] = {
             "configured": cid is not None and sec is not None,

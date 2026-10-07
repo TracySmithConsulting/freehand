@@ -14,7 +14,6 @@ from .providers.microsoft import MicrosoftConnector
 from .providers.zoom import ZoomConnector
 from .providers.facebook import FacebookConnector
 from .providers.instagram import InstagramConnector
-from .providers.github_pat import GitHubPATConnector
 from .providers.email import EmailConnector
 
 __all__ = [
@@ -32,6 +31,5 @@ __all__ = [
     "ZoomConnector",
     "FacebookConnector",
     "InstagramConnector",
-    "GitHubPATConnector",
     "EmailConnector",
 ]

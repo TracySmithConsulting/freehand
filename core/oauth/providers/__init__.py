@@ -3,7 +3,6 @@ from .microsoft import MicrosoftConnector
 from .zoom import ZoomConnector
 from .facebook import FacebookConnector
 from .instagram import InstagramConnector
-from .github_pat import GitHubPATConnector
 from .email import EmailConnector
 from .slack import SlackConnector
 
@@ -13,7 +12,6 @@ CONNECTORS = {
     "zoom": ZoomConnector,
     "facebook": FacebookConnector,
     "instagram": InstagramConnector,
-    "github": GitHubPATConnector,
     "email": EmailConnector,
     "slack": SlackConnector,
 }

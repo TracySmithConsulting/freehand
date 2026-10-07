@@ -146,7 +146,9 @@ class TestBrokerStatus:
         assert "zoom" in status["services"]
         assert "facebook" in status["services"]
         assert "instagram" in status["services"]
-        assert "github" in status["services"]
+        # Round 14: github left the OAuth broker (connects via OC api_key)
+        assert "github" not in status["services"]
+        assert "email" in status["services"]
 
     def test_status_source_field_per_service(self, tmp_path, monkeypatch):
         """Each service entry has configured + source fields."""

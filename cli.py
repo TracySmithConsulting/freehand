@@ -180,19 +180,19 @@ def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom
     connector = get_connector(service)
     if not connector:
         if service == "github":
-            pat = typer.prompt("Paste your GitHub Personal Access Token", hide_input=True)
-            if not pat:
-                typer.echo("Token required.")
-                raise SystemExit(1)
-            import asyncio
-            from core.oauth.providers.github_pat import GitHubPATConnector
-            gc = GitHubPATConnector()
-            try:
-                result = asyncio.run(gc.validate_pat(pat))
-                typer.echo(f"Connected as: {result.get('login', 'unknown')}")
-            except Exception as e:
-                typer.echo(f"Connection failed: {e}")
-                raise SystemExit(1)
+            # Round 14: the static GitHub PAT connector was dropped. GitHub
+            # now connects through OpenConnector (OC) with a fine-grained
+            # PAT via the api_key connection, and FreeHand's oc_github_*
+            # tools dispatch through it.
+            typer.echo("GitHub moved to OpenConnector in Round 14.")
+            typer.echo("")
+            typer.echo("To connect GitHub:")
+            typer.echo("  1. Create a fine-grained PAT at")
+            typer.echo("     https://github.com/settings/personal-access-tokens?policy_type=fine_grained")
+            typer.echo("  2. Register it in FreeHand's vault:")
+            typer.echo('     freehand credential add github --label default --token <PAT>')
+            typer.echo("  3. Connect it in OpenConnector (see docs/integrations/open-connector.md).")
+            raise SystemExit(0)
         elif service == "email":
             host = typer.prompt("IMAP/SMTP Host")
             port = typer.prompt("Port (993 for SSL, 587 for TLS)", default="993")

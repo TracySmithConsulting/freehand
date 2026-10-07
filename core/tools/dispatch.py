@@ -12,11 +12,12 @@ as connectionName. The OC action id is looked up from the
 registry's persisted tool entry (where the registry stored it at
 discover_tools time, see core/tools/registry.py).
 
-Static tools (read_docx, navigate, list_github_repos, etc.)
+Static tools (read_docx, navigate, etc.)
 do NOT flow through this module - they keep their if/elif
 branches in core/agent.execute_tool(). This module is ONLY
 for the oc_<service>_<label>_<action> tool names that Round 10
-PR 2 ships via the tool registry.
+PR 2 ships via the tool registry. The static GitHub tools were
+dropped in Round 14 - GitHub now routes through the oc_ path.
 
 Why a dedicated module: keeps the parsing / credential / call
 logic in one place, and isolates the OC dependency. The

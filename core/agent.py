@@ -16,8 +16,7 @@ from core.tools.browser import (
 )
 from core.tools.integrations import (
     read_email, list_calendar_events, read_sheets, read_sheet_range,
-    get_github_repos, list_github_issues, create_github_issue,
-    create_github_pull_request, list_zoom_meetings, schedule_zoom_meeting,
+    list_zoom_meetings, schedule_zoom_meeting,
     list_facebook_pages, post_to_facebook, list_instagram_accounts,
     post_to_instagram, list_zoom_recordings, get_connections_summary,
 )
@@ -176,37 +175,6 @@ async def execute_tool(name: str, args: dict) -> dict:
                 range_str=args.get("range", ""),
             )
             return {"content": json.dumps(result, default=str)}
-        elif name == "list_github_repos":
-            result = await get_github_repos(
-                label=args.get("label", "default"),
-                private=args.get("private", False),
-            )
-            return {"content": json.dumps(result, default=str)}
-        elif name == "list_github_issues":
-            result = await list_github_issues(
-                label=args.get("label", "default"),
-                repo=args.get("repo", ""),
-                state=args.get("state", "open"),
-            )
-            return {"content": json.dumps(result, default=str)}
-        elif name == "create_github_issue":
-            result = await create_github_issue(
-                label=args.get("label", "default"),
-                repo=args.get("repo", ""),
-                title=args.get("title", ""),
-                body=args.get("body", ""),
-            )
-            return {"content": json.dumps(result, default=str)}
-        elif name == "create_github_pull_request":
-            result = await create_github_pull_request(
-                label=args.get("label", "default"),
-                repo=args.get("repo", ""),
-                title=args.get("title", ""),
-                head=args.get("head", ""),
-                base=args.get("base", ""),
-                body=args.get("body", ""),
-            )
-            return {"content": json.dumps(result, default=str)}
         elif name == "list_zoom_meetings":
             result = await list_zoom_meetings(
                 label=args.get("label", "default"),
@@ -306,8 +274,10 @@ async def execute_tool(name: str, args: dict) -> dict:
             return {"content": json.dumps(result, default=str)}
         # ── Round 11: dynamic OC tool dispatch ────────────────
         # Routes any tool name starting with 'oc_' to the registry's
-        # dynamic dispatch. Static tools (read_docx, navigate,
-        # list_github_repos, etc.) keep their explicit branches above.
+        # dynamic dispatch. Static tools (read_docx, navigate, etc.)
+        # keep their explicit branches above. Round 14 dropped the
+        # static GitHub tools — GitHub now goes through the OC path
+        # (oc_github_default_* tools).
         if name.startswith("oc_"):
             from core.tools import dispatch as _oc_dispatch
             oc_result = _oc_dispatch.dispatch_oc_tool(name, args)

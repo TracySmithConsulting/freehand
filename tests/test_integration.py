@@ -99,13 +99,17 @@ class TestIntegrations:
         assert "connections" in d
         assert "available_services" in d
         # Round 9: slack was added to CONNECTORS, so ALLOWED_SERVICES
-        # (derived from CONNECTORS at import time) now has 8 entries.
+        # (derived from CONNECTORS at import time) has 7 entries
+        # (6 pre-Round-9 services + slack; Round 14 dropped github).
         # Asserting a hardcoded count here is a maintenance hazard —
-        # better to assert the seven PRE-EXISTING services are present
+        # better to assert the six PRE-EXISTING services are present
         # (Round 8 contract) AND slack is also present (Round 9 contract).
+        # Round 14 dropped github from CONNECTORS (it now connects via
+        # OpenConnector's api_key path, not the FreeHand OAuth broker),
+        # so the pre-Round-9 set is six services, not seven.
         expected_pre_round9 = {
             "google", "microsoft", "zoom", "facebook",
-            "instagram", "github", "email",
+            "instagram", "email",
         }
         actual = set(d["available_services"])
         assert expected_pre_round9.issubset(actual), (
@@ -113,7 +117,7 @@ class TestIntegrations:
         )
         assert "slack" in actual, "Round 9: slack must be in available_services"
         assert len(actual) == len(expected_pre_round9) + 1, (
-            f"Expected exactly 8 services (7 pre-Round-9 + slack), got {len(actual)}: {sorted(actual)}"
+            f"Expected exactly 7 services (6 pre-Round-9 + slack), got {len(actual)}: {sorted(actual)}"
         )
 
     def test_authorize_url(self, client):

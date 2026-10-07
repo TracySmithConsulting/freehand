@@ -107,12 +107,6 @@ TOOL_REGISTRY: Dict[str, str] = {
     "list_calendar_events": "read",
     "read_sheets":        "read",
     "read_sheet_range":   "read",
-    # GitHub (read)
-    "list_github_repos":  "read",
-    "list_github_issues": "read",
-    # GitHub (write)
-    "create_github_issue":     "write",
-    "create_github_pull_request": "write",
     # Zoom
     "list_zoom_meetings":     "read",
     "list_zoom_recordings":   "read",
@@ -366,58 +360,6 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "required": ["spreadsheet_id", "range"],
         },
     },
-    # ── GitHub ─────────────────────────────────────────────────────
-    "list_github_repos": {
-        "description": "List GitHub repositories for the connected account",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string"},
-                "private": {"type": "boolean"},
-            },
-            "required": [],
-        },
-    },
-    "list_github_issues": {
-        "description": "List issues in a GitHub repository",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string"},
-                "repo": {"type": "string", "description": "Format: owner/repo"},
-                "state": {"type": "string", "enum": ["open", "closed", "all"]},
-            },
-            "required": ["repo"],
-        },
-    },
-    "create_github_issue": {
-        "description": "Create a new issue in a GitHub repository (write action — requires approval)",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string"},
-                "repo": {"type": "string", "description": "Format: owner/repo"},
-                "title": {"type": "string"},
-                "body": {"type": "string", "description": "Issue body in Markdown"},
-            },
-            "required": ["repo", "title"],
-        },
-    },
-    "create_github_pull_request": {
-        "description": "Create a pull request on a GitHub repository (write action — requires approval)",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "label": {"type": "string"},
-                "repo": {"type": "string", "description": "Format: owner/repo"},
-                "title": {"type": "string"},
-                "head": {"type": "string", "description": "Branch name containing the changes"},
-                "base": {"type": "string", "description": "Branch name to merge into"},
-                "body": {"type": "string", "description": "PR description in Markdown"},
-            },
-            "required": ["repo", "title", "head", "base"],
-        },
-    },
     # ── Zoom ───────────────────────────────────────────────────────
     "list_zoom_meetings": {
         "description": "List Zoom meetings for the connected account",
@@ -572,10 +514,6 @@ You have access to the following tool categories:
 - list_calendar_events(service, label, from, to) — List calendar events
 - read_sheets(label, spreadsheet_id) — Read Google Sheets info
 - list_zoom_meetings(label, page_size) — List Zoom meetings
-
-### GitHub
-- list_github_repos(label, private) — List repositories
-- list_github_issues(label, repo, state) — List issues in a repo
 
 ### Memory
 - search_memory(query, limit) — Search your notes and scribbles

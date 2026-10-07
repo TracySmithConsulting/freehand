@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-10-02
 
+### Removed — Round 14: Static GitHub path retired
+
+**What changed**: Round 13's action-centric OC registry made GitHub's
+four hand-rolled tools redundant — OC's GitHub catalog has 147
+actions (81 read registered by `discover_tools`, 36 write + 30
+destructive gated behind `enable-writes`), versus the static path's
+4 tools that duplicated 4 of those 147. Round 14 drops the static
+path so GitHub routes exclusively through `oc_github_*`.
+
+**Cut**:
+
+1. **`core/oauth/providers/github_pat.py` deleted** — the PAT
+   connector is gone; `github` is off the `CONNECTORS` registry
+   (and therefore off `ALLOWED_SERVICES`, which makes the router
+   tier-5-redirect it to OC's authorize flow).
+2. **`core/tools/integrations.py`** — `get_github_repos`,
+   `list_github_issues`, `create_github_issue`,
+   `create_github_pull_request` and their `READ_ONLY` /
+   `WRITE_ACTIONS` entries removed.
+3. **`core/agent.py`** — the 4 dispatch branches and imports gone.
+4. **`core/agent_config.py`** — 4 `TOOL_REGISTRY` + 4
+   `TOOL_SCHEMAS` entries + the LLM doc's `### GitHub` block
+   removed. Tool count 35 → 31; registry and schemas stay in sync.
+5. **`cli.py` `connect github`** — the PAT-prompt branch replaced
+   with a 3-line pointer to the OC flow (fine-grained PAT →
+   `freehand credential add github` → OC api-key connection).
+6. **`core/oauth/broker.py`** — `github` dropped from the
+   `broker_status()` loop (it no longer uses OAuth client
+   credentials — it's an api_key connection in OC).
+
+**Why the 81, not the 147**: `discover_tools` registers read
+actions only; write + destructive stay behind `enable-writes`
+(Round 15's confirmation-gate work).
+
+**Live smoke (07 Oct 2026)**: `github/default` connection created
+in OC via the api-key route with a fine-grained PAT (validated
+against GitHub's `/user` at connect time — `providerAccountId`
+`trasles16-ux`, `status: active`). `execute_action`
+`oc_github_default_list_my_repositories` returns real repo data
+from the workspace, end-to-end through FreeHand's dispatch.
+
+**Tests**: 372 passing (unchanged count — the 4 static-tool
+pins in `test_mcp_server` / `test_round4_fixes` /
+`test_integration` / `test_oauth_broker` were updated in place,
+35 → 31 tool-count contracts, `github` removed from
+`available_services` and `broker_status` expectations).
+
 ### Added — Round 10 PR 1: Vault consolidation
 
 agent.db moved from project root to vault/agent.db so a single Docker
