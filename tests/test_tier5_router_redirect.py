@@ -32,8 +32,12 @@ from core.oauth import broker as broker_mod
 # AND `import core.oauth.router as router` end up binding `router`
 # to the APIRouter, not the module. Workaround: load the module by
 # file path via importlib, bypassing the package's __init__.
+# CI fix (Round 14): os.path.join — the backslash-joined raw string
+# only worked on Windows; on macOS the literal backslashes made an
+# invalid path and collection failed.
+import os
 import importlib.util as _importlib_util
-_router_path = rf"{sys.path[0]}\core\oauth\router.py"
+_router_path = os.path.join(sys.path[0], "core", "oauth", "router.py")
 _router_spec = _importlib_util.spec_from_file_location("core.oauth.router", _router_path)
 router_module = _importlib_util.module_from_spec(_router_spec)
 sys.modules["core.oauth.router"] = router_module
