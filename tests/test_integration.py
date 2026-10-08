@@ -166,12 +166,23 @@ class TestAgentAPI:
         assert "total_files" in d
 
     def test_preview_hermes(self, client):
+        # Hermes must be detected (installed) on this host for the preview
+        # endpoint to return 200; otherwise it 404s with "Agent not found".
+        # Skip on hosts where Hermes isn't installed (e.g. CI runners).
+        from core.agents import detect_agent
+        if detect_agent("hermes") is None:
+            pytest.skip("Hermes not installed/detected on this host")
         r = client.post("/api/agents/import/preview", json={"agent": "hermes"})
         assert r.status_code == 200
         d = r.json()
         assert "files" in d
 
     def test_preview_openclaw(self, client):
+        # OpenClaw must be detected (installed) on this host; otherwise the
+        # preview endpoint 404s. Skip on hosts without OpenClaw (e.g. CI).
+        from core.agents import detect_agent
+        if detect_agent("openclaw") is None:
+            pytest.skip("OpenClaw not installed/detected on this host")
         r = client.post("/api/agents/import/preview", json={"agent": "openclaw"})
         assert r.status_code == 200
         d = r.json()

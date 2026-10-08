@@ -17,14 +17,26 @@ import pytest
 
 sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
 
+# Chrome extension dir, derived portably from this file's location so the
+# manifest tests work on any OS / CI checkout (the files are git-tracked
+# under freehand/chrome_extension/). Replaces a hardcoded C:\Users\trace path.
+_EXTENSION_DIR = Path(__file__).resolve().parent.parent / "freehand" / "chrome_extension"
+
 
 # ── Feature 1: CDP endpoint detection ────────────────────────────────────────
 
 class TestCDPAutoConnect:
     """Unit tests for the CDP endpoint discovery functions."""
 
-    def test_get_chrome_cdp_endpoint_windows_file_exists(self, tmp_path):
-        """When DevToolsActivePort exists and has a WS URL, return it."""
+    def test_get_chrome_cdp_endpoint_file_exists(self, tmp_path):
+        """When DevToolsActivePort exists and has a WS URL, return it.
+
+        Points the CURRENT platform's key at a temp port file so the test is
+        OS-agnostic (the original patched only the "windows" key, so on
+        CI runners _get_chrome_cdp_endpoint() read a nonexistent path and
+        returned None).
+        """
+        import platform
         from core.tools.browser import _get_chrome_cdp_endpoint
 
         # Mock LOCALAPPDATA to tmp_path
@@ -34,10 +46,11 @@ class TestCDPAutoConnect:
         ws_url = "ws://localhost:9222/devtools/browser/b0b8a4fb-xxx"
         port_file.write_text(f"9222\n{ws_url}\nsome-other-data\n")
 
+        cur = platform.system().lower()
         with patch("core.tools.browser._CHROME_DEVTOOLS_PORT_FILE", {
-            "windows": port_file,
-            "darwin": Path("/tmp/none"),
-            "linux": Path("/tmp/none"),
+            "windows": port_file if cur == "windows" else Path("/tmp/none"),
+            "darwin": port_file if cur == "darwin" else Path("/tmp/none"),
+            "linux": port_file if cur == "linux" else Path("/tmp/none"),
         }):
             result = _get_chrome_cdp_endpoint()
             assert result == ws_url
@@ -409,7 +422,7 @@ class TestChromeExtensionManifest:
 
     def test_manifest_is_valid_json(self):
         """manifest.json is parseable JSON."""
-        ext_dir = Path(r"C:\Users\trace\Documents\Default Project\freehand\chrome_extension")
+        ext_dir = _EXTENSION_DIR
         manifest_path = ext_dir / "manifest.json"
 
         assert manifest_path.exists(), f"manifest.json not found at {manifest_path}"
@@ -424,14 +437,14 @@ class TestChromeExtensionManifest:
 
     def test_manifest_requests_debugger_permission(self):
         """manifest.json includes the debugger permission."""
-        ext_dir = Path(r"C:\Users\trace\Documents\Default Project\freehand\chrome_extension")
+        ext_dir = _EXTENSION_DIR
         manifest = json.loads((ext_dir / "manifest.json").read_text())
 
         assert "debugger" in manifest["permissions"]
 
     def test_manifest_content_script_runs_on_all_urls(self):
         """Content script is injected into all URLs."""
-        ext_dir = Path(r"C:\Users\trace\Documents\Default Project\freehand\chrome_extension")
+        ext_dir = _EXTENSION_DIR
         manifest = json.loads((ext_dir / "manifest.json").read_text())
 
         cs = manifest["content_scripts"][0]
@@ -439,7 +452,7 @@ class TestChromeExtensionManifest:
 
     def test_background_script_is_service_worker(self):
         """Background is declared as a service worker (v3)."""
-        ext_dir = Path(r"C:\Users\trace\Documents\Default Project\freehand\chrome_extension")
+        ext_dir = _EXTENSION_DIR
         manifest = json.loads((ext_dir / "manifest.json").read_text())
 
         assert manifest["background"]["type"] == "module"
@@ -447,7 +460,7 @@ class TestChromeExtensionManifest:
 
     def test_all_extension_files_exist(self):
         """All documented extension files are present."""
-        ext_dir = Path(r"C:\Users\trace\Documents\Default Project\freehand\chrome_extension")
+        ext_dir = _EXTENSION_DIR
         expected = [
             "manifest.json",
             "background.js",
@@ -465,7 +478,7 @@ class TestChromeExtensionManifest:
         """The native messaging host Python script has no syntax errors."""
         import py_compile
 
-        nph_path = Path(r"C:\Users\trace\Documents\Default Project\freehand\chrome_extension\freehand-nph.py")
+        nph_path = _EXTENSION_DIR / "freehand-nph.py"
         py_compile.compile(str(nph_path), doraise=True)
 
 
