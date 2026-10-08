@@ -402,9 +402,34 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
             else:
                 # 'effective_tier' is GOD_MODE (either real, or remote source
                 # didn't apply because tier wasn't GOD_MODE).
-                tool_result = await _run_tool(tool_name, tool_args)
-                tool_result["role"] = "tool"
-                tool_result["tool_call_id"] = tool_call["id"]
+                #
+                # Round 15 slice 2 (foot-gun fix): destructive OC tools
+                # (persisted risk == "destructive", e.g. github.delete_repo)
+                # must STILL pause for an out-of-band approval even at
+                # GOD_MODE, where every other external write auto-runs.
+                # Non-destructive writes keep today's "just runs" behaviour.
+                from core.tools import registry as _registry
+                if _registry.is_destructive_tool(tool_name):
+                    result = intercept_action(
+                        "oauth_access",
+                        f"Destructive tool call: {tool_name}",
+                        {"tool": tool_name, "args": tool_args, "source": source},
+                        source,
+                        caller_id,
+                        force_confirm=True,
+                    )
+                    tool_result = {
+                        "role": "tool",
+                        "tool_call_id": tool_call["id"],
+                        "content": json.dumps({
+                            "error": f"Destructive approval required for {tool_name}",
+                            "approval_id": result.get("approval_id"),
+                        }),
+                    }
+                else:
+                    tool_result = await _run_tool(tool_name, tool_args)
+                    tool_result["role"] = "tool"
+                    tool_result["tool_call_id"] = tool_call["id"]
         elif permission == "unknown":
             # Unknown tool — don't execute; tell the LLM the tool is not registered.
             tool_result = {

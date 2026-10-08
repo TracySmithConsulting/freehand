@@ -358,6 +358,28 @@ def pending_writes_summary(service: str, label: str = "default") -> tuple:
     return (writes, destructive)
 
 
+def is_destructive_tool(tool_name: str) -> bool:
+    """Round 15 slice 2 — True if `tool_name` is a registered OC action
+    whose persisted risk is ``destructive``.
+
+    TOOL_REGISTRY only knows read/write; the destructive distinction
+    lives in the persisted registry ``risk`` field (standard | write |
+    sensitive | destructive). This accessor scans that storage so it
+    works across the CLI->server process boundary. Used by the agent
+    loop to force a per-call confirmation on destructive OC tools even
+    at GOD_MODE (where writes would otherwise auto-run).
+
+    Returns False for any non-OC / unknown tool (fail-safe: no extra
+    confirmation beyond the tier system).
+    """
+    with _lock:
+        storage = _read_storage()
+    for t in storage.get("tools", []):
+        if t.get("tool_name") == tool_name:
+            return t.get("risk") == "destructive"
+    return False
+
+
 # ── Public API ─────────────────────────────────────────────────────────
 
 

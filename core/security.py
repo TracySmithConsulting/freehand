@@ -99,6 +99,7 @@ def intercept_action(
     payload: Optional[dict] = None,
     source: Optional[str] = None,
     caller_id: Optional[str] = None,
+    force_confirm: bool = False,
 ) -> dict:
     """Check if an action is allowed under the current permission tier.
 
@@ -106,23 +107,34 @@ def intercept_action(
     - AUTONOMOUS: blocked for all external actions
     - SEMI_AUTONOMOUS: pauses execution, creates pending approval
 
+    ``force_confirm`` (Round 15 slice 2): when True, an external action
+    must pause for an out-of-band approval EVEN in GOD_MODE, where every
+    external action otherwise auto-approves. This is how a destructive OC
+    tool (e.g. github.delete_repo) is gated in the highest-trust tier.
+    Non-external actions are unaffected, and a force_confirmed call at
+    AUTONOMOUS is still denied outright (no approval row) — the tier
+    floor is preserved.
+
     Returns dict with keys:
         allowed (bool) — whether the action can proceed immediately
         approval_id (int|None) — ID if approval was required/pending
         tier (str) — current tier name
     """
     tier = get_current_tier()
+    is_external = _is_external_action(action_type)
 
-    if tier == PermissionTier.GOD_MODE:
+    # GOD_MODE normally auto-approves. A force-confirmed external action
+    # is the exception: it must still pause for an out-of-band approval.
+    if tier == PermissionTier.GOD_MODE and not (force_confirm and is_external):
         return {"allowed": True, "approval_id": None, "tier": tier.value}
 
-    if not _is_external_action(action_type):
+    if not is_external:
         return {"allowed": True, "approval_id": None, "tier": tier.value}
 
     if tier == PermissionTier.AUTONOMOUS:
         return {"allowed": False, "approval_id": None, "tier": tier.value}
 
-    # SEMI_AUTONOMOUS — create pending approval
+    # SEMI_AUTONOMOUS — or GOD_MODE with force_confirm — create pending approval
     payload_json = json.dumps(payload or {})
     conn = _get_conn()
     cursor = conn.execute(
