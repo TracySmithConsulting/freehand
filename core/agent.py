@@ -6,7 +6,12 @@ from datetime import datetime
 import aiohttp
 
 from core.agent_config import get_llm_config, build_system_prompt, list_available_tools
-from core.security import get_current_tier, intercept_action, PermissionTier
+from core.security import (
+    get_current_tier,
+    intercept_action,
+    PermissionTier,
+    REMOTE_SOURCES,
+)
 from core.tools.office import read_docx, write_docx, read_xlsx, read_pptx
 from core.tools.browser import (
     get_axtree, extract_text, screenshot, navigate, click, fill,
@@ -327,7 +332,8 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     # 'cli' to the full tier system, but require explicit confirmation for
     # write tools triggered from remote gateways when tier is GOD_MODE.
     # This doesn't replace the tier system — it layers on top.
-    REMOTE_SOURCES = {"telegram", "slack", "whatsapp"}
+    # REMOTE_SOURCES is imported from core.security (single source of truth,
+    # also used by re_execute_approval for its source-gating).
     is_remote_source = source in REMOTE_SOURCES
 
     for turn in range(max_turns):
