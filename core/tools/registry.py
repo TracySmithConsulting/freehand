@@ -288,6 +288,76 @@ def _write_storage(storage: dict) -> None:
     tmp.replace(STORAGE_PATH)
 
 
+# ── Round 15: enabled-writes persistence marker ──────────────────────
+# discover_tools() re-derives a (service, label) entry from the live OC
+# catalog and re-persists READS ONLY. Without a marker, a routine
+# `tools refresh` (CLI or server startup) silently re-locked any writes
+# the user had enabled. The marker lives in tool_registry.json next to
+# "tools", keyed "<service>/<label>" -> True, so it survives process
+# restarts (CLI sets it, the server's bootstrap + refresh honours it).
+
+def _writes_enabled_key(service: str, label: str) -> str:
+    return f"{service}/{label}"
+
+
+def is_writes_enabled(service: str, label: str = "default") -> bool:
+    """True if the user has enabled write/destructive actions for
+    (service, label). Read from the persisted marker so CLI->server
+    process boundaries preserve the state."""
+    with _lock:
+        storage = _read_storage()
+        marker = storage.get("writes_enabled", {})
+        return bool(marker.get(_writes_enabled_key(service, label), False))
+
+
+def _set_writes_enabled(service: str, label: str, enabled: bool) -> None:
+    """Set or clear the persisted writes_enabled marker for
+    (service, label)."""
+    with _lock:
+        storage = _read_storage()
+        marker = storage.get("writes_enabled", {})
+        key = _writes_enabled_key(service, label)
+        if enabled:
+            marker[key] = True
+        else:
+            marker.pop(key, None)
+        storage["writes_enabled"] = marker
+        _write_storage(storage)
+
+
+def pending_writes_summary(service: str, label: str = "default") -> tuple:
+    """Round 15 confirmation-gate helper. Count the pending (not yet
+    enabled) OC actions for (service, label) that are gated behind
+    enable-writes, split into two buckets the prompt should surface:
+
+      (writes, destructive)
+
+    `writes` counts operationType in {"write", "sensitive", <unknown>}
+    (anything non-read, non-destructive — the safe-by-default gate).
+    `destructive` counts operationType == "destructive" separately so
+    the confirmation can say "includes N DESTRUCTIVE action(s)".
+
+    Returns (0, 0) when there is no credential or the OC probe fails.
+    """
+    if not _has_credential(service, label):
+        return (0, 0)
+    try:
+        actions = _get_provider_actions(service, label)
+    except Exception as e:
+        log.warning("registry: OC probe failed for %s/%s: %s", service, label, e)
+        return (0, 0)
+    writes = 0
+    destructive = 0
+    for action in actions:
+        op_type = action.get("operationType", "read")
+        if op_type == "destructive":
+            destructive += 1
+        elif op_type != "read":
+            # "write", "sensitive", or any unknown op type -> write bucket
+            writes += 1
+    return (writes, destructive)
+
+
 # ── Public API ─────────────────────────────────────────────────────────
 
 
@@ -350,13 +420,32 @@ def discover_tools(service: str, label: str = "default") -> dict:
     if not registered and not pending_writes:
         return {"registered": [], "pending_writes": []}
 
-    # Persist the registered tools
+    # Round 15: honour the persisted writes_enabled marker. discover_tools
+    # re-derives from the live OC catalog and would otherwise re-persist
+    # READS ONLY — silently re-locking any writes the user had enabled via
+    # `freehand tools enable-writes`. If the marker is set, re-promote the
+    # pending writes into the active list so they survive a routine
+    # refresh() or a server-startup re-probe (the CLI sets the marker; the
+    # server reads it back on every bootstrap/refresh).
+    reads_registered = len(registered)
+    if is_writes_enabled(service, label) and pending_writes:
+        for action in pending_writes:
+            op_type = action.get("operationType", "read")
+            schema = build_tool_schema(service, label, action)
+            registered.append({
+                "schema": schema,
+                "risk": op_type,
+                "oc_action_id": action.get("id"),
+            })
+
+    # Persist the registered tools (reads always; writes when enabled)
     _persist_registered(service, label, registered)
     _merge_into_global_schemas(service, label, registered)
 
     log.info(
-        "registry: %s/%s — registered %d reads, %d pending writes",
-        service, label, len(registered), len(pending_writes),
+        "registry: %s/%s — registered %d reads (+ %d writes), %d pending",
+        service, label, reads_registered,
+        len(registered) - reads_registered, len(pending_writes),
     )
     return {"registered": registered, "pending_writes": pending_writes}
 
@@ -462,6 +551,10 @@ def enable_writes(service: str, label: str = "default") -> int:
     combined = existing + promoted_schemas
     _persist_registered(service, label, combined)
     _merge_into_global_schemas(service, label, combined)
+    # Round 15: persist the writes_enabled marker so the enabled state
+    # survives a later refresh() / server startup (discover_tools honours
+    # it by re-promoting the pending writes).
+    _set_writes_enabled(service, label, True)
     log.info(
         "registry: %s/%s — promoted %d writes",
         service, label, len(promoted_schemas),
@@ -497,6 +590,10 @@ def disable(service: str, label: str = "default") -> int:
         storage["tools"] = kept
         _write_storage(storage)
 
+    # Round 15: disable() means the service is locked — clear the
+    # writes_enabled marker so a later refresh() re-registers reads but
+    # keeps writes LOCKED until the user explicitly enables them again.
+    _set_writes_enabled(service, label, False)
     _unmerge_from_global_schemas(removed_schemas)
     log.info(
         "registry: %s/%s — disabled %d tools",

@@ -22,11 +22,15 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+# Project root, derived portably from this file's location so the test
+# imports work on any OS / CI checkout (no hardcoded Windows path —
+# that string is a *relative* component on POSIX and poisons sys.path).
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.tools import registry  # noqa: E402
 from core.oauth import credential_store  # noqa: E402

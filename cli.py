@@ -526,21 +526,45 @@ def tools_list(
 def tools_enable_writes(
     service: str = typer.Argument(..., help="Service id to enable sensitive/destructive actions for"),
     label: str = typer.Option("default", "--label", "-l", help="Account label"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt (for scripted/automation use)"),
 ):
-    """Promote sensitive and destructive actions for a service from
-    'pending writes' to the active tool list.
+    """Promote write and destructive actions for a service from
+    'pending' to the active tool list.
 
-    By default, only risk='standard' actions are auto-registered
-    as read tools. This command lets the user opt in to chat:write,
-    chat:delete, channels:history, and other higher-impact actions.
+    By default, only read actions are auto-registered as tools. This
+    command opts the user in to write and destructive actions — the ones
+    that can mutate or irreversibly delete data — so it confirms first.
+    The confirmation surfaces how many are DESTRUCTIVE so the user knows
+    what they're unlocking. Pass --yes to skip the prompt (automation).
 
-    Returns the count of newly-enabled tools.
+    Requires a credential for the service and a running OpenConnector.
     """
     reg = _tools_imports()
+    writes, destructive = reg.pending_writes_summary(service, label)
+    total = writes + destructive
+    if total == 0:
+        typer.echo(f"No pending writes for {service}/{label}.")
+        typer.echo("Either no credential is registered, or OC has no write/destructive actions for this service.")
+        raise SystemExit(1)
+
+    # ── Confirmation gate (Round 15) ────────────────────────────────
+    # Fail closed: the user must see the destructive count and affirm.
+    # --yes is the escape hatch for scripted use.
+    typer.echo(f"This will enable {writes} write action(s) for {service}/{label}.")
+    if destructive:
+        typer.echo(f"  WARNING: {destructive} are DESTRUCTIVE (irreversible delete/destroy).")
+    if not yes:
+        proceed = typer.confirm(
+            f"Enable these {total} write/destructive tool(s)?",
+            default=False,
+        )
+        if not proceed:
+            typer.echo("Aborted — no tools were enabled.")
+            raise SystemExit(1)
+
     promoted = reg.enable_writes(service, label)
     if promoted == 0:
-        typer.echo(f"No pending writes for {service}/{label}.")
-        typer.echo("Either no credential is registered, or OC has no sensitive/destructive actions for this service.")
+        typer.echo(f"Nothing to enable for {service}/{label}.")
         raise SystemExit(1)
     typer.echo(f"Enabled {promoted} write/sensitive tools for {service}/{label}.")
     typer.echo("Use 'freehand tools list' to view them.")

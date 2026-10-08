@@ -154,7 +154,7 @@ class TestToolsEnableWrites:
         before = _runner().invoke(app, ["tools", "list"])
         assert "oc_slack_default_post_message" not in before.stdout
 
-        result = _runner().invoke(app, ["tools", "enable-writes", "slack"])
+        result = _runner().invoke(app, ["tools", "enable-writes", "slack", "--yes"])
         assert result.exit_code == 0
 
         # After enable, post_message IS in list
@@ -176,7 +176,7 @@ class TestToolsDisable:
         _stub_oc_catalog(monkeypatch, {"slack": SLACK_ACTIONS})
         _stub_credentials(monkeypatch, [("slack", "default")])
         registry.discover_tools("slack", "default")
-        _runner().invoke(app, ["tools", "enable-writes", "slack"])
+        _runner().invoke(app, ["tools", "enable-writes", "slack", "--yes"])
 
         result = _runner().invoke(app, ["tools", "disable", "slack"])
         assert result.exit_code == 0
