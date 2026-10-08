@@ -745,6 +745,20 @@
             <p class="error" id="omniroute-error" role="alert"></p>
           </div>
           <button type="submit">Save Settings</button>
+          <div class="form-group" id="key-storage-group">
+            <p class="hint" id="api-key-hint">
+              Where to get the key: <code>cat vault/settings.json | jq -r .api_key</code>
+              (auto-generated on first run). Remembering it stores it in this
+              browser only (localStorage), so the Command box, Tier and
+              Approvals panels authenticate automatically.
+            </p>
+            <button type="button" id="remember-key-btn" class="secondary">
+              Remember key in this browser
+            </button>
+            <button type="button" id="forget-key-btn" class="danger" style="display:none;">
+              Forget key
+            </button>
+          </div>
         </form>
       </fieldset>
 
@@ -914,6 +928,46 @@
     (function() {
       'use strict';
 
+      // ---- API key plumbing (client-side) ----
+      // The /api/* surface is key-gated (X-API-Key) and a browser
+      // EventSource cannot attach headers, so: the key lives in
+      // localStorage and every request goes through apiFetch(), which
+      // attaches it. Connector setup (/api/integrations/*) is key-OPEN by
+      // design — the provider's OAuth consent screen IS the authorisation —
+      // so connections can be made before the key is entered.
+      var API_KEY_STORAGE = 'freehand_api_key';
+
+      function storedApiKey() {
+        try { return localStorage.getItem(API_KEY_STORAGE) || ''; } catch (e) { return ''; }
+      }
+
+      function storeApiKey(key) {
+        try { localStorage.setItem(API_KEY_STORAGE, key); } catch (e) {}
+      }
+
+      function forgetStoredApiKey() {
+        try { localStorage.removeItem(API_KEY_STORAGE); } catch (e) {}
+      }
+
+      var last401WarnAt = 0;
+
+      function apiFetch(url, options) {
+        options = options || {};
+        var headers = options.headers || {};
+        var key = storedApiKey();
+        if (key) headers['X-API-Key'] = key;
+        options.headers = headers;
+        return fetch(url, options).then(function(res) {
+          // A stored-but-rejected key means the server key changed; say so
+          // once (rate-limited) rather than on every poll.
+          if (res.status === 401 && key && Date.now() - last401WarnAt > 30000) {
+            last401WarnAt = Date.now();
+            showStatus('Stored API key was rejected (401). Update it under Settings.', 'error');
+          }
+          return res;
+        });
+      }
+
       // ---- Status Region ----
       const statusRegion = document.getElementById('status-region');
       let statusTimeout = null;
@@ -988,7 +1042,7 @@
         var responseEl = document.getElementById('command-response');
         responseEl.textContent = 'Sending: ' + value;
 
-        fetch('/api/agent/command', {
+        apiFetch('/api/agent/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: value })
@@ -1024,7 +1078,7 @@
       var scribbleContent = document.getElementById('scribble-content');
 
       // Load existing content
-      fetch('/api/scribble')
+      apiFetch('/api/scribble')
         .then(function(res) { return res.json(); })
         .then(function(data) {
           if (data.content) {
@@ -1046,7 +1100,7 @@
           return;
         }
 
-        fetch('/api/scribble', {
+        apiFetch('/api/scribble', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: content })
@@ -1083,7 +1137,7 @@
         }
         if (!valid) return;
 
-        fetch('/api/tasks', {
+        apiFetch('/api/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: title, cron_schedule: cron })
@@ -1104,7 +1158,7 @@
         var listEl = document.getElementById('task-list');
         listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
-        fetch('/api/tasks')
+        apiFetch('/api/tasks')
           .then(function(res) { return res.json(); })
           .then(function(tasks) {
             if (!tasks.length) {
@@ -1134,7 +1188,7 @@
 
       window.deleteTask = function(id) {
         if (!confirm('Delete this task?')) return;
-        fetch('/api/tasks/' + id, { method: 'DELETE' })
+        apiFetch('/api/tasks/' + id, { method: 'DELETE' })
           .then(function() {
             showStatus('Task deleted.', 'success');
             loadTasks();
@@ -1148,7 +1202,7 @@
       var settingsForm = document.getElementById('settings-form');
 
       // Load settings
-      fetch('/api/settings')
+      apiFetch('/api/settings')
         .then(function(res) { return res.json(); })
         .then(function(data) {
           if (data.api_key) document.getElementById('api-key').value = data.api_key;
@@ -1175,7 +1229,7 @@
         }
         if (!valid) return;
 
-        fetch('/api/settings', {
+        apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ api_key: apiKey, omniroute: omniroute })
@@ -1187,6 +1241,36 @@
           showStatus('Failed to save settings.', 'error');
         });
       });
+
+      // ---- Remember / forget the API key in this browser ----
+      function refreshKeyButtons() {
+        var hasKey = !!storedApiKey();
+        document.getElementById('remember-key-btn').style.display = hasKey ? 'none' : '';
+        document.getElementById('forget-key-btn').style.display = hasKey ? '' : 'none';
+      }
+
+      document.getElementById('remember-key-btn').addEventListener('click', function() {
+        var key = document.getElementById('api-key').value.trim();
+        if (!key) {
+          showError('api-key-error', 'Enter the API key first, then remember it.');
+          return;
+        }
+        storeApiKey(key);
+        refreshKeyButtons();
+        showStatus('API key remembered in this browser.', 'success');
+      });
+
+      document.getElementById('forget-key-btn').addEventListener('click', function() {
+        forgetStoredApiKey();
+        refreshKeyButtons();
+        showStatus('API key removed from this browser.', 'success');
+      });
+
+      // Pre-fill the field from storage if the key was already remembered.
+      refreshKeyButtons();
+      if (storedApiKey()) {
+        document.getElementById('api-key').value = storedApiKey();
+      }
 
       // ---- OAuth Settings ----
       var oauthFields = [
@@ -1204,7 +1288,7 @@
       ];
 
       // Load OAuth settings
-      fetch('/api/settings')
+      apiFetch('/api/settings')
         .then(function(res) { return res.json(); })
         .then(function(data) {
           var oauth = data.oauth || {};
@@ -1237,7 +1321,7 @@
           });
         });
 
-        fetch('/api/settings', {
+        apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ oauth: { providers: providers } })
@@ -1251,7 +1335,7 @@
       });
 
       // ---- LLM Settings ----
-      fetch('/api/settings')
+      apiFetch('/api/settings')
         .then(function(res) { return res.json(); })
         .then(function(data) {
           var llm = data.llm || {};
@@ -1269,7 +1353,7 @@
           api_key: document.getElementById('llm-api-key').value.trim(),
           base_url: document.getElementById('llm-base-url').value.trim(),
         };
-        fetch('/api/settings', {
+        apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm: llmConfig })
@@ -1287,7 +1371,7 @@
         var listEl = document.getElementById('connections-list');
         listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
-        fetch('/api/integrations')
+        apiFetch('/api/integrations')
           .then(function(res) { return res.json(); })
           .then(function(data) {
             var connections = data.connections || [];
@@ -1414,7 +1498,7 @@
 
       window.disconnectService = function(service, label) {
         if (!confirm('Disconnect ' + service + ' (' + label + ')?')) return;
-        fetch('/api/integrations/' + service + '/disconnect', {
+        apiFetch('/api/integrations/' + service + '/disconnect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label })
@@ -1430,7 +1514,7 @@
       };
 
       window.testConnection = function(service, label) {
-        fetch('/api/integrations/' + service + '/test', {
+        apiFetch('/api/integrations/' + service + '/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label })
@@ -1453,7 +1537,7 @@
         var listEl = document.getElementById('approvals-list');
         listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
-        fetch('/api/approvals')
+        apiFetch('/api/approvals')
           .then(function(res) { return res.json(); })
           .then(function(approvals) {
             if (!approvals.length) {
@@ -1481,7 +1565,7 @@
       }
 
       window.handleApproval = function(id, action) {
-        fetch('/api/approvals/' + id + '/' + action, { method: 'POST' })
+        apiFetch('/api/approvals/' + id + '/' + action, { method: 'POST' })
           .then(function() {
             showStatus('Approval ' + action + 'd.', 'success');
             loadApprovals();
@@ -1510,7 +1594,7 @@
 
       // ---- Gateway Status & Controls ----
       function loadGatewayStatus() {
-        fetch('/api/gateway/status')
+        apiFetch('/api/gateway/status')
           .then(function(res) { return res.json(); })
           .then(function(status) {
             var el = document.getElementById('gateway-status');
@@ -1524,7 +1608,7 @@
             el.innerHTML = html;
 
             // Populate form fields
-            fetch('/api/settings')
+            apiFetch('/api/settings')
               .then(function(res) { return res.json(); })
               .then(function(s) {
                 document.getElementById('tg-token').value = s.telegram_bot_token || '';
@@ -1546,7 +1630,7 @@
           slack_signing_secret: document.getElementById('slack-signing').value.trim(),
           slack_bot_token: document.getElementById('slack-token').value.trim(),
         };
-        fetch('/api/gateway/settings', {
+        apiFetch('/api/gateway/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
@@ -1569,7 +1653,7 @@
         }
         var hint = document.getElementById('wa-code-hint');
         hint.textContent = 'Generating pairing code...';
-        fetch('/api/gateway/whatsapp/pair', {
+        apiFetch('/api/gateway/whatsapp/pair', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ phone: phone })
@@ -1594,7 +1678,7 @@
       var tierSelect = document.getElementById('tier-select');
 
       function loadTier() {
-        fetch('/api/security/tier')
+        apiFetch('/api/security/tier')
           .then(function(res) { return res.json(); })
           .then(function(data) {
             tierSelect.value = data.tier || 'semi_autonomous';
@@ -1614,7 +1698,7 @@
       document.getElementById('tier-form').addEventListener('submit', function(e) {
         e.preventDefault();
         var tier = tierSelect.value;
-        fetch('/api/security/tier', {
+        apiFetch('/api/security/tier', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ tier: tier })
@@ -1629,17 +1713,14 @@
         });
       });
 
-      // ---- SSE: Real-time approval notifications ----
-      function connectSSE() {
-        var evtSource = new EventSource('/api/approvals/stream');
-        evtSource.addEventListener('approval_pending', function(e) {
-          var data = JSON.parse(e.data);
-          showStatus('Approval needed: ' + data.action_type + ' — ' + data.description, 'success');
-          loadApprovals();
-        });
-        evtSource.onerror = function() {
-          // Reconnect on error (automatic for EventSource)
-        };
+      // ---- Approvals: keyed polling (replaces the headerless SSE) ----
+      // EventSource cannot send an X-API-Key header, and the stream endpoint
+      // is key-gated — so the console polls GET /api/approvals through
+      // apiFetch() (which attaches the stored key) instead. 8s cadence keeps
+      // the held-approval panel fresh without hammering the server.
+      function startApprovalsPolling() {
+        loadApprovals();
+        setInterval(loadApprovals, 8000);
       }
 
       // ---- Agents Panel ----
@@ -1650,8 +1731,8 @@
         importEl.innerHTML = '';
 
         Promise.all([
-          fetch('/api/agents').then(function(r) { return r.json(); }),
-          fetch('/api/agents/imported').then(function(r) { return r.json(); }),
+          apiFetch('/api/agents').then(function(r) { return r.json(); }),
+          apiFetch('/api/agents/imported').then(function(r) { return r.json(); }),
         ])
         .then(function(results) {
           var agents = results[0] || [];
@@ -1706,7 +1787,7 @@
         var btn = event.target;
         btn.textContent = 'Importing...';
         btn.disabled = true;
-        fetch('/api/agents/import', {
+        apiFetch('/api/agents/import', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agent: name, include_state: includeState, overwrite: true }),
@@ -1730,7 +1811,7 @@
       };
 
       window.previewAgent = function(name) {
-        fetch('/api/agents/import/preview', {
+        apiFetch('/api/agents/import/preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ agent: name }),
@@ -1754,7 +1835,7 @@
 
       window.removeAgent = function(name) {
         if (!confirm('Remove all imports for ' + name + '?')) return;
-        fetch('/api/agents/import/' + name, { method: 'DELETE' })
+        apiFetch('/api/agents/import/' + name, { method: 'DELETE' })
         .then(function() {
           showStatus(name + ' imports removed.', 'success');
           loadAgents();
@@ -1766,12 +1847,11 @@
 
       // ---- Init ----
       loadTasks();
-      loadApprovals();
       loadTier();
       loadConnections();
       loadGatewayStatus();
       loadAgents();
-      connectSSE();
+      startApprovalsPolling();
     })();
   </script>
 </body>
