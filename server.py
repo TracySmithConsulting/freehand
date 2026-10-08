@@ -21,6 +21,7 @@ from core.security import (
     get_pending_approvals,
     handle_approval,
     clear_pending_approvals,
+    re_execute_approval,
     subscribe as _sse_subscribe,
     unsubscribe as _sse_unsubscribe,
 )
@@ -375,9 +376,16 @@ async def api_get_approvals():
 async def api_approve(approval_id: int):
     try:
         result = handle_approval(approval_id, "approve")
-        return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    # Round 15 slice 3: closing the loop. If this approval is a
+    # locally-originated destructive action, approving it now re-executes
+    # the held tool call (the button was decorative before — approving
+    # only flipped the DB status). Source-gated: remote-origin approvals
+    # stay veto/record-only, so a remote /approve cannot fire a
+    # destructive action.
+    result["re_execute"] = await re_execute_approval(approval_id)
+    return result
 
 
 @app.post("/api/approvals/{approval_id}/deny", dependencies=[Depends(require_api_key)])

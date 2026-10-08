@@ -379,3 +379,82 @@ def clear_pending_approvals(reason: str = "") -> int:
 
     conn.close()
     return count
+
+
+# ── Round 15 slice 3: close the loop on held destructive actions ──────
+# REMOTE_SOURCES is the single source of truth for "which sources are
+# remote gateways vs a local terminal/web session". agent.py's N6 write
+# tightening and re_execute_approval() both gate on it, so it lives here.
+REMOTE_SOURCES = {"telegram", "slack", "whatsapp"}
+
+
+def _get_approval(approval_id: int) -> Optional[dict]:
+    """Fetch one approvals row by id as a dict (or None if absent)."""
+    conn = _get_conn()
+    conn.row_factory = sqlite3.Row
+    cur = conn.execute(
+        "SELECT id, action_type, description, payload, status "
+        "FROM approvals WHERE id = ?",
+        (approval_id,),
+    )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+async def re_execute_approval(approval_id: int) -> dict:
+    """Round 15 slice 3 — when an APPROVED destructive action is approved,
+    re-drive the exact tool + args it was held with.
+
+    This is what makes the out-of-band /approve buttons real instead of
+    decorative: before this, handle_approval only flipped the DB status,
+    so approving a held github.delete_repo did nothing.
+
+    Source-gated (the security decision): only LOCAL-originating calls
+    re-execute. A call held at a remote gateway (telegram/slack/whatsapp)
+    stays veto/record-only — a remote /approve button must NOT fire a
+    destructive action.
+
+    Returns:
+      {"re_executed": True, "tool": <name>, "result": <execute_tool result>}
+      {"re_executed": False, "reason": <why>}  for any of:
+        missing row, status not 'approved', no tool in payload, remote source.
+
+    The re-execute target is looked up lazily on the core.agent module
+    (agent.py imports security at top level, so a top-level import here
+    would be a cycle) — and lazily so a monkeypatched
+    core.agent.execute_tool is what actually runs.
+    """
+    row = _get_approval(approval_id)
+    if row is None:
+        return {"re_executed": False, "reason": "no such approval"}
+
+    if row.get("status") != "approved":
+        return {
+            "re_executed": False,
+            "reason": f"approval status is '{row.get('status')}', not approved",
+        }
+
+    try:
+        payload = json.loads(row.get("payload") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        payload = {}
+
+    tool = payload.get("tool")
+    if not tool:
+        return {"re_executed": False, "reason": "approval payload has no tool"}
+
+    source = str(payload.get("source", ""))
+    if source in REMOTE_SOURCES:
+        return {
+            "re_executed": False,
+            "reason": (
+                f"remote source '{source}' is veto-only: a remote /approve "
+                "must not fire a destructive action"
+            ),
+        }
+
+    args = payload.get("args") or {}
+    import core.agent as _agent  # lazy: avoid import cycle + respect tests
+    result = await _agent.execute_tool(tool, args)
+    return {"re_executed": True, "tool": tool, "result": result}
