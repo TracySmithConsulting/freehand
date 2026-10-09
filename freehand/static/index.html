@@ -862,6 +862,13 @@
       <!-- Remote Gateways -->
       <section id="gateways" aria-labelledby="gw-heading">
         <h2 id="gw-heading">Remote Gateways</h2>
+        <p class="hint">
+          Connectors vs gateways: a <strong>connector</strong> is an account the agent
+          acts <em>with</em> (e.g. your Slack shared app → post/read channels).
+          A <strong>gateway</strong> is a channel that reaches <em>you</em> — where
+          approval buttons and remote commands arrive (Telegram / Slack / WhatsApp
+          bot tokens below). Different credentials, different jobs.
+        </p>
         <div id="gateway-status" aria-live="polite">
           <p class="empty-state">Loading gateway status...</p>
         </div>
@@ -1478,6 +1485,32 @@
               });
               emptyGroup.appendChild(emptyBody);
               listEl.appendChild(emptyGroup);
+            }
+
+            // Round 15.6: OpenConnector services (github, hackernews, ...)
+            // — connect targets that have no FreeHand static connector.
+            // 'Connect' 302s into OC's own consent screen. Hidden when OC
+            // is unreachable (the server omits the list in that case).
+            var ocServices = (data.oc_services || []).filter(function(s) {
+              return !connected.has(s);
+            });
+            if (ocServices.length) {
+              var ocGroup = document.createElement('div');
+              ocGroup.className = 'connection-group';
+              ocGroup.innerHTML = '<h3>Available via OpenConnector</h3>' +
+                '<p class="hint" style="margin-top:0.25rem;">These connect through OpenConnector&rsquo;s own consent screen.</p>';
+              var ocBody = document.createElement('div');
+              ocBody.className = 'provider-body';
+              ocServices.forEach(function(svc) {
+                var ocBtn = document.createElement('button');
+                ocBtn.className = 'connect-btn';
+                ocBtn.textContent = 'Connect ' + svc;
+                ocBtn.onclick = function() { connectService(svc); };
+                ocBody.appendChild(ocBtn);
+                ocBody.appendChild(document.createElement('br'));
+              });
+              ocGroup.appendChild(ocBody);
+              listEl.appendChild(ocGroup);
             }
           })
           .catch(function() {

@@ -185,6 +185,37 @@ def service_is_known(service: str) -> bool:
     return False
 
 
+def list_provider_services() -> list:
+    """Round 15.6: the OC provider catalogue as a deduped, lowercase list
+    of service ids.
+
+    The Connections panel uses this to offer OC-only services (github,
+    hackernews, ...) as connect targets — anything the static
+    allowlist doesn't already cover. Returns [] when the OC runtime is
+    unreachable or no OOMOL_CONNECT_RUNTIME_TOKEN is set (never raises;
+    an OC outage must not break the panel).
+
+    Both catalog entry shapes are honoured (``service`` first, ``id``
+    fallback — see service_is_known).
+    """
+    services = _list_services_raw()
+    if not services:
+        return []
+    out: list = []
+    seen = set()
+    for s in services:
+        if not isinstance(s, dict):
+            continue
+        raw = s.get("service") or s.get("id")
+        if not isinstance(raw, str):
+            continue
+        needle = raw.strip().lower()
+        if needle and needle not in seen:
+            seen.add(needle)
+            out.append(needle)
+    return out
+
+
 def call_mcp_action(action: str, arguments: dict) -> Optional[dict]:
     """Helper for future Task 5 — FreeHand executing an MCP tool over the wire.
 

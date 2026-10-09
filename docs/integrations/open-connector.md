@@ -99,7 +99,9 @@ Pick a no-auth provider (HackerNews, wttr.in) — no Slack/OAuth app registratio
 ```bash
 # Browser flow
 curl -is "http://127.0.0.1:8000/api/integrations/hackernews/authorize?label=tracy"
-# Expect: HTTP 302 with Location: http://127.0.0.1:3000/?authorize=hackernews&label=tracy&from=freehand
+# Expect: HTTP 302 with Location: http://127.0.0.1:3001/providers/hackernews
+# (In dev, set OOMOL_CONNECT_CONSOLE_URL=http://127.0.0.1:5173 to point at the
+# separate console app — the redirect then goes to :5173/providers/hackernews.)
 
 # Verify the broker tier-5 path
 python -c "

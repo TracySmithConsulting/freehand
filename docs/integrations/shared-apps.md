@@ -183,7 +183,7 @@ If `vault/encryption.key` is compromised, rotate it via `freehand rekey` (Round 
 | Service | Path | Result |
 |---|---|---|
 | `google` | tier-1 (per-user broker) | 200 JSON with Google authorize URL |
-| `slack` | tier-5 (OC) | 302 to `http://127.0.0.1:3001/?authorize=slack&label=tracy&from=freehand` |
+| `slack` | tier-5 (OC) | 302 to the OC console provider page `…/providers/slack` (`OOMOL_CONNECT_CONSOLE_URL` in dev) |
 | `hackernews` | tier-5 (OC, no-auth) | 302 to OC console |
 | `linear` | tier-5 (OC) | 302 to OC console |
 | `myspace` | none → **503** | `error=no_shared_app`, `service=myspace`, pre-filled GitHub URL, `contact_email=tracy@tracysmith.co.za` |

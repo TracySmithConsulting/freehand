@@ -124,6 +124,63 @@ def _no_shared_app_503(service: str) -> JSONResponse:
     )
 
 
+def _no_shared_app_503_html(service: str) -> HTMLResponse:
+    """Round 15.6: the same 503 as a page for BROWSERS.
+
+    A Connect popup hitting this path used to render the JSON body — the
+    'JSON dump antipattern' (the very thing Pitfall 24 fixed for tier-5,
+    which Round 8's honest-option-A reintroduced for this 503 fallback).
+    Browser navigations get a small page with clickable links; API
+    clients keep the structured JSON from _no_shared_app_503().
+    """
+    request_url = _build_github_issue_url(service)
+    html = (
+        "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        f"<title>No shared app for {service}</title></head>"
+        "<body style='font-family:system-ui,sans-serif;padding:2rem;background:#f5f5f5;'>"
+        "<div style='max-width:520px;margin:0 auto;background:#fff;border-radius:8px;padding:2rem;'>"
+        f"<h2 style='font-size:1.1rem'>FreeHand doesn't have a shared app for {service} yet</h2>"
+        "<p>You can request it:</p>"
+        f"<ul style='line-height:1.8'>"
+        f"<li><a href='{request_url}'>File a GitHub issue</a> — details are pre-filled, click review &amp; submit</li>"
+        f"<li>or email <a href='mailto:{_CONTACT_EMAIL}'>{_CONTACT_EMAIL}</a></li>"
+        "</ul>"
+        "<p style='color:#666;font-size:0.85rem'>Once the service is added, the Connect button here will work.</p>"
+        "</div></body></html>"
+    )
+    return HTMLResponse(status_code=503, content=html)
+
+
+def _wants_html(request) -> bool:
+    """Round 15.6: does this caller look like a browser navigation?
+
+    Browsers (including the Connect popup from the console) send
+    'Accept: text/html,...'; API clients (curl, MCP, docs examples) send
+    no Accept or 'application/json'. On a browser Accept, /authorize
+    becomes a 302 to the consent screen (or an HTML 503 page) instead of
+    a JSON body — the JSON contract is preserved for everything else.
+    """
+    if request is None:
+        return False
+    return "text/html" in (request.headers.get("accept") or "").lower()
+
+
+def _oc_catalogue() -> list:
+    """Round 15.6: OpenConnector's provider catalogue as a deduped,
+    lowercase list of service ids.
+
+    Empty when the OC runtime is unreachable or the FreeHand server has
+    no OOMOL_CONNECT_RUNTIME_TOKEN — the Connections panel then shows
+    no OC group instead of erroring. The router-level name makes this
+    patchable in tests without a live OC.
+    """
+    from core.oauth import open_connector as _oc
+    try:
+        return _oc.list_provider_services()
+    except Exception:
+        return []
+
+
 # ── Pending-state TTL sweep ────────────────────────────────────────────
 # OAuth `state` parameters live in `settings.json` so they survive restarts.
 # If the callback never completes (user closes tab, OAuth provider errors,
@@ -247,6 +304,11 @@ async def list_integrations(request: Request):
     return {
         "connections": list(services.values()),
         "available_services": ALLOWED_SERVICES,
+        # Round 15.6: OpenConnector catalogue services that the static
+        # allowlist does NOT already cover, so the Connections panel can
+        # offer them as connect targets (they 302 into OC's consent
+        # screen). [] when OC is unreachable — the panel hides the group.
+        "oc_services": [s for s in _oc_catalogue() if s not in ALLOWED_SERVICES],
     }
 
 
@@ -284,13 +346,24 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
                 # connector.authorize_url() path. NOT a 302.
                 pass
             elif _broker.is_known_to_open_connector(service):
+                # Redirect into the OC *web console* provider page
+                # (/providers/<svc>) — the console is the clickable surface.
+                # The API base (OOMOL_CONNECT_BASE_URL) serves a JSON banner
+                # when no built console is embedded, so in dev the console
+                # runs on its own port (Vite, :5173); OOMOL_CONNECT_CONSOLE_URL
+                # overrides the target. Production default = API base, where
+                # the built console is co-served.
                 oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
-                target = f"{oc_base}/?authorize={service}&label={label}&from=freehand"
+                console_url = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/")
+                target = f"{console_url or oc_base}/providers/{service}"
                 return RedirectResponse(target, status_code=302)
             else:
                 # Neither tier-1b nor tier-5 has it. Round 8 honest-option-A
-                # fallback: 503 with pre-filled GitHub issue URL + email
-                # contact.
+                # fallback. Round 15.6: browsers get the HTML page (no JSON
+                # dump in a popup — the Pitfall-24 antipattern); API clients
+                # keep the structured JSON body.
+                if _wants_html(request):
+                    return _no_shared_app_503_html(service)
                 return _no_shared_app_503(service)
         except Exception:
             # tier-5/1b must NEVER break the existing flow — fall through to
@@ -333,6 +406,12 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
     }
     _save_oauth_settings(settings)
 
+    # Round 15.6: browser navigations (the Connect button) get a 302 to
+    # the provider consent screen — same UX as the OC 302 above, so the
+    # popup never shows raw JSON. API clients (curl, MCP, the documented
+    # contract) keep the 200 JSON body with authorize_url/state/label.
+    if _wants_html(request):
+        return RedirectResponse(auth_url, status_code=302)
     return {"authorize_url": auth_url, "state": state, "label": label}
 
 
