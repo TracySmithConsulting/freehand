@@ -521,6 +521,55 @@
       padding: 1rem;
     }
 
+    .oc-search {
+      padding: 0.85rem 1rem 0;
+    }
+
+    .oc-search-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #53606f;
+      margin-bottom: 0.35rem;
+    }
+
+    .connector-search {
+      margin: 0;
+      border-color: #cbd5e1;
+      background: #fbfcfe;
+    }
+
+    .connector-search::placeholder {
+      color: #8995a3;
+    }
+
+    .oc-search-status {
+      margin: 0.45rem 0 0;
+      color: #6b7280;
+      font-size: 0.8rem;
+    }
+
+    .oc-service-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+      gap: 0.5rem;
+      padding-top: 0.75rem;
+    }
+
+    .oc-service-list .connect-btn {
+      width: 100%;
+      text-align: left;
+    }
+
+    .oc-no-match {
+      grid-column: 1 / -1;
+      color: #666;
+      font-size: 0.875rem;
+      padding: 0.75rem 0;
+    }
+
     .credential-row {
       display: grid;
       grid-template-columns: 1fr 1fr;
@@ -1383,13 +1432,6 @@
           .then(function(data) {
             var connections = data.connections || [];
             var available = data.available_services || [];
-
-            if (!connections.length) {
-              listEl.innerHTML = '<p class="empty-state">No connections yet. Connect your accounts below.</p>';
-              return;
-            }
-
-            listEl.innerHTML = '';
             var providers = {
               'google': { name: 'Google Workspace', icon: 'G', sub: 'Gmail, Calendar, Sheets, Meet' },
               'microsoft': { name: 'Microsoft 365', icon: 'M', sub: 'Outlook, Teams, Calendar' },
@@ -1400,70 +1442,77 @@
               'email': { name: 'Email', icon: '@', sub: 'IMAP/SMTP (custom domains)' },
             };
 
-            var grouped = {};
-            connections.forEach(function(conn) {
-              var svc = conn.service;
-              if (!grouped[svc]) grouped[svc] = [];
-              grouped[svc].push(conn);
-            });
+            listEl.innerHTML = '';
+            if (!connections.length) {
+              listEl.innerHTML = '<p class="empty-state">No connections yet. Connect an account below.</p>';
+            }
 
-            Object.keys(grouped).forEach(function(svc) {
-              var info = providers[svc] || { name: svc, icon: '?', sub: '' };
-              var groupDiv = document.createElement('div');
-              groupDiv.className = 'connection-group';
-              groupDiv.innerHTML = '<h3>' + escapeHtml(info.icon) + ' ' + escapeHtml(info.name) + '<span style="font-weight:400;font-size:0.8rem;color:#666;"> — ' + escapeHtml(info.sub) + '</span></h3>';
-              var bodyDiv = document.createElement('div');
-              bodyDiv.className = 'provider-body';
-
-              grouped[svc].forEach(function(conn) {
-                var card = document.createElement('div');
-                card.className = 'connection-card connected';
-                var expDate = conn.expires_at ? new Date(conn.expires_at) : null;
-                var now = new Date();
-                var isExpired = expDate && expDate < now;
-                var timeLeft = '';
-                if (expDate && !isExpired) {
-                  var mins = Math.round((expDate - now) / 60000);
-                  if (mins < 60) {
-                    timeLeft = 'Expires in ' + mins + 'm';
-                  } else {
-                    timeLeft = 'Expires in ' + Math.round(mins / 60) + 'h';
-                  }
-                } else if (isExpired) {
-                  timeLeft = 'Expired';
-                }
-                card.className = isExpired ? 'connection-card expired' : 'connection-card connected';
-
-                var userLabel = conn.email ? escapeHtml(conn.email) : escapeHtml(conn.label);
-                var scopes = (conn.scopes || []).slice(0, 3).join(', ');
-                if ((conn.scopes || []).length > 3) scopes += '...';
-
-                card.innerHTML =
-                  '<div class="connection-info">' +
-                    '<span class="connection-label">' + escapeHtml(conn.label) + '</span>' +
-                    '<div class="connection-meta">' + (isExpired ? '<span style="color:#c0392b;">' + timeLeft + '</span>' : timeLeft) + ' · ' + escapeHtml(conn.connected_at) + '</div>' +
-                    '<div class="connection-meta">' + escapeHtml(userLabel) + '</div>' +
-                    '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' +
-                  '</div>' +
-                  '<div class="connection-actions">' +
-                    '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Test</button>' +
-                    '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Disconnect</button>' +
-                  '</div>';
-                bodyDiv.appendChild(card);
+            if (connections.length) {
+              var grouped = {};
+              connections.forEach(function(conn) {
+                var svc = conn.service;
+                if (!grouped[svc]) grouped[svc] = [];
+                grouped[svc].push(conn);
               });
 
-              // Add account button (for multi-account services)
-              if (['google', 'microsoft', 'zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
-                var addBtn = document.createElement('button');
-                addBtn.className = 'add-account-btn';
-                addBtn.textContent = '+ Add Account';
-                addBtn.onclick = function() { showAddAccountModal(svc); };
-                bodyDiv.appendChild(addBtn);
-              }
+              Object.keys(grouped).forEach(function(svc) {
+                var info = providers[svc] || { name: svc, icon: '?', sub: '' };
+                var groupDiv = document.createElement('div');
+                groupDiv.className = 'connection-group';
+                groupDiv.innerHTML = '<h3>' + escapeHtml(info.icon) + ' ' + escapeHtml(info.name) + '<span style="font-weight:400;font-size:0.8rem;color:#666;"> — ' + escapeHtml(info.sub) + '</span></h3>';
+                var bodyDiv = document.createElement('div');
+                bodyDiv.className = 'provider-body';
 
-              groupDiv.appendChild(bodyDiv);
-              listEl.appendChild(groupDiv);
-            });
+                grouped[svc].forEach(function(conn) {
+                  var card = document.createElement('div');
+                  card.className = 'connection-card connected';
+                  var expDate = conn.expires_at ? new Date(conn.expires_at) : null;
+                  var now = new Date();
+                  var isExpired = expDate && expDate < now;
+                  var timeLeft = '';
+                  if (expDate && !isExpired) {
+                    var mins = Math.round((expDate - now) / 60000);
+                    if (mins < 60) {
+                      timeLeft = 'Expires in ' + mins + 'm';
+                    } else {
+                      timeLeft = 'Expires in ' + Math.round(mins / 60) + 'h';
+                    }
+                  } else if (isExpired) {
+                    timeLeft = 'Expired';
+                  }
+                  card.className = isExpired ? 'connection-card expired' : 'connection-card connected';
+
+                  var userLabel = conn.email ? escapeHtml(conn.email) : escapeHtml(conn.label);
+                  var scopes = (conn.scopes || []).slice(0, 3).join(', ');
+                  if ((conn.scopes || []).length > 3) scopes += '...';
+
+                  card.innerHTML =
+                    '<div class="connection-info">' +
+                      '<span class="connection-label">' + escapeHtml(conn.label) + '</span>' +
+                      '<div class="connection-meta">' + (isExpired ? '<span style="color:#c0392b;">' + timeLeft + '</span>' : timeLeft) + ' · ' + escapeHtml(conn.connected_at) + '</div>' +
+                      '<div class="connection-meta">' + escapeHtml(userLabel) + '</div>' +
+                      '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' +
+                    '</div>' +
+                    '<div class="connection-actions">' +
+                      '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Test</button>' +
+                      '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Disconnect</button>' +
+                    '</div>';
+                  bodyDiv.appendChild(card);
+                });
+
+                // Add account button (for multi-account services)
+                if (['google', 'microsoft', 'zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
+                  var addBtn = document.createElement('button');
+                  addBtn.className = 'add-account-btn';
+                  addBtn.textContent = '+ Add Account';
+                  addBtn.onclick = function() { showAddAccountModal(svc); };
+                  bodyDiv.appendChild(addBtn);
+                }
+
+                groupDiv.appendChild(bodyDiv);
+                listEl.appendChild(groupDiv);
+              });
+            }
 
             // Show available but not connected services
             var connected = new Set(connections.map(function(c) { return c.service; }));
@@ -1501,14 +1550,56 @@
                 '<p class="hint" style="margin-top:0.25rem;">These connect through OpenConnector&rsquo;s own consent screen.</p>';
               var ocBody = document.createElement('div');
               ocBody.className = 'provider-body';
-              ocServices.forEach(function(svc) {
-                var ocBtn = document.createElement('button');
-                ocBtn.className = 'connect-btn';
-                ocBtn.textContent = 'Connect ' + svc;
-                ocBtn.onclick = function() { connectService(svc); };
-                ocBody.appendChild(ocBtn);
-                ocBody.appendChild(document.createElement('br'));
-              });
+              var searchWrap = document.createElement('div');
+              searchWrap.className = 'oc-search';
+              var searchLabel = document.createElement('label');
+              searchLabel.className = 'oc-search-label';
+              searchLabel.setAttribute('for', 'oc-connector-search');
+              searchLabel.textContent = 'Find a connector';
+              var searchInput = document.createElement('input');
+              searchInput.type = 'search';
+              searchInput.id = 'oc-connector-search';
+              searchInput.className = 'connector-search';
+              searchInput.placeholder = 'Search apps like Zoom, Slack, or GitHub';
+              searchInput.setAttribute('autocomplete', 'off');
+              var searchStatus = document.createElement('p');
+              searchStatus.className = 'oc-search-status';
+              searchStatus.setAttribute('aria-live', 'polite');
+              var serviceList = document.createElement('div');
+              serviceList.className = 'oc-service-list';
+
+              function renderOpenConnectorServices() {
+                var query = searchInput.value.trim().toLowerCase();
+                var matches = ocServices.filter(function(svc) {
+                  var info = providers[svc] || {};
+                  return !query || svc.toLowerCase().includes(query) ||
+                    (info.name || '').toLowerCase().includes(query);
+                });
+                serviceList.innerHTML = '';
+                searchStatus.textContent = matches.length + ' of ' + ocServices.length + ' connectors';
+                if (!matches.length) {
+                  var noMatch = document.createElement('p');
+                  noMatch.className = 'oc-no-match';
+                  noMatch.textContent = 'No matching connectors. Try another name.';
+                  serviceList.appendChild(noMatch);
+                  return;
+                }
+                matches.forEach(function(svc) {
+                  var ocBtn = document.createElement('button');
+                  ocBtn.className = 'connect-btn';
+                  ocBtn.textContent = 'Connect ' + (providers[svc] ? providers[svc].name : svc);
+                  ocBtn.onclick = function() { connectService(svc); };
+                  serviceList.appendChild(ocBtn);
+                });
+              }
+
+              searchInput.addEventListener('input', renderOpenConnectorServices);
+              searchWrap.appendChild(searchLabel);
+              searchWrap.appendChild(searchInput);
+              searchWrap.appendChild(searchStatus);
+              ocBody.appendChild(searchWrap);
+              ocBody.appendChild(serviceList);
+              renderOpenConnectorServices();
               ocGroup.appendChild(ocBody);
               listEl.appendChild(ocGroup);
             }

@@ -13,7 +13,7 @@ from importlib import resources as importlib_resources
 sys.path.insert(0, str(Path(__file__).parent))
 from core.database import init_db, DB_PATH  # DB_PATH is the canonical path from core.database (vault/agent.db)
 from core.memory import sync_vault_to_sqlite, search_memory, parse_skills
-from core.scheduler import get_scheduler, process_scribble
+from core.scheduler import get_scheduler, process_scribble, create_task as create_scheduled_task
 from core.security import (
     get_current_tier,
     set_tier,
@@ -278,6 +278,8 @@ async def startup_event():
     # intercept_action() can gate them on read/write permissions.
     from core.tools import registry as _tool_registry
     _tool_registry.bootstrap()
+    from core.tools import composio_registry as _composio_tool_registry
+    _composio_tool_registry.bootstrap()
     # Log any expired connections on startup
     from core.oauth.manager import list_connections, is_token_expired
     all_conns = list_connections()
@@ -345,15 +347,13 @@ async def create_task(body: dict):
     cron_schedule = body.get("cron_schedule", "").strip()
     if not title or not cron_schedule:
         raise HTTPException(status_code=400, detail="Title and cron_schedule are required")
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO tasks (title, cron_schedule, status) VALUES (?, ?, ?)",
-        (title, cron_schedule, "pending")
-    )
-    conn.commit()
-    task_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-    conn.close()
-    return {"id": task_id, "title": title, "cron_schedule": cron_schedule, "status": "pending"}
+    created = create_scheduled_task(title, cron_schedule)
+    if not created["recurring"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{cron_schedule}' is not a valid 5-field cron schedule",
+        )
+    return created
 
 
 @app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_api_key)])

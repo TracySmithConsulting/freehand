@@ -104,7 +104,18 @@ services:
       # DNS). NOT localhost — that would resolve to FreeHand's own
       # container, not OC's.
       - OOMOL_CONNECT_BASE_URL=http://open-connector:3001
+      # Browser-facing OC console URL. This must be reachable from the
+      # user's browser; the internal service name above is not.
+      # Override this for a hosted deployment, e.g.
+      # https://connect.example.com.
+      - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://127.0.0.1:3001}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:-runttest123}
+      # Optional: Composio-managed Meta authentication. These stay unset
+      # unless Facebook/Instagram should use the Composio adapter.
+      - COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}
+      - COMPOSIO_AUTH_CONFIG_FACEBOOK=${COMPOSIO_AUTH_CONFIG_FACEBOOK:-}
+      - COMPOSIO_AUTH_CONFIG_INSTAGRAM=${COMPOSIO_AUTH_CONFIG_INSTAGRAM:-}
+      - COMPOSIO_BASE_URL=${COMPOSIO_BASE_URL:-https://backend.composio.dev}
     volumes:
       # Mount the host's vault directory so encryption.key, connections.db,
       # broker_config.json, credential_store.json, AND agent.db all

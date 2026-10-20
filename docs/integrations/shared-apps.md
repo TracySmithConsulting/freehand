@@ -56,6 +56,7 @@ freehand shared-app add <service> \
     --client-id <from developer portal> \
     --client-secret <from developer portal> \
     --scopes "scope1,scope2,scope3" \
+    --config-id <provider login configuration id, if required> \
     --registered-by tracy
 ```
 
@@ -96,6 +97,7 @@ The shared app entry is deleted from `vault/broker_config.json`. The user secret
 | `client_id` | `vault/broker_config.json -> shared_apps.<service>.client_id` | plaintext (it's a public identifier) |
 | `client_secret` | `vault/broker_config.json -> shared_apps.<service>.client_secret_enc` | **Fernet** via `vault/encryption.key` |
 | `client_secret_enc` on disk | Reads as `gAAAAA...` (Fernet ciphertext) | Same key as `api_key`, connection tokens |
+| Provider configuration id | `vault/broker_config.json -> shared_apps.<service>.config_id` | plaintext metadata |
 | Scopes / metadata | `vault/broker_config.json -> shared_apps.<service>.*` | plaintext |
 
 The Fernet key in `vault/encryption.key` is auto-generated on first use (same code path as `api_key` storage). Blast radius = "attacker who has both the FreeHand vault AND the encryption key" — same as today's posture.

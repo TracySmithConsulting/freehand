@@ -6,7 +6,7 @@ FreeHand is a local-first AI agent system with OAuth integrations, cross-agent m
 
 ```
 pip install freehand-agent
-freehand serve
+freehand start
 # Open http://localhost:8000
 ```
 
@@ -21,6 +21,7 @@ freehand serve
 - **📅 Task scheduler** — cron-based task execution via scribble sweep
 - **🔐 Encrypted token storage** — Fernet encryption for all OAuth tokens
 - **🌐 Tailscale support** — accessible from anywhere on your tailnet
+- **🔀 Pluggable connector backends** — OpenConnector for the broad catalog, with an optional Composio adapter for Meta OAuth
 
 ## Install
 
@@ -40,8 +41,7 @@ curl -fsSL https://freehand.tracysmith.co.za/install.sh | bash
 
 ```bash
 pip install freehand-agent
-freehand init
-freehand serve
+freehand start
 ```
 
 ### From source
@@ -50,30 +50,45 @@ freehand serve
 git clone https://github.com/TracySmithConsulting/freehand.git
 cd freehand
 pip install -e ".[all]"
-freehand init
-freehand serve
+freehand start
 ```
 
 ## Quick Start
 
 ```bash
-# 1. Install
+# 1. Install and start
 pip install freehand-agent
-freehand init
+freehand start
 
-# 2. Start the server
-freehand serve
-
-# 3. Open in browser
+# 2. Open in browser (the command normally does this for you)
 # http://localhost:8000
 
-# 4. Connect your accounts (Settings → OAuth Credentials)
+# 3. Connect your accounts (Settings → OAuth Credentials)
 # See docs/OAUTH_SETUP.md for step-by-step
 ```
+
+### Optional Meta authentication through Composio
+
+FreeHand can use Composio's hosted Connect Links for Facebook and Instagram.
+This keeps Meta OAuth credentials and user access tokens outside the local
+FreeHand installation. Set these variables before running `freehand start`:
+
+```text
+COMPOSIO_API_KEY=your-project-key
+COMPOSIO_AUTH_CONFIG_FACEBOOK=your-facebook-auth-config-id
+COMPOSIO_AUTH_CONFIG_INSTAGRAM=your-instagram-auth-config-id
+```
+
+When these are present, the Facebook and Instagram Connect buttons use
+Composio. Other services continue to use FreeHand or OpenConnector as before.
+If they are absent, the existing first-party Meta connector remains available.
+See [docs/integrations/composio.md](docs/integrations/composio.md) for the
+complete setup and hosted-deployment notes.
 
 ## CLI Commands
 
 ```bash
+freehand start                    # Initialize, start, and open the local UI
 freehand serve                    # Start the web server
 freehand init                     # Initialize database and vault
 freehand sweep                    # Process pending scribble entries

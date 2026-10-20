@@ -269,6 +269,16 @@ def _sweep_stale_pending_states(settings: dict) -> bool:
 
 def _get_redirect_uri(service: str, request: Request) -> str:
     settings = _load_oauth_settings()
+    # OAuth providers such as Meta require an HTTPS callback on a public
+    # hostname. A configured base URL lets a local UI or reverse proxy use
+    # the same stable callback instead of deriving it from the incoming host.
+    public_base = (
+        os.environ.get("FREEHAND_PUBLIC_BASE_URL", "").strip()
+        or settings.get("oauth", {}).get("public_base_url", "").strip()
+    ).rstrip("/")
+    if public_base:
+        return f"{public_base}/api/integrations/{service}/callback"
+
     redirect_uris = settings.get("oauth", {}).get("redirect_uris", {})
     stored = redirect_uris.get(service, "")
     # Route is /api/integrations/{service}/callback — NOT
@@ -283,6 +293,21 @@ def _get_redirect_uri(service: str, request: Request) -> str:
         settings["oauth"]["redirect_uris"][service] = current
         _save_oauth_settings(settings)
     return current or current
+
+
+def _get_composio_callback_uri(service: str, label: str, request: Request) -> str:
+    """Build the callback Composio will redirect to after hosted auth."""
+    settings = _load_oauth_settings()
+    public_base = (
+        os.environ.get("FREEHAND_PUBLIC_BASE_URL", "").strip()
+        or settings.get("oauth", {}).get("public_base_url", "").strip()
+    ).rstrip("/")
+    if public_base:
+        base = public_base
+    else:
+        base = f"{request.url.scheme}://{request.url.netloc}"
+    path = f"{base}/api/integrations/{service}/composio/callback"
+    return f"{path}?{urllib.parse.urlencode({'label': label})}"
 
 
 @router.get("")
@@ -301,9 +326,39 @@ async def list_integrations(request: Request):
             "scopes": conn["scopes"].split(",") if conn["scopes"] else [],
             "status": conn["status"],
         })
+
+    # Composio keeps the provider token remotely. FreeHand only stores the
+    # non-secret connected-account metadata needed to render and manage the
+    # local Connections panel.
+    try:
+        import importlib
+        _composio = importlib.import_module("core.oauth.composio")
+        for account in _composio.list_accounts():
+            if account.get("status") != "active":
+                continue
+            svc = account.get("service", "")
+            if not svc:
+                continue
+            services.setdefault(svc, {"service": svc, "connections": []})
+            services[svc]["connections"].append({
+                "label": account.get("label", "default"),
+                "user_id": account.get("user_id", ""),
+                "connected_at": account.get("connected_at", ""),
+                "expires_at": account.get("expires_at", ""),
+                "scopes": account.get("scopes", []),
+                "status": account.get("status", "active"),
+                "backend": "composio",
+            })
+    except Exception:
+        # A missing/broken optional backend must not break the core panel.
+        pass
+
+    import importlib
+    _composio = importlib.import_module("core.oauth.composio")
     return {
         "connections": list(services.values()),
         "available_services": ALLOWED_SERVICES,
+        "composio_services": _composio.configured_services(),
         # Round 15.6: OpenConnector catalogue services that the static
         # allowlist does NOT already cover, so the Connections panel can
         # offer them as connect targets (they 302 into OC's consent
@@ -314,6 +369,40 @@ async def list_integrations(request: Request):
 
 @router.get("/{service}/authorize")
 async def get_authorize_url(service: str, label: str = "default", request: Request = None):
+    service = service.lower()
+    if label not in ("default", "work", "personal"):
+        if len(label) > 50:
+            raise HTTPException(status_code=400, detail="Label too long (max 50 chars)")
+
+    # Meta is the first explicit alternative backend: when configured, use a
+    # Composio hosted Connect Link so FreeHand never needs a Meta app secret.
+    # When it is not configured, the existing first-party connector remains
+    # available as a fallback for development and self-hosted users.
+    import importlib
+    _composio = importlib.import_module("core.oauth.composio")
+    if service in ("facebook", "instagram") and _composio.is_configured(service):
+        try:
+            callback_url = _get_composio_callback_uri(service, label, request)
+            link = await _composio.create_connect_link(service, label, callback_url)
+            redirect_url = link["redirect_url"]
+            if _wants_html(request):
+                return RedirectResponse(redirect_url, status_code=302)
+            return {
+                "authorize_url": redirect_url,
+                "label": label,
+                "backend": "composio",
+            }
+        except _composio.ComposioError as exc:
+            if _wants_html(request):
+                return HTMLResponse(
+                    "<!DOCTYPE html><html><body style='font-family:system-ui;padding:2rem'>"
+                    f"<h2>Could not start {service.title()} connection</h2>"
+                    f"<p>{str(exc)}</p><p><a href='/#connections'>Back to FreeHand</a></p>"
+                    "</body></html>",
+                    status_code=502,
+                )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     # Round 8 ordering:
     #   1. If the service is in ALLOWED_SERVICES (FreeHand has a first-party
     #      connector for it), fall through to the legacy connector path
@@ -369,10 +458,6 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
             # tier-5/1b must NEVER break the existing flow — fall through to
             # the standard connector-based handling.
             pass
-    if label not in ("default", "work", "personal"):
-        if len(label) > 50:
-            raise HTTPException(status_code=400, detail="Label too long (max 50 chars)")
-
     connector = get_connector(service)
     if not connector:
         raise HTTPException(status_code=501, detail=f"Connector not implemented: {service}")
@@ -413,6 +498,72 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
     if _wants_html(request):
         return RedirectResponse(auth_url, status_code=302)
     return {"authorize_url": auth_url, "state": state, "label": label}
+
+
+@router.get("/{service}/composio/callback")
+async def handle_composio_callback(
+    service: str,
+    status: str = Query(default=""),
+    connected_account_id: str = Query(default=""),
+    label: str = Query(default="default"),
+):
+    """Finish a Composio hosted connection and close the popup."""
+    service = service.lower()
+    if service not in ("facebook", "instagram"):
+        raise HTTPException(status_code=404, detail=f"Unknown Composio service: {service}")
+
+    import importlib
+    _composio = importlib.import_module("core.oauth.composio")
+    if status != "success":
+        return HTMLResponse(
+            "<!DOCTYPE html><html><body style='font-family:system-ui;padding:2rem'>"
+            f"<h2>{service.title()} connection was not completed</h2>"
+            "<p>You can close this window and try again from FreeHand.</p>"
+            "</body></html>",
+            status_code=400,
+        )
+
+    if not connected_account_id:
+        return HTMLResponse(
+            "<!DOCTYPE html><html><body style='font-family:system-ui;padding:2rem'>"
+            "<h2>Connection completed without an account id</h2>"
+            "<p>FreeHand could not record the connected account. Please try again.</p>"
+            "</body></html>",
+            status_code=502,
+        )
+
+    pending = _composio.get_account(service, label)
+    if pending and pending.get("connected_account_id") not in ("", connected_account_id):
+        raise HTTPException(status_code=400, detail="Composio connection does not match this request")
+
+    _composio.remember_account(
+        service,
+        label,
+        pending.get("user_id", _composio.local_user_id()) if pending else _composio.local_user_id(),
+        connected_account_id,
+        "active",
+    )
+    # Discover the provider's current action catalogue after OAuth succeeds.
+    # A catalogue failure must not turn a successful connection into a failed
+    # connection; the user can retry discovery later with the CLI.
+    try:
+        from core.tools import composio_registry
+        await composio_registry.discover_tools_async(service, label)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Composio action discovery failed for %s/%s: %s", service, label, exc
+        )
+    return HTMLResponse(
+        "<!DOCTYPE html><html><head><title>Connected</title></head>"
+        "<body style='font-family:system-ui;padding:2rem'>"
+        f"<h2>{service.title()} connected</h2>"
+        f"<p>Label: <strong>{label}</strong></p>"
+        "<p>You can close this window.</p>"
+        "<script>setTimeout(function(){window.close()}, 1800)</script>"
+        "</body></html>",
+        status_code=200,
+    )
 
 
 @router.get("/{service}/callback")
@@ -533,6 +684,18 @@ async def handle_callback(
 async def disconnect(service: str, label: str = "default"):
     if service not in ALLOWED_SERVICES:
         raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+
+    import importlib
+    _composio = importlib.import_module("core.oauth.composio")
+    composio_account = _composio.get_account(service, label)
+    if composio_account:
+        try:
+            await _composio.delete_connected_account(composio_account["connected_account_id"])
+        except _composio.ComposioError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        _composio.remove_account(service, label)
+        return {"status": "disconnected", "service": service, "label": label, "backend": "composio"}
+
     deleted = delete_connection(service, label)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"No connection found: {service} ({label})")
@@ -543,6 +706,21 @@ async def disconnect(service: str, label: str = "default"):
 async def test_connection(service: str, label: str = "default"):
     if service not in ALLOWED_SERVICES:
         raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+    import importlib
+    _composio = importlib.import_module("core.oauth.composio")
+    composio_account = _composio.get_account(service, label)
+    if composio_account:
+        try:
+            remote = await _composio.get_connected_account(composio_account["connected_account_id"])
+            remote_data = remote.get("data", {})
+            if not isinstance(remote_data, dict):
+                remote_data = {}
+            remote_status = remote.get("status") or remote_data.get("status", "")
+            valid = remote_status.upper() in ("ACTIVE", "CONNECTED", "ENABLED")
+            return {"service": service, "label": label, "valid": valid, "backend": "composio"}
+        except _composio.ComposioError as exc:
+            return {"service": service, "label": label, "valid": False, "backend": "composio", "error": str(exc)}
+
     conn = get_connection(service, label)
     if not conn:
         raise HTTPException(status_code=404, detail=f"Not connected: {service} ({label})")

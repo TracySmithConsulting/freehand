@@ -112,6 +112,7 @@ def load_shared_apps() -> Dict[str, dict]:
             "client_id": entry.get("client_id", ""),
             "client_secret": plain,
             "scopes": entry.get("scopes", []),
+            "config_id": entry.get("config_id", entry.get("configuration_id", "")),
             "registered_by": entry.get("registered_by", ""),
             "registered_at": entry.get("registered_at", ""),
         }
@@ -124,6 +125,7 @@ def add_shared_app(
     client_secret: str,
     scopes: Optional[List[str]] = None,
     registered_by: str = "",
+    config_id: str = "",
 ) -> dict:
     """Add or replace a shared app entry. Returns the new entry (encrypted on disk).
 
@@ -133,6 +135,8 @@ def add_shared_app(
         client_secret: OAuth client secret — Fernet-encrypted on disk.
         scopes: list of OAuth scopes requested by this app.
         registered_by: who registered the shared app (for audit trail).
+        config_id: provider-specific login configuration id, such as Meta's
+            Facebook Login for Business configuration id.
 
     Raises:
         ValueError: if required fields are missing.
@@ -153,6 +157,7 @@ def add_shared_app(
             "client_id": client_id,
             "client_secret_enc": encrypted,
             "scopes": scopes,
+            "config_id": config_id.strip(),
             "registered_by": registered_by,
             "registered_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -164,6 +169,7 @@ def add_shared_app(
         "service": service,
         "client_id": client_id,
         "scopes": scopes,
+        "config_id": config_id.strip(),
         "registered_by": registered_by,
         "registered_at": shared[service]["registered_at"],
     }
@@ -198,6 +204,7 @@ def list_shared_apps() -> List[dict]:
             "service": service,
             "client_id": entry["client_id"],
             "scopes": entry.get("scopes", []),
+            "config_id": entry.get("config_id", ""),
             "registered_by": entry.get("registered_by", ""),
             "registered_at": entry.get("registered_at", ""),
         })

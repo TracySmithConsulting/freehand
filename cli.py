@@ -1,6 +1,9 @@
 import typer
 from pathlib import Path
 import sys
+import threading
+import webbrowser
+from datetime import date
 
 app = typer.Typer(
     help="FreeHand CLI - Local AI agent system with Tailscale access",
@@ -12,18 +15,19 @@ def _get_project_root() -> Path:
     return Path(__file__).parent
 
 
-@app.command()
-def init():
-    """Initialize FreeHand database and create initial vault structure."""
+def _initialize_workspace(verbose: bool = True) -> None:
+    """Create FreeHand's persistent workspace if it does not exist yet."""
     project_root = _get_project_root()
 
     sys.path.insert(0, str(project_root))
     from core.database import init_db
 
-    typer.echo("Initializing FreeHand...")
+    if verbose:
+        typer.echo("Initializing FreeHand...")
 
     conn = init_db()
-    typer.echo("   [OK] Database initialized at " + str(project_root / "agent.db"))
+    if verbose:
+        typer.echo("   [OK] Database initialized at " + str(project_root / "vault" / "agent.db"))
     conn.close()
 
     vault_dir = project_root / "vault"
@@ -53,32 +57,72 @@ def init():
 - *Temporarily storing information between tasks*
 - *Tracking ongoing investigations*
 """
-        scribble_path.write_text(scribble_content.format(date="2024-01-01"))
-        typer.echo("   [OK] Created " + str(scribble_path))
-    else:
+        scribble_path.write_text(scribble_content.format(date=date.today().isoformat()))
+        if verbose:
+            typer.echo("   [OK] Created " + str(scribble_path))
+    elif verbose:
         typer.echo("   - Vault already exists at " + str(vault_dir))
+
+
+@app.command()
+def init():
+    """Initialize FreeHand's database and local vault (safe to repeat)."""
+    _initialize_workspace(verbose=True)
 
     typer.echo("FreeHand initialization complete!")
     typer.echo("")
     typer.echo("Next steps:")
-    typer.echo("   - Start the server: python server.py")
+    typer.echo("   - Start FreeHand: freehand start")
     typer.echo("   - Access locally: http://localhost:8000")
     typer.echo("   - Access via Tailscale: http://100.x.y.z:8000")
 
 
+def _run_server(host: str, port: int) -> None:
+    """Run the FastAPI application with the requested bind address."""
+    import uvicorn
+
+    uvicorn.run("server:app", host=host, port=port, log_level="info")
+
+
 @app.command()
-def serve():
-    """Start the FreeHand server."""
-    typer.echo("Starting FreeHand server on http://0.0.0.0:8000")
+def start(
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Address to listen on. Use 0.0.0.0 for access from another device.",
+    ),
+    port: int = typer.Option(8000, "--port", min=1, max=65535),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the FreeHand web interface in your browser.",
+    ),
+):
+    """Initialize FreeHand, start the local server, and open the web interface."""
+    _initialize_workspace(verbose=False)
+
+    browser_host = "127.0.0.1" if host in {"0.0.0.0", "::"} else host
+    url = f"http://{browser_host}:{port}"
+    typer.echo(f"Starting FreeHand at {url}")
     typer.echo("Press Ctrl+C to stop")
 
-    import uvicorn
-    uvicorn.run(
-        "server:app",
-        host="0.0.0.0",
-        port=8000,
-        log_level="info"
-    )
+    if open_browser:
+        browser_timer = threading.Timer(1.0, webbrowser.open, args=(url,))
+        browser_timer.daemon = True
+        browser_timer.start()
+
+    _run_server(host, port)
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8000, "--port", min=1, max=65535),
+):
+    """Start only the server (advanced/headless use; does not open a browser)."""
+    typer.echo(f"Starting FreeHand server on http://{host}:{port}")
+    typer.echo("Press Ctrl+C to stop")
+    _run_server(host, port)
 
 
 @app.command()
@@ -322,6 +366,7 @@ def shared_app_add(
     client_secret: str = typer.Option(..., "--client-secret", help="OAuth client_secret — encrypted on disk, never displayed"),
     scopes: str = typer.Option("", "--scopes", help="Comma-separated OAuth scopes (e.g. 'chat:write,channels:read')"),
     registered_by: str = typer.Option("tracy", "--registered-by", help="Audit: who registered this app"),
+    config_id: str = typer.Option("", "--config-id", help="Provider login configuration id (for example Meta config_id)"),
 ):
     """Register a FreeHand-managed shared OAuth app. The client_secret is
     Fernet-encrypted in vault/broker_config.json immediately on write."""
@@ -336,10 +381,13 @@ def shared_app_add(
         client_secret=client_secret,
         scopes=scope_list,
         registered_by=registered_by,
+        config_id=config_id,
     )
     typer.echo(f"Added shared app: {entry['service']}")
     typer.echo(f"  client_id:  {entry['client_id']}")
     typer.echo(f"  scopes:     {', '.join(entry['scopes']) or '(none)'}")
+    if entry.get("config_id"):
+        typer.echo(f"  config_id:  {entry['config_id']}")
     typer.echo(f"  registered: {entry['registered_at']} by {entry['registered_by']}")
     typer.echo("")
     typer.echo("Secret is encrypted on disk. Use 'freehand shared-app list' to view metadata.")
@@ -493,6 +541,14 @@ def _tools_imports():
     return _reg
 
 
+def _composio_tools_imports():
+    """Lazy import for optional Composio action discovery."""
+    import sys
+    sys.path.insert(0, str(_get_project_root()))
+    from core.tools import composio_registry as _reg
+    return _reg
+
+
 @tools_app.command("list")
 def tools_list(
     service: str = typer.Argument(None, help="Filter by service id (e.g. slack)"),
@@ -505,14 +561,15 @@ def tools_list(
     after freehand tools refresh has probed OpenConnector.
     """
     reg = _tools_imports()
-    tools = reg.list_tools(service=service)
+    composio_reg = _composio_tools_imports()
+    tools = reg.list_tools(service=service) + composio_reg.list_tools(service=service)
     if not tools:
         if service:
             typer.echo(f"No tools registered for {service}.")
-            typer.echo("Run 'freehand tools refresh' to discover tools from OpenConnector.")
+            typer.echo("Run 'freehand tools refresh' to discover tools from OpenConnector and Composio.")
         else:
             typer.echo("No tools registered.")
-            typer.echo("Run 'freehand tools refresh' to discover tools from OpenConnector.")
+            typer.echo("Run 'freehand tools refresh' to discover tools from OpenConnector and Composio.")
         return
     typer.echo(f"{'Service':<14} {'Label':<14} {'Tool':<48} {'Auth':<10}")
     typer.echo("-" * 88)
@@ -540,11 +597,13 @@ def tools_enable_writes(
     Requires a credential for the service and a running OpenConnector.
     """
     reg = _tools_imports()
-    writes, destructive = reg.pending_writes_summary(service, label)
+    composio_reg = _composio_tools_imports()
+    backend = composio_reg if composio_reg.has_account(service, label) else reg
+    writes, destructive = backend.pending_writes_summary(service, label)
     total = writes + destructive
     if total == 0:
         typer.echo(f"No pending writes for {service}/{label}.")
-        typer.echo("Either no credential is registered, or OC has no write/destructive actions for this service.")
+        typer.echo("Either no account is connected, or the connector has no pending write/destructive actions for this service.")
         raise SystemExit(1)
 
     # ── Confirmation gate (Round 15) ────────────────────────────────
@@ -562,7 +621,7 @@ def tools_enable_writes(
             typer.echo("Aborted — no tools were enabled.")
             raise SystemExit(1)
 
-    promoted = reg.enable_writes(service, label)
+    promoted = backend.enable_writes(service, label)
     if promoted == 0:
         typer.echo(f"Nothing to enable for {service}/{label}.")
         raise SystemExit(1)
@@ -582,7 +641,9 @@ def tools_disable(
     Re-enable with 'freehand tools refresh'.
     """
     reg = _tools_imports()
-    removed = reg.disable(service, label)
+    composio_reg = _composio_tools_imports()
+    backend = composio_reg if composio_reg.has_account(service, label) else reg
+    removed = backend.disable(service, label)
     if removed == 0:
         typer.echo(f"No tools registered for {service}/{label}.")
         raise SystemExit(1)
@@ -599,11 +660,14 @@ def tools_refresh():
     """
     reg = _tools_imports()
     summary = reg.refresh()
+    composio_summary = _composio_tools_imports().refresh()
     added = summary.get("added", 0)
     removed = summary.get("removed", 0)
     updated = summary.get("updated", 0)
     typer.echo(
-        f"Refresh complete: {added} added, {removed} removed, {updated} re-probed."
+        f"Refresh complete: {added} OpenConnector changes and "
+        f"{composio_summary.get('updated', 0)} Composio account(s) refreshed; "
+        f"{removed} OpenConnector tools removed, {composio_summary.get('removed', 0)} Composio tools removed."
     )
     if added or removed:
         typer.echo("Run 'freehand tools list' to see the current active set.")

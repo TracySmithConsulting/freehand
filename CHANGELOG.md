@@ -5,6 +5,72 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-10-20
+
+### Added — Round 16: Sweeper placement rework + task executor
+
+The scribble sweep promised two things the code never delivered: scheduled
+tasks that actually execute, and captured notes that end up somewhere useful.
+This round delivers both, end to end.
+
+**The task loop now runs.** `core/scheduler.py` gains `run_due_tasks()` —
+registered as a second APScheduler job alongside the sweep — which picks up
+`tasks` rows whose `next_run` has arrived (or one-shot rows with no
+schedule), executes them through `core.agent.run_agent` with a per-tick cap
+(`settings.task_max_per_tick`, default 3, oldest-first so a pile due at the
+same cron moment doesn't thunder-herd), recomputes `next_run` for recurring
+tasks, and marks one-shot tasks `done`. Failures keep the task pending and
+record the error in `last_run`; no LLM configured → runner idles with a
+one-shot warning and stays due. Every creation path now funnels through
+`create_task(title, cron_schedule)` (scheduler sweep, gateway `/task`,
+`POST /api/tasks`), which validates the cron and computes the first run;
+the API endpoint returns 400 for garbage schedules.
+
+**Cron parsing is real.** `_parse_cron` / `_cron_next` (STD step/range/list
+subset, 0 and 7 = Sunday, interpreted in UTC) validate schedules; a
+bracketed note like `[*wip*]` no longer becomes a task's cron (R16-C1).
+Oneshot fallback when the expression can never fire within 366 days.
+
+**Sweeper placement reworked (R16-C4).** Classification is now a chain:
+OmniRoute endpoint (if configured) → the LLM already configured in
+`settings.llm` via a JSON classify prompt → the old keyword heuristic as
+offline fallback. Task entries are also archived into `vault/Journal/YYYY-MM.md`
+as an audit trail; note entries go to their topic thread as before. The
+consumed `- [ ]` lines and legacy `- [x]` lines are then **removed from the
+pad** — `00_Scribble.md` stops growing forever, and since Journal/Threads
+are plain vault .md files, `sync_vault_to_sqlite` indexes them, so history
+is finally searchable memory instead of write-only dead weight. Legacy
+archiving is idempotent (the lines are removed, so re-sweeps can't
+duplicate).
+
+**Remote captures now reach the sweep (R16-C5).** Gateway `/scribble` used
+to append a quote-block format the sweeper never parsed (Telegram/Slack/
+WhatsApp captures were effectively lost). It now delegates to
+`_handle_scribble_command` → the new lock-guarded `append_scribble()` in
+scheduler, writing the checklist format; a dead duplicate `/scribble`
+branch and the unreachable `return` after `/tier` were removed along the
+way. `append_scribble` + the sweep hold `core/scheduler._SCRIBBLE_LOCK`, so
+in-process appends no longer race the sweep's rewrite.
+
+**Loop-safety.** The sweep can be invoked from inside a running asyncio
+loop (`POST /api/sweep`, gateway `/sweep`); LLM classifier and executor use
+a small `_run_coro` helper that runs the coroutine in a worker thread in
+that case.
+
+Stability fix folded in: sweep state no longer uses Python's per-process
+salted `hash(content)` — a stable sha256 keeps `processed_lines` across
+restarts.
+
+**Tests**: `tests/test_round16_sweeper.py` — 25 tests covering cron
+validation/next-run, the executor (one-shot done, recurring bump, failure
+keeping pending, per-tick cap, no-LLM skip), classification chain,
+placement/archiving/FTS5 searchability, gateway `/scribble`→sweep round
+trip, and `/api/tasks` cron rejection. Suite: 438 passing (413 → 438).
+
+**Not covered**: LLM-classify quality against real notes (unit tests stub
+the call); multi-process leader safety (two FreeHand instances would both
+sweep — same as pre-Round 16).
+
 ## [Unreleased] — 2026-10-02
 
 ### Removed — Round 14: Static GitHub path retired

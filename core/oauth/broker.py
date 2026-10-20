@@ -83,6 +83,18 @@ from core.oauth.open_connector import service_is_known as _oc_service_known
 from .shared_apps import load_shared_apps as _load_shared_apps
 
 
+def _credential_service_aliases(service: str) -> tuple[str, ...]:
+    """Return broker keys that may carry credentials for a service.
+
+    Facebook and Instagram use one Meta app in the shared-app registry.
+    Keeping the alias here avoids duplicating provider-specific lookup logic.
+    """
+    service = _normalize_service(service)
+    if service == "instagram":
+        return ("instagram", "facebook")
+    return (service,)
+
+
 def _broker_config_path() -> Path:
     """Path to broker_config.json — sits next to settings.json."""
     from core.agent_config import VAULT_DIR
@@ -158,17 +170,18 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     #     all fall through to tier-2.
     try:
         shared = _load_shared_apps()
-        entry = shared.get(service)
-        if entry:
-            cid = entry.get("client_id", "")
-            sec = entry.get("client_secret", "")
-            if cid and sec:
-                return cid, sec, "shared_app"
-            # Entry present but missing client_id or client_secret — malformed.
-            log.warning(
-                "tier-1b shared app for %s is malformed (missing client_id or client_secret); falling through",
-                service,
-            )
+        for shared_service in _credential_service_aliases(service):
+            entry = shared.get(shared_service)
+            if entry:
+                cid = entry.get("client_id", "")
+                sec = entry.get("client_secret", "")
+                if cid and sec:
+                    return cid, sec, "shared_app"
+                # Entry present but missing client_id or client_secret — malformed.
+                log.warning(
+                    "tier-1b shared app for %s is malformed (missing client_id or client_secret); falling through",
+                    shared_service,
+                )
     except Exception as e:  # last-line defence — corrupted Fernet blob, etc.
         log.warning("tier-1b shared-app lookup failed for %s: %s", service, e)
 
@@ -197,6 +210,59 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
         log.debug(f"tier-5 open-connector lookup failed for {service}: {e}")
 
     return None, None, "none"
+
+
+def get_login_config_id(service: str) -> str:
+    """Return a provider-specific OAuth login configuration id, if present.
+
+    Meta's Facebook Login for Business flow uses ``config_id`` to select the
+    business assets and permissions configured in the developer console.
+    It is metadata, not a secret, and follows the same user > shared app >
+    environment > legacy broker precedence as client credentials.
+    """
+    service = _normalize_service(service)
+    aliases = _credential_service_aliases(service)
+
+    try:
+        settings = _load_user_settings()
+        providers = settings.get("oauth", {}).get("providers", {})
+        for key in aliases:
+            entry = providers.get(key, {})
+            value = entry.get("config_id") or entry.get("configuration_id")
+            if value:
+                return str(value)
+        meta = providers.get("meta", {})
+        for key in aliases:
+            entry = meta.get(key, {}) if isinstance(meta, dict) else {}
+            value = entry.get("config_id") or entry.get("configuration_id")
+            if value:
+                return str(value)
+    except Exception:
+        pass
+
+    try:
+        shared = _load_shared_apps()
+        for key in aliases:
+            value = shared.get(key, {}).get("config_id", "")
+            if value:
+                return str(value)
+    except Exception as e:
+        log.warning("shared-app config id lookup failed for %s: %s", service, e)
+
+    for key in aliases:
+        value = os.environ.get(f"{ENV_PREFIX}{_upper_service(key)}_CONFIG_ID", "")
+        if value:
+            return value
+
+    config = _load_broker_config()
+    providers = config.get("providers", {})
+    for key in aliases:
+        entry = providers.get(key, {})
+        value = entry.get("config_id") or entry.get("configuration_id")
+        if value:
+            return str(value)
+
+    return ""
 
 
 def is_known_to_open_connector(service: str) -> bool:

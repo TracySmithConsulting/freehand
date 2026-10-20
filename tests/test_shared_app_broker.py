@@ -61,6 +61,21 @@ def test_tier1b_returns_shared_app_credentials():
     assert secret == "shared_secret"
 
 
+def test_meta_shared_app_alias_and_login_configuration_id():
+    """Instagram reuses the Facebook shared Meta app and its config id."""
+    with _stub_user_settings({}), \
+         _stub_shared_apps({"facebook": {
+             "client_id": "meta_id",
+             "client_secret": "meta_secret",
+             "config_id": "meta_config_123",
+         }}), \
+         patch.object(broker, "_oc_available", return_value=False):
+        client_id, secret, source = broker.get_client_credentials("instagram")
+        config_id = broker.get_login_config_id("instagram")
+    assert (client_id, secret, source) == ("meta_id", "meta_secret", "shared_app")
+    assert config_id == "meta_config_123"
+
+
 def test_tier1_user_override_beats_tier1b():
     """Pitfall-5 invariant: per-user override still wins over shared app.
 

@@ -59,37 +59,37 @@ FreeHand connects to external services via OAuth 2.0. You need to register an ap
 
 ---
 
-## Facebook (Pages, Posts, Messages)
+## Facebook and Instagram (Meta)
+
+FreeHand uses one Meta app entry for both connectors. Create a **Facebook Login for Business** configuration that includes the Page and Instagram assets you want to expose, then copy its **Configuration ID**.
+
+For a deployed broker, replace `<public-host>` with the HTTPS hostname that serves FreeHand. For local development, Meta may reject bare `localhost` in the app-domain validator; use a stable HTTPS tunnel or test against the deployed broker instead.
+
+If the browser reaches FreeHand through a different hostname (for example, a reverse proxy or tunnel), set `FREEHAND_PUBLIC_BASE_URL` to the same HTTPS base URL registered with Meta:
+
+```text
+FREEHAND_PUBLIC_BASE_URL=https://<public-host>
+```
 
 1. Go to [Meta for Developers](https://developers.facebook.com/)
-2. Click **My Apps** → **Create App** → **Business** (or Other)
-3. App type: **Other** → **Next**
-4. Name: `FreeHand`
-5. Go to **Products > Facebook Login** → **Settings**
-6. Under **Valid OAuth Redirect URIs**, add:
+2. Open **My Apps** → `FreeHand` → **Facebook Login for Business** → **Configurations**.
+3. Create or edit a configuration and record its **Configuration ID**.
+4. Go to **Facebook Login for Business** → **Settings** → **Valid OAuth Redirect URIs** and add:
    ```
-   http://localhost:8000/api/integrations/callback/facebook
+   https://<public-host>/api/integrations/facebook/callback
+   https://<public-host>/api/integrations/instagram/callback
    ```
-7. Go to **Settings > Basic** → copy **App ID** and **App Secret**
-8. Under **Facebook Login > Permissions**, add:
-   - `pages_read_engagement`, `pages_manage_posts`, `email`, `public_profile`
-9. Paste into FreeHand settings
-10. **Note:** In development, only the app creator can connect. For production, submit for review.
-
----
-
-## Instagram (Posts, Stories, DMs)
-
-Same Meta developer account as Facebook — create a **separate app** of type **Instagram**:
-
-1. In Meta for Developers, **Create App** → **Instagram**
-2. Under **OAuth > Settings**, add redirect URI:
+5. Go to **Settings → Basic** and copy the **App ID** and **App Secret**.
+6. Register the shared app in FreeHand. The secret is encrypted immediately and is never shown by `shared-app list`:
+   ```bash
+   freehand shared-app add facebook \
+     --client-id <meta-app-id> \
+     --client-secret <meta-app-secret> \
+     --config-id <meta-configuration-id> \
+     --scopes "pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,email,public_profile" \
+     --registered-by tracy
    ```
-   http://localhost:8000/api/integrations/callback/instagram
-   ```
-3. Under **Permissions**, add:
-   - `instagram_basic`, `instagram_content_publish`, `pages_read_engagement`
-4. Copy **App ID** and **App Secret** into FreeHand settings
+7. In development, only app roles/testers can authorize. For public users, complete Meta’s app settings and App Review for each permission you request.
 
 ---
 

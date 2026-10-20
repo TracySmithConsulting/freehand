@@ -42,14 +42,19 @@ class InstagramConnector(BaseConnector):
     def authorize_url(self, state: str, redirect_uri: str) -> str:
         app_id, _ = self._get_credentials()
         scopes = ",".join(self.scopes_read + self.scopes_write)
-        params = urllib.parse.urlencode({
+        params = {
             "client_id": app_id,
             "redirect_uri": redirect_uri,
             "scope": scopes,
             "state": state,
             "response_type": "code",
             "permission": "instagram_basic,instagram_content_publish,pages_read_engagement",
-        })
+        }
+        from core.oauth.broker import get_login_config_id
+        config_id = get_login_config_id("instagram")
+        if config_id:
+            params["config_id"] = config_id
+        params = urllib.parse.urlencode(params)
         return f"{META_AUTH_URL}?{params}"
 
     async def handle_callback(self, code: str, state: str, redirect_uri: str) -> dict:

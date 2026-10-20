@@ -296,6 +296,18 @@ async def execute_tool(name: str, args: dict) -> dict:
                     "message": err.get("message", "OC call failed"),
                 }, default=str)
             }
+        if name.startswith("co_"):
+            from core.tools.composio_dispatch import dispatch_composio_tool
+            composio_result = await dispatch_composio_tool(name, args)
+            if composio_result.get("ok"):
+                return {"content": composio_result["content"]}
+            err = composio_result.get("error", {})
+            return {
+                "content": json.dumps({
+                    "error": err.get("code", "composio_error"),
+                    "message": err.get("message", "Composio call failed"),
+                }, default=str)
+            }
         else:
             return {"content": json.dumps({"error": f"Unknown tool: {name}"})}
     except Exception as e:
@@ -415,7 +427,8 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                 # GOD_MODE, where every other external write auto-runs.
                 # Non-destructive writes keep today's "just runs" behaviour.
                 from core.tools import registry as _registry
-                if _registry.is_destructive_tool(tool_name):
+                from core.tools import composio_registry as _composio_registry
+                if _registry.is_destructive_tool(tool_name) or _composio_registry.is_destructive_tool(tool_name):
                     result = intercept_action(
                         "oauth_access",
                         f"Destructive tool call: {tool_name}",

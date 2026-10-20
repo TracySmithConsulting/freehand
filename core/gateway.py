@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core.database import DB_PATH
 from core.security import get_current_tier, intercept_action, handle_approval
 from core.memory import sync_vault_to_sqlite
-from core.scheduler import process_scribble
+from core.scheduler import process_scribble, create_task, append_scribble
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -180,35 +180,21 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
     tier = get_current_tier()
 
     # Command parsing
+    # /scribble goes through core.scheduler's single-writer appender so the
+    # entry lands in the checklist format the sweeper actually parses (the
+    # old inline quote-block writer here bypassed the sweep entirely).
     if text.startswith("/scribble"):
-        content = text[9:].strip()
-        if content:
-            existing = SCRIBBLE_PATH.read_text(encoding="utf-8") if SCRIBBLE_PATH.exists() else ""
-            marker = "\n\n---\n"
-            if existing and not existing.endswith("\n\n---\n"):
-                marker = "\n" + marker
-            # N8 fix: aware UTC datetime
-            new_entry = f"{marker}> [{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}]{marker}{content}\n"
-            SCRIBBLE_PATH.write_text(existing + new_entry, encoding="utf-8")
-            return f"Added to Scribble: {content[:80]}"
-        return "Use: /scribble <your note>"
+        return await _handle_scribble_command(text, source, caller_id)
 
     if text.startswith("/task"):
         match = re.match(r"/task\s+(.+?)(?:\s+\[([^\]]+)\])?$", text)
         if match:
             title = match.group(1).strip()
             cron = match.group(2) or "0 2 * * *"
-            # N7 fix: removed dead `DB_PATH.__class__(DB_PATH)` line that did nothing
-            # useful (Path() doesn't make a DB connection). Just open the DB.
-            import sqlite3
-            conn = sqlite3.connect(str(DB_PATH))
-            conn.execute(
-                "INSERT INTO tasks (title, cron_schedule, status) VALUES (?, ?, ?)",
-                (title, cron, "pending")
-            )
-            conn.commit()
-            conn.close()
-            return f"Task created: {title} (cron: {cron})"
+            created = create_task(title, cron)
+            if created["recurring"]:
+                return f"Task created: {title} (cron: " + created["cron_schedule"] + ", next: " + created["next_run"] + ")"
+            return "Task created (one-shot - cron '" + cron + "' is not a valid 5-field schedule): " + title
         return "Use: /task <title> [cron_schedule]"
 
     if text.startswith("/memory"):
@@ -254,7 +240,6 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
             return f"Tier set to: {new_tier}"
         except ValueError as e:
             return str(e)
-        return f"Current tier: {tier.value}"
 
     if text.startswith("/status"):
         pending = 0
@@ -274,8 +259,6 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
         ]
         return "\n".join(lines)
 
-    if text.startswith("/scribble"):
-        return await _handle_scribble_command(text, source, caller_id)
 
     if text.startswith("/sweep"):
         result = process_scribble()
@@ -328,27 +311,9 @@ async def _handle_agent_command(text: str, source: str, caller_id: str, tier) ->
 
 
 async def _handle_scribble_command(text: str, source: str, caller_id: str) -> str:
-    """Handle /scribble command — append to 00_Scribble.md."""
-    content = text[9:].strip()
-    if not content:
-        return "Use: /scribble <your note>"
-    existing = SCRIBBLE_PATH.read_text(encoding="utf-8") if SCRIBBLE_PATH.exists() else ""
-    # N8 fix: aware UTC datetime
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
-    new_line = f"- [ ] [{timestamp}] {content}\n"
-    if existing.strip():
-        # Insert before the --- separator if present
-        separator = "\n---\n"
-        if separator in existing:
-            parts = existing.split(separator, 1)
-            new_content = parts[0] + separator + new_line + separator + parts[1]
-        else:
-            new_content = existing.rstrip() + "\n" + new_line
-    else:
-        new_content = existing + new_line
-    SCRIBBLE_PATH.write_text(new_content, encoding="utf-8")
-    return f"Added to Scribble: {content[:80]}"
-
+    """Handle /scribble command - append to 00_Scribble.md in the sweepable
+    checklist format via the scheduler's single-writer appender."""
+    return append_scribble(text[9:].strip())
 
 async def handle_telegram_webhook(update: dict) -> dict:
     """Process an incoming Telegram webhook update."""
