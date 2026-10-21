@@ -1488,7 +1488,18 @@
         apiFetch('/api/integrations')
           .then(function(res) { return res.json(); })
           .then(function(data) {
-            var connections = data.connections || [];
+            // Walkthrough finding (R17.1): /api/integrations returns
+            // accounts grouped per service — [{ service, connections: [...] }]
+            // — but this panel was still mapping the payload flat, so every
+            // card lost its label, expiry and scopes, and the Reconnect
+            // button could never appear. Unwrap the grouping first.
+            var serviceGroups = data.connections || [];
+            var connections = [];
+            serviceGroups.forEach(function(group) {
+              (group.connections || []).forEach(function(acc) {
+                connections.push(Object.assign({ service: group.service }, acc));
+              });
+            });
             var available = data.available_services || [];
             var providers = {
               'google': { name: 'Google Workspace', icon: 'G', sub: 'Gmail, Calendar, Sheets, Meet' },

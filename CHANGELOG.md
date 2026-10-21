@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-10-20
 
+### Fixed — Round 17.2: live UI walkthrough follow-ups (2026-10-21)
+
+Clicking through the real running app found two bugs unit tests missed:
+
+**Connections panel rendered blind (regression from Round 15.6).**
+`/api/integrations` refactored its payload to group accounts per service
+(`[{service, connections: [...]}]`), but `loadConnections()` still mapped
+the payload flat — every card lost its label, expiry and scopes, so five
+expired Google/Microsoft tokens showed as anonymous unfilled cards with no
+Reconnect affordance, in the very round that added Reconnect. The panel
+now unwraps the grouping; the five real expired tokens render with labels
+and Reconnect buttons.
+
+**Memory file browser listed stale test rows.** `/api/memory/files`
+returned every FTS index row, including ~130 legacy test entries whose
+"path" (`/agent/command`) is not a vault file — each unusable and each a
+noisy 404 on Open. The endpoint now returns only rows whose relative path
+resolves to an existing .md inside vault/ (icon-index went 183 → 54 real
+files).
+
+**Tests**: 1 new (stale-row hiding); full suite 461 passed, 2 skipped.
+Walkthrough-verified live with a seeded checklist line: Sweep Now button →
+"1 processed, 1 task(s), 1 archived", task with computed next_run, Journal
+audit line, pad compacted; Memory search "dentist" → exactly the Journal
+match; Open renders file content; Reconnect launches the provider consent
+flow (provider's port-registered callback expected at the standard port).
+
 ### Added — Round 17.1: medium polish batch (2026-10-21)
 
 The three medium items from the round-17 survey, closing the loop between

@@ -642,12 +642,26 @@ async def memory_files():
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
+    vault_resolved = VAULT_DIR.resolve()
     try:
         rows = conn.execute(
             "SELECT path, title, updated_at FROM memories "
             "ORDER BY updated_at DESC LIMIT 200"
         ).fetchall()
-        return [dict(row) for row in rows]
+        # Only offer rows whose file still exists in the vault — stale
+        # index entries (e.g. legacy test writes to fake paths like
+        # "/agent/command") can never be Opened and 404 noisily.
+        out = []
+        vault_parent = vault_resolved.parent
+        for row in rows:
+            candidate = (vault_parent / row["path"]).resolve()
+            if candidate.is_file() and candidate.suffix == ".md":
+                try:
+                    candidate.relative_to(vault_resolved)
+                except ValueError:
+                    continue
+                out.append(dict(row))
+        return out
     finally:
         conn.close()
 

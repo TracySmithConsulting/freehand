@@ -152,6 +152,19 @@ class TestMemoryFilesEndpoint:
         assert any(p.endswith("2026-10.md") and "Journal" in p for p in paths)
         assert all("title" in f and "updated_at" in f for f in files)
 
+    def test_hides_stale_rows_pointing_at_missing_paths(self, memory_env):
+        """Legacy garbage rows (e.g. fake '/agent/command' audit paths) must
+        not appear in the file browser — they 404 noisily on Open."""
+        import sqlite3 as _s
+        conn = _s.connect(database.DB_PATH)
+        conn.execute(
+            "INSERT INTO memories (path, title, content, updated_at) "
+            "VALUES ('/agent/command', 'Command (dead): test', 'x', 'now')"
+        )
+        conn.commit(); conn.close()
+        files = asyncio.run(server.memory_files())
+        assert all("/agent/command" not in f["path"] for f in files)
+
 
 class TestMemoryFileEndpoint:
     def test_reads_an_indexed_vault_file(self, memory_env):
