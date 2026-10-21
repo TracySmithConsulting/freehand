@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-10-20
 
+### Added — Round 17: Polish pass (2026-10-21)
+
+Small visible fixes found by walking the app against the real vault.
+
+**Version finally tells the truth.** `APP_VERSION` in `server.py` is sourced
+from installed package metadata (`importlib.metadata`) instead of hardcoded
+strings that had drifted to "0.1.0" while the package said 0.1.8
+(R17-P1). Falls back cleanly when the package isn't installed.
+
+**Legacy task rows repair themselves on boot.** Older versions inserted
+task rows without ever computing `next_run` and duplicated identical
+captures. `backfill_next_run()` (R17-P2) runs once per startup: identical
+pending duplicates (same title + cron, both NULL next_run) collapse to the
+earliest, and NULL-next_run rows with a fireable cron get a real first run.
+Invalid-cron one-shots stay honest. Live boot verified: the two stale
+"Task to remember" rows became one properly scheduled task.
+
+**The sweep is one click.** The Scribble tab gains "Sweep Now", calling
+`POST /api/sweep` and reporting processed/task(s)/thread(s)/archived
+counts in the status region, then refreshing the task list.
+
+**Round 16's memory payoff is now visible.** New Memory panel in the web
+UI: full-vault search (FTS via `GET /api/memory/search`), an indexed-file
+browser (`GET /api/memory/files`), and a content viewer
+(`GET /api/memory/file`) that only opens indexed relative paths that
+resolve inside `vault/` as .md — no arbitrary-file reads, traversal
+rejected. Search auto-syncs first so fresh captures are searchable.
+
+**Tests**: `tests/test_round17_polish.py` — 14 tests (backfill/dedupe
+matrix, version sourcing, memory endpoints incl. traversal, non-.md, and
+drift-404 rejections). Full suite: 452 passed, 2 skipped.
+
 ### Added — Round 16: Sweeper placement rework + task executor
 
 The scribble sweep promised two things the code never delivered: scheduled

@@ -631,6 +631,7 @@
           <li><a href="#command">Command</a></li>
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Tasks</a></li>
+          <li><a href="#memory">Memory</a></li>
           <li><a href="#connections">Connections</a></li>
           <li><a href="#agents">Agents</a></li>
           <li><a href="#settings">Settings</a></li>
@@ -685,6 +686,8 @@
         </div>
         <button type="submit">Save Scribble</button>
       </form>
+      <button type="button" id="sweep-btn" style="margin-top: 0.5rem;">Sweep Now</button>
+      <p class="hint" style="margin-top: 0.25rem;">Classifies checklist lines now: tasks to the scheduler, notes to threads, then archives both.</p>
     </section>
 
     <!-- Task Scheduler -->
@@ -722,6 +725,35 @@
         </div>
         <button type="submit">Add Task</button>
       </form>
+    </section>
+
+    <!-- Memory Panel -->
+    <section id="memory" aria-labelledby="mem-heading">
+      <h2 id="mem-heading">Memory</h2>
+      <p class="hint">Searches archived Journal entries, topic threads, and vault notes.</p>
+      <form id="memory-form" novalidate>
+        <div class="form-group">
+          <label for="memory-input">Search Memory</label>
+          <input
+            type="text"
+            id="memory-input"
+            name="q"
+            placeholder="e.g. dentist appointment"
+            autocomplete="off"
+            aria-describedby="memory-error"
+          >
+          <p class="error" id="memory-error" role="alert"></p>
+        </div>
+        <button type="submit">Search</button>
+        <button type="button" id="memory-sync-btn">Re-sync Vault Files</button>
+      </form>
+      <div id="memory-results" aria-live="polite" style="margin-top: 1rem;">
+        <p class="empty-state">No search yet.</p>
+      </div>
+      <div id="memory-files" style="margin-top: 1rem; border-top: 2px solid #eee; padding-top: 1rem;" aria-live="polite">
+        <p class="empty-state">Loading vault files...</p>
+      </div>
+      <div id="memory-viewer" style="margin-top: 1rem;" aria-live="polite"></div>
     </section>
 
     <!-- Connections Panel -->
@@ -1969,6 +2001,143 @@
         });
       };
 
+      // ---- Memory Panel ----
+      function loadMemoryFile(path) {
+        apiFetch('/api/memory/file?path=' + encodeURIComponent(path))
+        .then(function(res) {
+          if (!res.ok) return res.json().then(function(err) {
+            throw new Error(err.detail || 'Failed to open file.');
+          });
+          return res.json();
+        })
+        .then(function(file) {
+          var viewer = document.getElementById('memory-viewer');
+          viewer.innerHTML =
+            '<h3>' + escapeHtml(file.title) + '</h3>' +
+            '<p class="hint">' + escapeHtml(file.path) + '</p>' +
+            '<pre style="white-space: pre-wrap;">' + escapeHtml(file.content) + '</pre>';
+          document.getElementById('memory').scrollIntoView({ behavior: 'smooth' });
+          showStatus('Opened ' + file.title, 'success');
+        })
+        .catch(function(err) {
+          showStatus(err.message || 'Failed to open file.', 'error');
+        });
+      }
+
+      function renderMemoryResults(results) {
+        var el = document.getElementById('memory-results');
+        if (!results.length) {
+          el.innerHTML = '<p class="empty-state">No matches. Files are indexed from your vault — try Re-sync first.</p>';
+          return;
+        }
+        el.innerHTML = '<h3>' + results.length + ' match(es)</h3>';
+        results.forEach(function(r) {
+          var div = document.createElement('div');
+          div.className = 'connection-card';
+          div.innerHTML =
+            '<div class="task-info">' +
+              '<span class="task-title">' + escapeHtml(r.title) + '</span>' +
+              '<div class="task-meta">' + escapeHtml(r.path) + ' — updated ' + escapeHtml(r.updated_at) + '</div>' +
+            '</div>';
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = 'Open';
+          btn.setAttribute('aria-label', 'Open ' + r.title);
+          btn.addEventListener('click', function() { loadMemoryFile(r.path); });
+          div.appendChild(btn);
+          el.appendChild(div);
+        });
+      }
+
+      function loadMemoryFiles() {
+        var el = document.getElementById('memory-files');
+        apiFetch('/api/memory/files')
+        .then(function(res) { return res.json(); })
+        .then(function(files) {
+          if (!files.length) {
+            el.innerHTML = '<p class="empty-state">No files indexed yet. Try Re-sync Vault Files.</p>';
+            return;
+          }
+          el.innerHTML = '<h3>Indexed vault files (' + files.length + ')</h3>';
+          files.forEach(function(f) {
+            var div = document.createElement('div');
+            div.className = 'connection-card';
+            div.innerHTML =
+              '<div class="task-info">' +
+                '<span class="task-title">' + escapeHtml(f.title) + '</span>' +
+                '<div class="task-meta">' + escapeHtml(f.path) + ' — updated ' + escapeHtml(f.updated_at) + '</div>' +
+              '</div>';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.textContent = 'Open';
+            btn.setAttribute('aria-label', 'Open ' + f.title);
+            btn.addEventListener('click', function() { loadMemoryFile(f.path); });
+            div.appendChild(btn);
+            el.appendChild(div);
+          });
+        })
+        .catch(function() {
+          el.innerHTML = '<p class="empty-state">Failed to load vault files.</p>';
+        });
+      }
+
+      document.getElementById('memory-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('memory-error');
+        var q = document.getElementById('memory-input').value.trim();
+        if (!q) {
+          showError('memory-error', 'Enter something to search for.');
+          return;
+        }
+        // Sync first so new Journal/Thread captures are searchable.
+        showStatus('Syncing vault files...');
+        apiFetch('/api/memory/sync', { method: 'POST' })
+        .then(function() {
+          return apiFetch('/api/memory/search?q=' + encodeURIComponent(q) + '&limit=8');
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(results) {
+          renderMemoryResults(results);
+          loadMemoryFiles();
+        })
+        .catch(function() {
+          showStatus('Search failed.', 'error');
+        });
+      });
+
+      document.getElementById('memory-sync-btn').addEventListener('click', function() {
+        showStatus('Syncing vault files...');
+        apiFetch('/api/memory/sync', { method: 'POST' })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          showStatus(data.files + ' file(s) indexed.', 'success');
+          loadMemoryFiles();
+        })
+        .catch(function() {
+          showStatus('Sync failed.', 'error');
+        });
+      });
+
+      document.getElementById('sweep-btn').addEventListener('click', function() {
+        showStatus('Sweeping scribble pad...');
+        apiFetch('/api/sweep', { method: 'POST' })
+        .then(function(res) {
+          if (!res.ok) throw new Error();
+          return res.json();
+        })
+        .then(function(result) {
+          showStatus(
+            'Sweep done: ' + result.processed + ' processed, ' +
+            result.tasks_created + ' task(s), ' +
+            result.threads_updated + ' thread(s), ' +
+            result.archived + ' archived.', 'success');
+          loadTasks();
+        })
+        .catch(function() {
+          showStatus('Sweep failed.', 'error');
+        });
+      });
+
       // ---- Init ----
       loadTasks();
       loadTier();
@@ -1976,6 +2145,7 @@
       loadGatewayStatus();
       loadAgents();
       startApprovalsPolling();
+      loadMemoryFiles();
     })();
   </script>
 </body>

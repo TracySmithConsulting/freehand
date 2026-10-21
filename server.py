@@ -66,10 +66,20 @@ from core.oauth import router as oauth_router
 from core.oauth import broker as oauth_broker
 from core import mcp_server as mcp_router_mod
 
+# R17-P1: read the version from the installed package metadata instead of
+# hardcoding it — the hardcoded "0.1.x" here drifted from pyproject.toml
+# (which said 0.1.8 while this file said 0.1.0). When the package isn't
+# installed (bare test runs), fall back rather than crash.
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+try:
+    APP_VERSION = _pkg_version("freehand-agent")
+except PackageNotFoundError:
+    APP_VERSION = "0.1.0"
+
 app = FastAPI(
     title="FreeHand API",
     description="Local AI agent system with Tailscale network access",
-    version="0.1.0"
+    version=APP_VERSION,
 )
 
 # DB_PATH is imported from core.database (canonical vault/agent.db path)
@@ -263,6 +273,10 @@ async def startup_event():
     VAULT_DIR.mkdir(exist_ok=True)
     if not SCRIBBLE_PATH.exists():
         SCRIBBLE_PATH.write_text("# 00_Scribble\n\n> Agent scratchpad\n\n## Quick Notes\n\n- [ ] Task to remember\n")
+    # R17-P2: repair legacy task rows (NULL next_run + duplicates) once
+    # per boot, after the DB is initialized. Idempotent by design.
+    from core.scheduler import backfill_next_run
+    backfill_next_run()
     get_scheduler()
     # Round 10 (PR 2): one-time migration of legacy connections.db rows
     # into vault/credential_store.json. Idempotent — no-op after the
@@ -306,7 +320,7 @@ async def health_check():
 async def api_status():
     return {
         "service": "freehand",
-        "version": "0.1.0",
+        "version": APP_VERSION,
         "access": {
             "local": "http://localhost:8000",
             "tailscale": "http://100.x.y.z:8000"
@@ -584,6 +598,52 @@ async def memory_search(q: str = "", limit: int = 3):
     results = search_memory(q, limit=limit)
     return results
 
+
+@app.get("/api/memory/files", dependencies=[Depends(require_api_key)])
+async def memory_files():
+    """List vault .md files known to the FTS index (Journal, Threads,
+    notes) — the Memory panel's browsing surface. Callers should hit
+    /api/memory/sync first (the UI does) so fresh files appear.
+    """
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            "SELECT path, title, updated_at FROM memories "
+            "ORDER BY updated_at DESC LIMIT 200"
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+@app.get("/api/memory/file", dependencies=[Depends(require_api_key)])
+async def memory_file(path: str = ""):
+    """Read one indexed vault .md file's content for the Memory panel.
+
+    The path must be exactly a relative path that is already in the
+    index — resolve()ed locations outside vault/ are rejected, so this
+    is no arbitrary-file reader.
+    """
+    rel = (path or "").strip()
+    if not rel:
+        raise HTTPException(status_code=400, detail="Missing path parameter")
+    vault_resolved = VAULT_DIR.resolve()
+    # memories.path entries are stored relative to the project root
+    # ("vault/Journal/2026-10.md"), so anchor the candidate at the vault's
+    # parent and then prove it lands back inside vault/. Works under the
+    # tmp_path monkeypatch too, where vault/ lives somewhere else entirely.
+    candidate = (vault_resolved.parent / rel).resolve()
+    try:
+        candidate.relative_to(vault_resolved)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path escapes the vault")
+    if candidate.suffix != ".md":
+        raise HTTPException(status_code=400, detail="Only .md vault files are readable")
+    if not candidate.exists():
+        # Index and disk drifted; tell the caller to re-sync.
+        raise HTTPException(status_code=404, detail="File not found — try Sync, then search again")
+    return {"path": rel, "title": candidate.stem, "content": candidate.read_text(encoding="utf-8", errors="replace")}
 
 @app.get("/api/skills", dependencies=[Depends(require_api_key)])
 async def list_skills():

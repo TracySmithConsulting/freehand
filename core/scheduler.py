@@ -446,6 +446,64 @@ def create_task(title: str, cron_schedule: str) -> dict:
         conn.close()
 
 
+def backfill_next_run() -> dict:
+    """Repair pre-R16 task rows from older UI/API code paths.
+
+    Older FreeHand versions inserted task rows without ever computing
+    next_run, so a row could sit pending forever with a valid cron (and
+    duplicated itself when the same entry was captured twice). On boot:
+
+    - Deduplicate pending rows that share (title, cron_schedule) AND have
+      a NULL next_run — the signature legacy duplicates have (R17-P2).
+      Successfully scheduled duplicates are left alone.
+    - Backfill next_run for pending NULL-next_run rows whose cron parses
+      and fires — they become properly scheduled recurring tasks.
+      Unparseable crons are left alone: they stay honest one-shots.
+
+    Returns {"deduped": n, "backfilled": n}.
+    """
+    conn = _tasks_conn()
+    deduped = 0
+    backfilled = 0
+    try:
+        rows = conn.execute(
+            "SELECT id, title, cron_schedule FROM tasks "
+            "WHERE status = 'pending' AND next_run IS NULL ORDER BY id"
+        ).fetchall()
+
+        # Dedupe: first row seen per (title, cron) is the survivor.
+        survivors = set()
+        for row in rows:
+            key = (row["title"], row["cron_schedule"])
+            if key in survivors:
+                conn.execute(
+                    "DELETE FROM tasks WHERE id = ?", (row["id"],)
+                )
+                deduped += 1
+            else:
+                survivors.add(key)
+
+        # Backfill: any remaining NULL-next_run row with a fireable cron
+        # gets its next run computed. (Rows just deleted can't match —
+        # recompute from scratch for simplicity and lock-free safety.)
+        remaining = conn.execute(
+            "SELECT id, cron_schedule FROM tasks "
+            "WHERE status = 'pending' AND next_run IS NULL"
+        ).fetchall()
+        for row in remaining:
+            nxt = _cron_next(row["cron_schedule"])
+            if nxt is not None:
+                conn.execute(
+                    "UPDATE tasks SET next_run = ? WHERE id = ?",
+                    (_iso_utc(nxt), row["id"]),
+                )
+                backfilled += 1
+        conn.commit()
+    finally:
+        conn.close()
+    return {"deduped": deduped, "backfilled": backfilled}
+
+
 def run_due_tasks(now: Optional[datetime] = None) -> dict:
     """Execute pending tasks whose next_run has arrived (or one-shot rows
     with no next_run). Oldest task id first, capped per tick
