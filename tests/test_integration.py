@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from server import app, get_or_create_api_key
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def api_key():
     """Return the API key that get_or_create_api_key() minted (or pre-existing).
 
@@ -18,7 +18,7 @@ def api_key():
     return get_or_create_api_key()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def client(api_key):
     """TestClient with X-API-Key pre-set on every request.
 
@@ -28,7 +28,7 @@ def client(api_key):
     return TestClient(app, headers={"X-API-Key": api_key})
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def raw_client():
     """TestClient without any pre-set headers (for negative-path auth tests)."""
     return TestClient(app)
@@ -37,7 +37,15 @@ def raw_client():
 # Keep module-level `c` for backwards compatibility with older tests in
 # this file (it doesn't have the API key, so those tests will now fail
 # against protected endpoints — they need migration to the `client` fixture).
-c = TestClient(app)
+# Built LAZILY on first attribute access so its startup hook runs with the
+# per-test isolation active — never eagerly at import time against an
+# unpatched vault path.
+class _LazyLegacyClient:
+    def __getattr__(self, name):
+        return getattr(TestClient(app), name)
+
+
+c = _LazyLegacyClient()
 
 
 class TestCoreEndpoints:

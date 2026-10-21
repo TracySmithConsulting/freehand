@@ -31,6 +31,7 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     import core.gateway as gateway
     import core.memory as memory
     import core.oauth.manager as oauth_manager
+    import server as server_module
 
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -49,6 +50,17 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     # Never generate or consume the real encryption.key.
     monkeypatch.setattr(oauth_manager, "VAULT_DIR", vault)
     monkeypatch.setattr(oauth_manager, "ENCRYPTION_KEY_PATH", vault / "encryption.key")
+
+    # server.py from-imports DB_PATH from core.database and derives its own
+    # VAULT_DIR/SCRIBBLE_PATH/VAULT_SETTINGS_PATH at import time — a fresh
+    # checkout therefore resolves them to THAT checkout's (empty) vault,
+    # which broke server-driven tests and polluted the checkout. Same
+    # isolation net as the modules above: repoint server's constants at the
+    # tmp vault per test (test-level patches can still override).
+    monkeypatch.setattr(server_module, "DB_PATH", vault / "agent.db")
+    monkeypatch.setattr(server_module, "VAULT_DIR", vault)
+    monkeypatch.setattr(server_module, "SCRIBBLE_PATH", vault / "00_Scribble.md")
+    monkeypatch.setattr(server_module, "VAULT_SETTINGS_PATH", vault / "settings.json")
 
     # The tmp DB always exists and always has the full schema, so any code
     # path (security, gateway, OAuth manager, MCP, server endpoints) that
