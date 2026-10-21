@@ -62,7 +62,7 @@ async function main() {
       </form>
     </section>
     <section id="memory">
-      <form id="memory-form"><input id="memory-input"><p class="error" id="memory-error" role="alert"></p></form>
+      <form id="memory-form"><input id="memory-input"><p class="error" id="memory-error" role="alert"></p><button type="submit">Search</button><button type="button" id="memory-sync-btn">Re-sync Vault Files</button></form>
       <button type="button" id="memory-sync-btn">Re-sync Vault Files</button>
       <div id="memory-results" aria-live="polite"></div>
       <div id="memory-files" aria-live="polite"></div>
@@ -82,7 +82,7 @@ async function main() {
       </form>
       <input id="omniroute">
       <input id="api-key">
-      <form id="settings-form"><button type="submit">Save Settings</button></form>
+      <form id="settings-form"><input id="omniroute"><input id="api-key"><button type="submit">Save Settings</button></form>
       <form id="llm-form">
         <select id="llm-provider"><option selected>openai</option></select>
         <input id="llm-model" value="gpt-4o-mini">
@@ -121,18 +121,21 @@ async function main() {
   const sandboxWindow = parserWindow;
   sandboxWindow.document = document;
 
+  const _fetchLog = [];
   sandboxWindow.fetch = async (url, options) => {
     const base = String(url).split('?')[0];
     const method = (options && options.method) || 'GET';
     const key = base + ' ' + method;
+    _fetchLog.push(key + (options && options.method === 'POST' ? ' body=' + String(options.body || '').slice(0, 60) : ''));
     const answer = answers.responses[key] !== undefined
       ? answers.responses[key]
       : answers.responses[base];
     if (answer === undefined) {
-      return { ok: false, status: 404, json: async () => ({ detail: 'no replay answer for ' + base }) };
+      return { ok: false, status: 404, json: async () => ({ detail: 'no replay answer for ' + key }) };
     }
     return { ok: true, status: 200, json: async () => JSON.parse(JSON.stringify(answer)) };
   };
+  sandboxWindow.__fetchLog = _fetchLog;
   Object.assign(sandboxWindow, {
     localStorage: {
       _d: {},
@@ -188,26 +191,102 @@ async function main() {
   if (loadError) {
     print(JSON.stringify({ threw: String(loadError && loadError.stack || loadError) }));
     return; // print() exits
-  } else {
-    const doc = sandboxWindow.document;
-    const expired = doc.querySelectorAll('.connection-card.expired');
-    const reconnects = [...doc.querySelectorAll('button')].filter((b) => b.textContent === 'Reconnect');
-    const labels = [...doc.querySelectorAll('.connection-label')].map((e) => e.textContent);
-    let firstReconnectOnclick = '';
-    for (const b of doc.querySelectorAll('button')) {
-      if (b.textContent === 'Reconnect') {
-        firstReconnectOnclick = b.getAttribute('onclick') || b.getAttribute('aria-label') || '';
-        break;
-      }
-    }
-    print(JSON.stringify({
-      threw: null,
-      expiredCount: expired.length,
-      reconnectCount: reconnects.length,
-      labels,
-      firstReconnect: firstReconnectOnclick,
-    }));
   }
+
+  const doc = sandboxWindow.document;
+
+  // Run optional scenario steps: [{set: [id, value]}, {click: selectorOrId}, {waitForStatus: prefix}, {eval: "js"}]
+  // Each awaited tick after a click lets the click's fetch chain resolve.
+  let stepError = null;
+  try {
+    for (const step of (answers.steps || [])) {
+      if (step.set !== undefined) {
+        const el = doc.getElementById(step.set[0]);
+        if (!el) throw new Error('scenario set: #' + step.set[0] + ' not found');
+        el.value = step.set[1];
+      } else if (step.click !== undefined) {
+        // Bare "#id" (no spaces) resolves by id; anything else is a selector.
+        const sel = step.click;
+        const targets = (/^#[\w-]+$/.test(sel)
+          ? [doc.getElementById(sel.slice(1))]
+          : [...doc.querySelectorAll(sel)]);
+        const el = targets[0];
+        if (!el) throw new Error('scenario click: ' + sel + ' not found');
+        // Two cases:
+        //  - <button type="submit"> inside a form → the shipped handlers
+        //    hang off the FORM's submit event, and linkedom does not
+        //    implement implicit submission from HTMLElement.click(), so
+        //    dispatch the submit event explicitly.
+        //  - anything else (type=button, or a button outside a form) →
+        //    plain .click(), which fires its addEventListener handlers.
+        let handled = false;
+        if (el.tagName === 'BUTTON') {
+          const type = (el.getAttribute('type') || 'submit').toLowerCase();
+          const form = el.closest ? el.closest('form') : null;
+          if (type === 'submit' && form) {
+            form.dispatchEvent(new sandboxWindow.Event('submit', { bubbles: true, cancelable: true }));
+            handled = true;
+          }
+        }
+        if (!handled) {
+          if (typeof el.click === 'function') el.click();
+          else if (typeof el.onclick === 'function') el.onclick({ preventDefault() {} });
+          else throw new Error('scenario click: ' + step.click + ' has no click handler');
+        }
+      } else if (step.waitForStatus !== undefined) {
+        const prefix = step.waitForStatus;
+        for (let i = 0; i < 40; i++) {
+          const s = doc.getElementById('status-region').textContent;
+          if (s.startsWith(prefix)) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        const s = doc.getElementById('status-region').textContent;
+        if (prefix.startsWith && !s.includes(prefix) && !s.startsWith(prefix)) {
+          throw new Error('waitForStatus "' + prefix + '" timed out (status: ' + s.slice(0, 80) + ')');
+        }
+      } else if (step.waitMs !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, step.waitMs));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    }
+  } catch (e) {
+    stepError = String(e && e.message || e);
+  }
+  await new Promise((resolve) => setTimeout(resolve, 150));
+
+  // Verdict: either a fixed fixed map from answers.verdict (a JS expression
+  // evaluated in the sandbox, returning an object) or the default
+  // Reconnect-connections check (back-compat).
+  let verdict = null;
+  try {
+    const expr = (answers && answers.verdict) || null;
+    if (expr) {
+      verdict = vm.runInContext('JSON.stringify((' + expr + '))', ctx, { filename: 'verdict' });
+      verdict = JSON.parse(verdict);
+    } else {
+      const expired = doc.querySelectorAll('.connection-card.expired');
+      const reconnects = [...doc.querySelectorAll('button')].filter((b) => b.textContent === 'Reconnect');
+      const labels = [...doc.querySelectorAll('.connection-label')].map((e) => e.textContent);
+      let firstReconnectOnclick = '';
+      for (const b of doc.querySelectorAll('button')) {
+        if (b.textContent === 'Reconnect') {
+          firstReconnectOnclick = b.getAttribute('onclick') || b.getAttribute('aria-label') || '';
+          break;
+        }
+      }
+      verdict = {
+        expiredCount: expired.length,
+        reconnectCount: reconnects.length,
+        labels,
+        firstReconnect: firstReconnectOnclick,
+      };
+    }
+  } catch (e) {
+    print(JSON.stringify({ threw: 'verdict eval failed: ' + String(e && e.message || e) }));
+    return;
+  }
+  verdict.stepError = stepError;
+  print(JSON.stringify(Object.assign({ threw: null }, verdict)));
 
 }
 

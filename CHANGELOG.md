@@ -27,7 +27,18 @@ noisy 404 on Open. The endpoint now returns only rows whose relative path
 resolves to an existing .md inside vault/ (icon-index went 183 → 54 real
 files).
 
-**Tests**: 1 new (stale-row hiding) plus a JS-replay regression harness:
+**Tests**: 1 new (stale-row hiding) plus a JS-replay regression harness
+extended into a small suite (R17.3). The harness driver now runs scenario
+steps (inputs, clicks with real form-submit semantics, status waits) and
+per-scenario verdicts, so panel flows are pinned end-to-end against the
+shipped inline JS: Sweep Now posting and reporting counts, Memory search
+auto-sync → results → Open button, LLM-save reporting runner activation
++ idle-notice refresh, and the original grouped-payload Reconnect pin.
+Running the LLM-save scenario found and fixed a third real UI bug: the
+shipped handler read `data.runner_triggered` straight off the raw fetch
+Response without calling `.json()` first, so the "Task runner activating"
+message could never render. Harness skips cleanly without node. Full
+suite: 465 passed, 2 skipped.
 `tests/test_round17_polish.py::TestConnectionsReconnect_JsReplay` serves
 the real index.html through FastAPI's TestClient, snapshots the CURRENT
 grouped `/api/integrations` payload with an expired connection, and runs

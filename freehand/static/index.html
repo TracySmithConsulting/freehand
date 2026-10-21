@@ -1467,6 +1467,7 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm: llmConfig })
         })
+        .then(function(res) { return res.json(); })
         .then(function(data) {
           showStatus(
             data.runner_triggered

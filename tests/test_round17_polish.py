@@ -316,6 +316,164 @@ class TestRunnerStatusEndpoint:
 # ── JS replay regression: real index.html script renders Reconnect ─────
 
 
+class TestJsReplaySuite:
+    """Extends the replay harness to the other panel surfaces. Each test
+    drives the SHIPPED inline JS through a scenario (clicks/inputs) against
+    recorded real-API answers and asserts the outcome via a sandbox
+    verdict expression — same layer as the Reconnect pin.
+    """
+
+    @pytest.fixture(scope="class")
+    def js_harness(self):
+        node_exe = shutil.which("node")
+        if not node_exe:
+            pytest.skip("node not available; JS replay regression not run")
+        linkedom_dir = Path(__file__).parent / "js_replay"
+        node_modules = linkedom_dir / "node_modules"
+        if not (node_modules / "linkedom").exists():
+            npm = npm_exe()
+            if not npm:
+                pytest.skip("npm not available; JS replay regression not run")
+            subprocess.run(
+                [npm, "install", "--prefix", str(linkedom_dir), "--no-save", "linkedom"],
+                capture_output=True, timeout=300, check=True,
+            )
+        return {"node": node_exe, "dir": linkedom_dir}
+
+    def _run_replay(self, js_harness, answers: dict) -> dict:
+        d = tmp_dir()
+        client = TestClient(server.app)
+        r = client.get("/")
+        assert r.status_code == 200
+        html_path = d / "replay_index.html"
+        html_path.write_text(r.text, encoding="utf-8")
+        result_path = d / "replay_result.json"
+        answers = dict(answers)
+        answers["resultPath"] = str(result_path)
+        answers_path = d / "replay_answers.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        proc = subprocess.run(
+            [js_harness["node"], str(js_harness["dir"] / "replay_driver.js"),
+             str(html_path), str(answers_path)],
+            capture_output=True, text=True, timeout=120, cwd=str(js_harness["dir"]),
+        )
+        if result_path.exists():
+            return json.loads(result_path.read_text(encoding="utf-8"))
+        return {"threw": (proc.stdout + proc.stderr).strip() or "driver produced no verdict"}
+
+    def test_sweep_now_button_posts_and_reports_counts(self, js_harness):
+        """Scribble tab: Sweep Now → POST /api/sweep → status bar reports
+        processed/tasks/threads/archived from the response body."""
+        sweep_result = {"processed": 2, "tasks_created": 1, "threads_updated": 1, "archived": 2}
+        verdict_expr = (
+            "({ clickedAndReported: document.getElementById('status-region')"
+            ".textContent.includes('2 processed') &&"
+            " document.getElementById('status-region').textContent.includes('1 task(s)'),"
+            " statusText: document.getElementById('status-region').textContent })"
+        )
+        verdict = self._run_replay(js_harness, {
+            "responses": {
+                "/api/integrations": {"connections": [], "available_services": []},
+                "/api/approvals": [],
+                "/api/settings": {},
+                "/api/tasks": [],
+                "/api/security/tier": {"tier": "semi_autonomous"},
+                "/api/gateway/status": {},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/runner/status": {"llm_configured": False},
+                "/api/scribble": {"content": ""},
+                "/api/memory/files": [],
+                "/api/sweep POST": sweep_result,
+            },
+            "steps": [{"click": "#sweep-btn"}, {"waitForStatus": "Sweep done: 2 processed"}],
+            "verdict": verdict_expr,
+        })
+        assert verdict.get("threw") is None, verdict
+        assert verdict.get("stepError") is None, verdict
+        assert verdict["clickedAndReported"] is True
+
+    def test_memory_search_syncs_then_renders_results(self, js_harness):
+        """Memory tab: Search → auto POST /api/memory/sync → GET search →
+        resultcard with title + path + an Open button."""
+        verdict_expr = (
+            "({ matchCount: document.querySelectorAll('#memory-results .connection-card').length,"
+            " firstTitle: (document.querySelector('#memory-results .task-title')||{}).textContent,"
+            " openBtn: !!document.querySelector('#memory-results button'),"
+            " statusAfter: document.getElementById('status-region').textContent })"
+        )
+        verdict = self._run_replay(js_harness, {
+            "responses": {
+                "/api/integrations": {"connections": [], "available_services": []},
+                "/api/approvals": [],
+                "/api/settings": {},
+                "/api/tasks": [],
+                "/api/security/tier": {"tier": "semi_autonomous"},
+                "/api/gateway/status": {},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/runner/status": {"llm_configured": False},
+                "/api/scribble": {"content": ""},
+                "/api/memory/sync POST": {"status": "synced", "files": 4},
+                "/api/memory/search": [
+                    {"id": 1, "path": "vault\\Journal\\2026-10.md", "title": "Journal 2026-10",
+                     "updated_at": "2026-10-21T11:13:08", "relevance": 0.2}],
+                "/api/memory/files": [
+                    {"path": "vault\\Journal\\2026-10.md", "title": "Journal 2026-10",
+                     "updated_at": "2026-10-21T11:13:08"}],
+                "/api/memory/file": {"path": "vault\\Journal\\2026-10.md", "title": "2026-10",
+                                     "content": "# Journal 2026-10\n"},
+            },
+            "steps": [
+                {"set": ["memory-input", "dentist"]},
+                {"click": "#memory-form button"},
+                {"waitMs": 400},
+            ],
+            "verdict": verdict_expr,
+        })
+        assert verdict.get("threw") is None, verdict
+        assert verdict.get("stepError") is None, verdict
+        assert verdict["matchCount"] == 1
+        assert verdict["firstTitle"] == "Journal 2026-10"
+        assert verdict["openBtn"] is True
+
+    def test_llm_save_reports_runner_activation_and_updates_idle_notice(self, js_harness):
+        """Settings: save LLM key (server says runner_triggered) → status
+        announcement + idle notice box re-checks /api/runner/status (which
+        now reports configured)."""
+        verdict_expr = (
+            "({ statusText: document.getElementById('status-region').textContent,"
+            " idleNoticeGone: document.getElementById('task-runner-status').textContent.length === 0 })"
+        )
+        verdict = self._run_replay(js_harness, {
+            "responses": {
+                "/api/integrations": {"connections": [], "available_services": []},
+                "/api/approvals": [],
+                "/api/settings": {},
+                "/api/tasks": [],
+                "/api/security/tier": {"tier": "semi_autonomous"},
+                "/api/gateway/status": {},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/runner/status": {"llm_configured": True, "provider": "openai", "model": "gpt-4o-mini"},
+                "/api/scribble": {"content": ""},
+                "/api/memory/files": [],
+                "/api/settings POST": {"status": "saved", "rejected": [], "runner_triggered": True},
+            },
+            "steps": [
+                {"set": ["llm-api-key", "sk-test"]},
+                {"click": "#llm-save-btn"},
+                {"waitForStatus": "Task runner activating"},
+                {"waitMs": 250},
+            ],
+            "verdict": verdict_expr,
+        })
+        assert verdict.get("threw") is None, verdict
+        assert verdict.get("stepError") is None, verdict
+        assert "Task runner activating" in verdict["statusText"]
+        assert verdict["idleNoticeGone"] is True
+
+
 class TestConnectionsReconnect_JsReplay:
     """Serve the real index.html through FastAPI's TestClient, snapshot the
     CURRENT grouped `/api/integrations` payload shape with an expired
