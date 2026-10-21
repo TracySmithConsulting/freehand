@@ -31,7 +31,7 @@ def _stub_vault_dir(tmp_path):
     """Same vault isolation as test_oauth_broker.py."""
     from core import agent_config
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     return patch.object(agent_config, "VAULT_DIR", vault)
 
 

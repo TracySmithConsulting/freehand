@@ -34,7 +34,7 @@ def _isolated_store(tmp_path, monkeypatch):
     and tests/test_database.py's monkeypatch pattern.
     """
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     storage = vault / "credential_store.json"
     monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
     monkeypatch.setattr(credential_store, "STORAGE_PATH", storage)

@@ -207,7 +207,7 @@ def _isolated_registry(tmp_path, monkeypatch):
     was seeing the pre-registered ``slack/tracy`` credential and
     double-counting it as an extra (service, label) pair)."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(registry, "VAULT_DIR", vault)
     monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
     from core.oauth import credential_store

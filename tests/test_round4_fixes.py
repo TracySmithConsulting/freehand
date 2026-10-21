@@ -88,7 +88,7 @@ class TestSyncVaultSkipsScratchpad:
     def _make_vault(self, tmp_path):
         """Build a minimal vault with a scribble + a real note."""
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "00_Scribble.md").write_text(
             "# 00_Scribble\n\n- [ ] TODO this is a scratchpad\n",
             encoding="utf-8",
@@ -110,7 +110,7 @@ class TestSyncVaultSkipsScratchpad:
         from core import memory as mem_mod
         monkeypatch.setattr(mem_mod, "VAULT_DIR", vault)
         monkeypatch.setattr(mem_mod, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         monkeypatch.setattr("core.database.DB_PATH", db_path)
         init_db()
 
@@ -143,9 +143,9 @@ class TestParseSkillsBoundary:
             pytest.skip("symlink not available on this platform")
 
         skills_root = tmp_path / "skills"
-        skills_root.mkdir()
+        skills_root.mkdir(exist_ok=True)
         outside = tmp_path / "outside"
-        outside.mkdir()
+        outside.mkdir(exist_ok=True)
         (outside / "SKILL.md").write_text("# Outside\nbody\n", encoding="utf-8")
 
         evil_link = skills_root / "evil"
@@ -165,9 +165,9 @@ class TestParseSkillsBoundary:
 
     def test_valid_skill_inside_root_is_accepted(self, tmp_path):
         skills_root = tmp_path / "skills"
-        skills_root.mkdir()
+        skills_root.mkdir(exist_ok=True)
         skill_dir = skills_root / "my-skill"
-        skill_dir.mkdir()
+        skill_dir.mkdir(exist_ok=True)
         (skill_dir / "SKILL.md").write_text(
             "---\nname: my-skill\ndescription: A test skill\n---\nbody\n",
             encoding="utf-8",
@@ -194,9 +194,9 @@ class TestParseSkillsBoundary:
             pytest.skip("symlink not available")
 
         skills_root = tmp_path / "skills"
-        skills_root.mkdir()
+        skills_root.mkdir(exist_ok=True)
         skill_dir = skills_root / "skill-x"
-        skill_dir.mkdir()
+        skill_dir.mkdir(exist_ok=True)
 
         # Create a SKILL.md outside, symlink it into skill-x
         outside_md = tmp_path / "outside_skill.md"
@@ -221,7 +221,7 @@ class TestSyncVaultToSqlite:
     def test_sync_creates_memories_rows(self, tmp_path, monkeypatch):
         from core.database import init_db
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "a.md").write_text("# Alpha\nFirst content here.\n", encoding="utf-8")
         (vault / "b.md").write_text("# Beta\nSecond content here.\n", encoding="utf-8")
         (vault / "c.md").write_text("# Gamma\nThird content here.\n", encoding="utf-8")
@@ -231,7 +231,7 @@ class TestSyncVaultToSqlite:
         # PROJECT_ROOT (so relative_to() works) to point at tmp_path.
         monkeypatch.setattr(mem_mod, "VAULT_DIR", vault)
         monkeypatch.setattr(mem_mod, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         monkeypatch.setattr("core.database.DB_PATH", db_path)
         init_db()
 
@@ -249,13 +249,13 @@ class TestSyncVaultToSqlite:
         """Running sync twice updates existing rows rather than duplicating."""
         from core.database import init_db
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "a.md").write_text("# Alpha\nFirst content.\n", encoding="utf-8")
         db_path = tmp_path / "agent.db"
         from core import memory as mem_mod
         monkeypatch.setattr(mem_mod, "VAULT_DIR", vault)
         monkeypatch.setattr(mem_mod, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         monkeypatch.setattr("core.database.DB_PATH", db_path)
         init_db()
 
@@ -272,7 +272,7 @@ class TestSyncVaultToSqlite:
     def test_extracts_h1_as_title(self, tmp_path, monkeypatch):
         from core.database import init_db
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "doc.md").write_text(
             "# My Important Note\n\nSome body text.\n",
             encoding="utf-8",
@@ -281,7 +281,7 @@ class TestSyncVaultToSqlite:
         from core import memory as mem_mod
         monkeypatch.setattr(mem_mod, "VAULT_DIR", vault)
         monkeypatch.setattr(mem_mod, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         monkeypatch.setattr("core.database.DB_PATH", db_path)
         init_db()
 

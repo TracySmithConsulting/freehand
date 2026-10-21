@@ -96,7 +96,7 @@ def _stub_oc_catalog(monkeypatch, by_service):
 
 def _isolated_registry(tmp_path, monkeypatch):
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(registry, "VAULT_DIR", vault)
     monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
     monkeypatch.setattr(credential_store, "VAULT_DIR", vault)

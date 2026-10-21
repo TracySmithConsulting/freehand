@@ -131,7 +131,7 @@ class TestVersionSourcing:
 @pytest.fixture()
 def memory_env(tmp_path, monkeypatch):
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     db = vault / "agent.db"
     monkeypatch.setattr(database, "DB_PATH", db)
     monkeypatch.setattr(server, "DB_PATH", db)
@@ -139,10 +139,9 @@ def memory_env(tmp_path, monkeypatch):
     monkeypatch.setattr(scheduler, "VAULT_DIR", vault)
     import core.memory as memory
     monkeypatch.setattr(memory, "VAULT_DIR", vault)
-    monkeypatch.setattr(memory, "DB_PATH", db)
     monkeypatch.setattr(memory, "PROJECT_ROOT", vault.parent)
     database.init_db()
-    (vault / "Journal").mkdir()
+    (vault / "Journal").mkdir(exist_ok=True)
     (vault / "Journal" / "2026-10.md").write_text(
         "# Journal 2026-10\n\n- archived from scribble pad — dentist tomorrow\n",
         encoding="utf-8",

@@ -38,10 +38,10 @@ def tmp_db(tmp_path, monkeypatch):
     """Point the approvals DB at a throwaway file and create the schema.
 
     mirrors test_round3_fixes.py's idiom: patch both core.database.DB_PATH
-    and core.security.DB_PATH to the same tmp file, then init_db()."""
+    and core.database.DB_PATH to the same tmp file, then init_db()."""
     db = tmp_path / "agent.db"
     monkeypatch.setattr("core.database.DB_PATH", db)
-    monkeypatch.setattr("core.security.DB_PATH", db)
+    monkeypatch.setattr("core.database.DB_PATH", db)
     init_db()
     return db
 
@@ -77,7 +77,7 @@ class TestRegistryRiskAccessor:
         from tests.test_enable_writes_gate import GITHUB_ACTIONS
 
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
 
         def fake_actions(svc, label="default"):

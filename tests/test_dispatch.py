@@ -81,7 +81,7 @@ class TestParseOcToolName:
         from core.tools import registry
 
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(registry, "VAULT_DIR", vault)
         monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
         monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
@@ -120,7 +120,7 @@ class TestActionIdTranslation:
         (service.action_name) alongside it."""
         from core.tools import registry
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(registry, "VAULT_DIR", vault)
         monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
 
@@ -153,7 +153,7 @@ class TestActionIdTranslation:
         and the dispatch returns a no_such_tool error."""
         from core.tools import registry
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(registry, "VAULT_DIR", vault)
         monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
 

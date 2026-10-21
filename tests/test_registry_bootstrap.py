@@ -22,7 +22,7 @@ def _isolated_vault(tmp_path, monkeypatch):
     """Redirect all registry + credential_store + agent_config paths
     to a fresh tmp vault so tests don't touch real state."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(registry, "VAULT_DIR", vault)
     monkeypatch.setattr(registry, "STORAGE_PATH", vault / "tool_registry.json")
     return vault

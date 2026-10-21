@@ -37,7 +37,7 @@ def _stub_vault_dir(tmp_path):
     """Point VAULT_DIR at an isolated test dir so we don't pollute real settings."""
     from core import agent_config
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     return patch.object(agent_config, "VAULT_DIR", vault)
 
 
@@ -238,7 +238,7 @@ class TestConnectorsUseBroker:
         from core.oauth.providers.microsoft import MicrosoftConnector
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         # Write a real settings.json that BOTH the broker and the
         # Microsoft connector will read.
         (vault / "settings.json").write_text(json.dumps({
@@ -309,7 +309,7 @@ class TestBrokerHttpEndpoints:
         from server import app, get_or_create_api_key
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
 
         api_key = get_or_create_api_key()
@@ -341,7 +341,7 @@ class TestBrokerHttpEndpoints:
         from server import app, get_or_create_api_key
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
 
         api_key = get_or_create_api_key()
@@ -400,7 +400,8 @@ class TestRenameConnectionLabel:
         from core.oauth import manager
         from core import database
         db = tmp_path / "test.db"
-        monkeypatch.setattr(manager, "DB_PATH", db)
+        import core.database as database
+        monkeypatch.setattr(database, "DB_PATH", db)
         monkeypatch.setattr(database, "DB_PATH", db)
         # Initialize schema (connections table etc.) on the isolated DB
         database.init_db()
@@ -450,7 +451,8 @@ class TestSaveConnectionExpiresInNone:
         from core.oauth import manager
         from core import database
         db = tmp_path / "test.db"
-        monkeypatch.setattr(manager, "DB_PATH", db)
+        import core.database as database
+        monkeypatch.setattr(database, "DB_PATH", db)
         monkeypatch.setattr(database, "DB_PATH", db)
         database.init_db()
         return manager

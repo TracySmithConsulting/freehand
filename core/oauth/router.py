@@ -41,18 +41,17 @@ ALLOWED_SERVICES = list(CONNECTORS.keys())
 
 
 def _load_oauth_settings() -> dict:
-    settings_path = Path(__file__).parent.parent.parent / "vault" / "settings.json"
-    if settings_path.exists():
-        try:
-            return json.loads(settings_path.read_text())
-        except Exception:
-            pass
-    return {}
+    """Delegate to agent_config so there is ONE patchable settings path
+    (agent_config.SETTINGS_PATH). A locally re-derived vault path here was
+    how OAuth pending-states leaked into the real settings.json during
+    test runs (Round 18 isolation fix)."""
+    from core import agent_config
+    return agent_config._load_settings()
 
 
 def _save_oauth_settings(data: dict) -> None:
-    settings_path = Path(__file__).parent.parent.parent / "vault" / "settings.json"
-    settings_path.write_text(json.dumps(data))
+    from core import agent_config
+    agent_config._save_settings(data)
 
 
 # ── 503 'honest option A' fallback (Round 8) ──────────────────────────

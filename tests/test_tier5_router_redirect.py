@@ -75,7 +75,7 @@ class TestAuthoriseTier5Redirect:
         interference."""
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: True)
         monkeypatch.setattr(broker_mod, "_oc_service_known", lambda svc: svc == "hackernews")
@@ -96,7 +96,7 @@ class TestAuthoriseTier5Redirect:
         rounds don't accidentally revert to 404."""
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: True)
         monkeypatch.setattr(broker_mod, "_oc_service_known", lambda svc: False)
@@ -119,7 +119,7 @@ class TestAuthoriseTier5Redirect:
         test_unknown_service_with_oc_known_returns_302)."""
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: False)
         monkeypatch.setattr(broker_mod, "_load_shared_apps", lambda: {})
@@ -140,7 +140,7 @@ class TestAuthoriseRegression:
         authorize_url. Round 7 must not change this."""
         from core import agent_config
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
         # Tier-5 stub: irrelevant to this test (Google is allowlisted), but
         # be explicit anyway.

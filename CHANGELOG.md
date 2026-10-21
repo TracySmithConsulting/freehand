@@ -34,9 +34,21 @@ Pre-release pass on packaging-safety details:
   into the *real* vault during tests — part of the test-isolation debt
   tracked earlier. The `docs/integrations` example path was genericized
   to `/path/to/freehand`.
-- Housekeeping: leaked test rows (approvals, OAuth `pending_states`) were
-  again scrubbed from the real vault after full-suite runs; the root
-  cause (fixture isolation) remains open.
+- **Fixture isolation fixed at the root (was open earlier today).** Test
+  runs used to write approval rows and OAuth `pending_states` into the
+  *real* `vault/agent.db` and `vault/settings.json`, because several
+  modules bound the vault paths at import time (`from core.database
+  import DB_PATH`) while test fixtures only patched one of the copies.
+  Every DB/settings read now goes through the canonical dynamic module
+  references (`core.database.DB_PATH`, `core.agent_config.SETTINGS_PATH`
+  — including gateway and the OAuth router's own re-derived copies), a
+  new `tests/conftest.py` autouse fixture points every persistent-state
+  constant at a per-test tmp `vault/` (always schema-initialized via
+  `init_db()`), [tests/test_isolation.py](tests/test_isolation.py) plants
+  a sentinel row in the real DB and runs a previously-leaky file,
+  asserting the real vault is untouched. Two consecutive full-suite runs
+  on a clean baseline left the real vault with **0 approvals and 0
+  pending_states**.*
 
 ### Changed — Round 17.3: freehand visual refresh of the shipped UI (2026-10-21)
 

@@ -175,7 +175,7 @@ class TestMcpResources:
     def test_resources_list_includes_vault_files(self, tmp_path, monkeypatch):
         from core import memory as mem_mod
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "alpha.md").write_text("# Alpha\nbody", encoding="utf-8")
         (vault / "beta.md").write_text("# Beta\nbody", encoding="utf-8")
         (vault / "00_Scribble.md").write_text("# scratch", encoding="utf-8")  # should skip
@@ -197,7 +197,7 @@ class TestMcpResources:
 
     def test_resource_uri_format(self, tmp_path):
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "doc.md").write_text("# Doc", encoding="utf-8")
         resources = mcp_server._mcp_resources(vault)
         assert len(resources) == 1
@@ -206,7 +206,7 @@ class TestMcpResources:
 
     def test_resource_read_returns_content(self, tmp_path):
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         (vault / "doc.md").write_text("# Doc\n\nBody content here.", encoding="utf-8")
         result = mcp_server._mcp_resource_read("freehand://vault/doc.md", vault)
         assert "isError" not in result
@@ -216,7 +216,7 @@ class TestMcpResources:
     def test_resource_read_path_traversal_rejected(self, tmp_path):
         """Path traversal in the URI must be rejected."""
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
 
         # Various traversal attempts
         for evil_uri in [
@@ -229,7 +229,7 @@ class TestMcpResources:
 
     def test_resource_read_nonexistent_returns_error(self, tmp_path):
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         result = mcp_server._mcp_resource_read("freehand://vault/missing.md", vault)
         assert result["isError"] is True
         assert "not found" in result["contents"][0]["text"]
@@ -237,7 +237,7 @@ class TestMcpResources:
     def test_resource_read_unsupported_uri_rejected(self, tmp_path):
         """URIs not starting with freehand://vault/ must be rejected."""
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         result = mcp_server._mcp_resource_read("file:///etc/passwd", vault)
         assert result["isError"] is True
         assert "Unsupported URI scheme" in result["contents"][0]["text"]

@@ -6,15 +6,16 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from core.database import DB_PATH  # canonical vault/agent.db path (Round 10 PR 1)
+from core import database  # canonical vault/agent.db path (Round 10 PR 1)
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
-VAULT_DIR = PROJECT_ROOT / "vault"
+from core import agent_config
+VAULT_DIR = agent_config.VAULT_DIR
 
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(database.DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")

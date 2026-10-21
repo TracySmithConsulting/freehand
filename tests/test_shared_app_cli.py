@@ -33,7 +33,7 @@ def _isolated_vault(monkeypatch, tmp_path):
     """Patch VAULT_DIR + create encryption.key so the CLI can write."""
     from core import agent_config
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
     # Generate encryption.key in the isolated vault so Fernet works.
     from core.oauth.manager import _get_fernet

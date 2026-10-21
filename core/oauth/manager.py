@@ -11,12 +11,13 @@ from cryptography.fernet import Fernet
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from core.database import DB_PATH
+from core import database
 
 log = logging.getLogger(__name__)
 
 
-VAULT_DIR = Path(__file__).parent.parent.parent / "vault"
+from core import agent_config
+VAULT_DIR = agent_config.VAULT_DIR
 ENCRYPTION_KEY_PATH = VAULT_DIR / "encryption.key"
 
 _lock = threading.Lock()
@@ -45,7 +46,7 @@ def decrypt(value: str) -> str:
 
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -297,7 +298,7 @@ def migrate_legacy_connections_db(skip: bool = False) -> int:
     if storage.get("_migrated") is True:
         return 0
 
-    legacy_db = DB_PATH
+    legacy_db = database.DB_PATH
     if not legacy_db.exists():
         # No legacy file — nothing to migrate. Mark done so we
         # don't re-check on every boot.

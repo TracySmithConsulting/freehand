@@ -34,7 +34,7 @@ from core.database import init_db  # noqa: E402
 def tmp_db(tmp_path, monkeypatch):
     db = tmp_path / "agent.db"
     monkeypatch.setattr("core.database.DB_PATH", db)
-    monkeypatch.setattr("core.security.DB_PATH", db)
+    monkeypatch.setattr("core.database.DB_PATH", db)
     init_db()
     return db
 

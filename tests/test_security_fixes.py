@@ -30,7 +30,7 @@ from core.oauth import router as oauth_router
 def isolated_vault(tmp_path, monkeypatch):
     """Point security + oauth modules at a fresh vault dir for each test."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
 
     monkeypatch.setattr(security, "VAULT_DIR", vault)
     monkeypatch.setattr(security, "SETTINGS_PATH", vault / "settings.json")

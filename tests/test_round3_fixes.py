@@ -122,7 +122,7 @@ class TestSearchMemoryFTS5:
 
     def test_normal_query_finds_match(self, tmp_path, monkeypatch):
         db_path = self._make_conn(tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         results = search_memory("audit", limit=5)
         assert len(results) >= 1
         assert results[0]["title"] == "audit notes"
@@ -131,7 +131,7 @@ class TestSearchMemoryFTS5:
         """Old code: `audit OR *:1` would parse as FTS5 syntax and may error or
         return unexpected rows. New code wraps in phrase quotes → safe."""
         db_path = self._make_conn(tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         # Should NOT raise (defensive except catches OperationalError)
         results = search_memory("audit OR *:1", limit=5)
         # Phrase query, so it should NOT match — the literal "audit OR *:1"
@@ -140,7 +140,7 @@ class TestSearchMemoryFTS5:
 
     def test_phrase_query_with_special_chars_is_safe(self, tmp_path, monkeypatch):
         db_path = self._make_conn(tmp_path)
-        monkeypatch.setattr("core.memory.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         results = search_memory('"hello" OR audit', limit=5)
         # Should not raise; phrase query for the literal text.
         assert isinstance(results, list)
@@ -245,7 +245,7 @@ class TestClearPendingApprovals:
         from core.database import init_db
         db_path = tmp_path / "test.db"
         monkeypatch.setattr("core.database.DB_PATH", db_path)
-        monkeypatch.setattr("core.security.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         init_db()
         # Insert a few pending approvals
         conn = sqlite3.connect(str(db_path))
@@ -294,7 +294,7 @@ class TestClearPendingApprovals:
         from core.database import init_db
         db_path = tmp_path / "test.db"
         monkeypatch.setattr("core.database.DB_PATH", db_path)
-        monkeypatch.setattr("core.security.DB_PATH", db_path)
+        monkeypatch.setattr("core.database.DB_PATH", db_path)
         init_db()
 
         count = security.clear_pending_approvals(reason="nothing to clear")
@@ -317,7 +317,7 @@ class TestBodySizeLimit:
         # Need to patch settings.json BEFORE the app boots.
         # We'll write a fresh settings.json and patch DB_PATH / VAULT_DIR too.
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         settings = {}
         if max_bytes is not None:
             settings["max_request_body_bytes"] = max_bytes

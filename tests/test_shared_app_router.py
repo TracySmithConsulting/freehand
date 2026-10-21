@@ -56,7 +56,7 @@ def _isolated_vault(tmp_path, monkeypatch):
     """Patch VAULT_DIR so tests don't touch the real FreeHand vault."""
     from core import agent_config
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
     return vault
 

@@ -73,8 +73,8 @@ class TestMigrateLegacyRootDB:
         (tmp_path / "agent.db-wal").write_bytes(b"legacy_wal")
         (tmp_path / "agent.db-shm").write_bytes(b"legacy_shm")
         # Vault exists but has nothing inside
-        vault = tmp_path / "vault"
-        vault.mkdir()
+        vault = tmp_path / "migrate_vault"
+        vault.mkdir(exist_ok=True)
         return tmp_path
 
     def test_migrate_legacy_root_db_moves_main_and_sidecars(self, tmp_path, monkeypatch):
@@ -86,23 +86,23 @@ class TestMigrateLegacyRootDB:
         # migration without faking the source file location.
         from core import agent_config
         monkeypatch.setattr(database, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "vault")
-        monkeypatch.setattr(database, "DB_PATH", tmp_path / "vault" / "agent.db")
+        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "migrate_vault")
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "migrate_vault" / "agent.db")
         # Patch MAULT_PATH constant in database module so migrate
         # writes to our test vault, not the real one.
         # Run migration
         result = database.migrate_legacy_root_db()
         assert result is True, "Migration should report True when it moved files"
         # Main file moved
-        assert (tmp_path / "vault" / "agent.db").exists(), (
+        assert (tmp_path / "migrate_vault" / "agent.db").exists(), (
             "Migration must move the main agent.db into vault/"
         )
-        assert (tmp_path / "vault" / "agent.db").read_bytes() == b"FAKE_LEGACY_DB_CONTENT", (
+        assert (tmp_path / "migrate_vault" / "agent.db").read_bytes() == b"FAKE_LEGACY_DB_CONTENT", (
             "Main file contents must be preserved"
         )
         # WAL sidecars moved with it
-        assert (tmp_path / "vault" / "agent.db-wal").read_bytes() == b"legacy_wal"
-        assert (tmp_path / "vault" / "agent.db-shm").read_bytes() == b"legacy_shm"
+        assert (tmp_path / "migrate_vault" / "agent.db-wal").read_bytes() == b"legacy_wal"
+        assert (tmp_path / "migrate_vault" / "agent.db-shm").read_bytes() == b"legacy_shm"
         # Source removed
         assert not (tmp_path / "agent.db").exists(), (
             "Migration must remove the legacy file (not copy)"
@@ -114,8 +114,8 @@ class TestMigrateLegacyRootDB:
         """Running migration twice is a no-op the second time."""
         self._setup_legacy_db(tmp_path)
         monkeypatch.setattr(database, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "vault")
-        monkeypatch.setattr(database, "DB_PATH", tmp_path / "vault" / "agent.db")
+        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "migrate_vault")
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "migrate_vault" / "agent.db")
         # First call: moves files
         first = database.migrate_legacy_root_db()
         assert first is True
@@ -133,21 +133,21 @@ class TestMigrateLegacyRootDB:
         legacy_db.write_bytes(b"FRESH_INSTALL")
         # Don't create tmp_path/"vault" — test the "missing vault" case
         monkeypatch.setattr(database, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "vault")
-        monkeypatch.setattr(database, "DB_PATH", tmp_path / "vault" / "agent.db")
+        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "migrate_vault")
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "migrate_vault" / "agent.db")
         result = database.migrate_legacy_root_db()
         assert result is True
-        assert (tmp_path / "vault").is_dir(), "Migration must create vault/ if missing"
-        assert (tmp_path / "vault" / "agent.db").exists()
+        assert (tmp_path / "migrate_vault").is_dir(), "Migration must create vault/ if missing"
+        assert (tmp_path / "migrate_vault" / "agent.db").exists()
 
     def test_migrate_legacy_root_db_noop_when_nothing_to_migrate(self, tmp_path, monkeypatch):
         """Both project root and vault are clean — nothing to migrate.
         Returns False, no error."""
         # No legacy DB, vault exists
-        (tmp_path / "vault").mkdir()
+        (tmp_path / "migrate_vault").mkdir(exist_ok=True)
         monkeypatch.setattr(database, "PROJECT_ROOT", tmp_path)
-        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "vault")
-        monkeypatch.setattr(database, "DB_PATH", tmp_path / "vault" / "agent.db")
+        monkeypatch.setattr(database, "VAULT_DIR", tmp_path / "migrate_vault")
+        monkeypatch.setattr(database, "DB_PATH", tmp_path / "migrate_vault" / "agent.db")
         result = database.migrate_legacy_root_db()
         assert result is False, (
             "Nothing-to-migrate case should return False, not raise"
@@ -161,8 +161,8 @@ class TestMigrateLegacyRootDB:
         # Both legacy and vault DBs exist
         legacy_db = tmp_path / "agent.db"
         legacy_db.write_bytes(b"LEGACY_CONTENT")
-        vault = tmp_path / "vault"
-        vault.mkdir()
+        vault = tmp_path / "migrate_vault"
+        vault.mkdir(exist_ok=True)
         (vault / "agent.db").write_bytes(b"USER_PRESERVED")
         monkeypatch.setattr(database, "PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(database, "VAULT_DIR", vault)

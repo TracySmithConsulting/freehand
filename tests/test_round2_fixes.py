@@ -33,7 +33,7 @@ from core import security  # re-export for tests
 def isolated_vault(tmp_path, monkeypatch):
     """Point scheduler + gateway at a fresh vault dir for each test."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
 
     from core import gateway, scheduler as sched_mod
 

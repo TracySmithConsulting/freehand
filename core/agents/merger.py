@@ -9,7 +9,7 @@ from typing import List
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from core.database import DB_PATH
+from core import database
 from core.agents.models import ImportResult
 
 
@@ -23,7 +23,7 @@ def _file_hash(path: Path) -> str:
 def record_import(result: ImportResult) -> int:
     """Record an import in the database. Returns manifest_id."""
     now = datetime.now(timezone.utc).isoformat()
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     conn.execute("PRAGMA foreign_keys=ON")
 
     for entry in result.files_imported:
@@ -68,7 +68,7 @@ def record_import(result: ImportResult) -> int:
 
 def list_imports() -> List[dict]:
     """List all import manifests."""
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         """
@@ -84,7 +84,7 @@ def list_imports() -> List[dict]:
 
 def list_imported_sources(agent: str = None) -> List[dict]:
     """List imported source files, optionally filtered by agent."""
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     conn.row_factory = sqlite3.Row
     if agent:
         rows = conn.execute(
@@ -101,7 +101,7 @@ def list_imported_sources(agent: str = None) -> List[dict]:
 
 def remove_import(agent: str) -> bool:
     """Remove all imported sources for an agent. Returns True if anything was deleted."""
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     cursor = conn.execute(
         "DELETE FROM imported_sources WHERE agent = ?", (agent,)
     )

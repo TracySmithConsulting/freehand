@@ -78,11 +78,12 @@ def _setup_legacy_connections_db(vault: Path, rows: list[dict]) -> Path:
 def _isolated_credential_store(tmp_path, monkeypatch):
     """Redirect credential_store to a tmp vault/credential_store.json."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
     monkeypatch.setattr(credential_store, "STORAGE_PATH", vault / "credential_store.json")
     monkeypatch.setattr(manager, "VAULT_DIR", vault)
-    monkeypatch.setattr(manager, "DB_PATH", vault / "connections.db")
+    import core.database as database;
+    monkeypatch.setattr(database, "DB_PATH", vault / "connections.db")
     return vault
 
 

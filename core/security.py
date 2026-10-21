@@ -13,7 +13,7 @@ except ImportError:
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from core.database import DB_PATH
+from core import database
 
 
 class PermissionTier(Enum):
@@ -97,7 +97,7 @@ def _is_external_action(action_type: str) -> bool:
 
 
 def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
 

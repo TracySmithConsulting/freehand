@@ -51,13 +51,14 @@ class TestHermesImport:
         assert "skills" in preview
         assert len(preview["files"]) > 0
 
-    def test_import(self):
+    def test_import(self, tmp_path):
         agents = detect_agents()
         hermes = next((a for a in agents if a.name == "hermes"), None)
         if not hermes:
             pytest.skip("Hermes not installed")
         init_db()
-        vault = Path(__file__).resolve().parent.parent / "vault"
+        vault = tmp_path / "vault"
+        vault.mkdir(exist_ok=True)
         import shutil
         shutil.rmtree(vault / "imports" / "hermes", ignore_errors=True)
         result = import_hermes(hermes, ImportOptions(agent="hermes", include_state=True, overwrite=True), vault)
@@ -76,13 +77,14 @@ class TestOpenClawImport:
         assert "files" in preview
         assert len(preview["files"]) > 0
 
-    def test_import(self):
+    def test_import(self, tmp_path):
         agents = detect_agents()
         oc = next((a for a in agents if a.name == "openclaw"), None)
         if not oc:
             pytest.skip("OpenClaw not installed")
         init_db()
-        vault = Path(__file__).resolve().parent.parent / "vault"
+        vault = tmp_path / "vault"
+        vault.mkdir(exist_ok=True)
         import shutil
         shutil.rmtree(vault / "imports" / "openclaw", ignore_errors=True)
         result = import_openclaw(oc, ImportOptions(agent="openclaw", overwrite=True), vault)

@@ -28,7 +28,7 @@ def _runner():
 def _isolated_store(tmp_path, monkeypatch):
     """Redirect credential_store to a tmp vault."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     monkeypatch.setattr(credential_store, "VAULT_DIR", vault)
     monkeypatch.setattr(credential_store, "STORAGE_PATH", vault / "credential_store.json")
     return vault

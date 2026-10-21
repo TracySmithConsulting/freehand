@@ -11,7 +11,8 @@ import aiohttp
 
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from core.database import DB_PATH
+from core import agent_config
+from core import database
 from core.security import get_current_tier, intercept_action, handle_approval
 from core.memory import sync_vault_to_sqlite
 from core.scheduler import process_scribble, create_task, append_scribble
@@ -24,19 +25,14 @@ BRIDGE_PORT = 8765
 
 
 def _load_settings() -> dict:
-    settings_path = VAULT_DIR / "settings.json"
-    if settings_path.exists():
-        try:
-            return json.loads(settings_path.read_text())
-        except Exception:
-            pass
-    return {}
+    """Settings I/O delegates to agent_config so there is ONE patchable
+    path (agent_config.SETTINGS_PATH) and tests can never miss a second
+    re-derived copy of it."""
+    return agent_config._load_settings()
 
 
 def _save_settings(data: dict) -> None:
-    VAULT_DIR.mkdir(parents=True, exist_ok=True)
-    settings_path = VAULT_DIR / "settings.json"
-    settings_path.write_text(json.dumps(data))
+    agent_config._save_settings(data)
 
 
 def _get_bridge_url() -> str:
@@ -244,7 +240,7 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
     if text.startswith("/status"):
         pending = 0
         import sqlite3
-        conn = sqlite3.connect(str(DB_PATH))
+        conn = sqlite3.connect(str(database.DB_PATH))
         pending = conn.execute("SELECT COUNT(*) FROM approvals WHERE status='pending'").fetchone()[0]
         conn.close()
         whatsapp_ok = settings.get("whatsapp_enabled", False)
@@ -388,7 +384,7 @@ def get_gateway_status() -> dict:
     settings = _load_settings()
     tier = get_current_tier()
     import sqlite3
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(database.DB_PATH))
     pending = conn.execute("SELECT COUNT(*) FROM approvals WHERE status='pending'").fetchone()[0]
     conn.close()
 

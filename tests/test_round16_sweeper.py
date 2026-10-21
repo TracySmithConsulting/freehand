@@ -28,7 +28,7 @@ import pytest
 def isolated_vault(tmp_path, monkeypatch):
     """Point scheduler + gateway at a fresh vault dir + isolated DB."""
     vault = tmp_path / "vault"
-    vault.mkdir()
+    vault.mkdir(exist_ok=True)
     db = vault / "agent.db"
 
     import core.database as database
@@ -38,7 +38,7 @@ def isolated_vault(tmp_path, monkeypatch):
     # core.memory binds DB_PATH via from-import — patch it too, or archived
     # history tests would query the real vault DB (same pattern as
     # test_round4_fixes.py).
-    monkeypatch.setattr("core.memory.DB_PATH", db)
+    monkeypatch.setattr("core.database.DB_PATH", db)
     # core.memory walks its own VAULT_DIR constant — point it at the tmp vault.
     # rel-path computation anchors on memory.PROJECT_ROOT, patch that too.
     import core.memory as memory_mod
@@ -394,7 +394,7 @@ class TestApiTasksValidation:
         import core.database as database
 
         vault = tmp_path / "vault"
-        vault.mkdir()
+        vault.mkdir(exist_ok=True)
         db = vault / "agent.db"
         monkeypatch.setattr(database, "DB_PATH", db)
         monkeypatch.setattr("server.DB_PATH", db)
