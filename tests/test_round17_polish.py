@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +28,11 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import core.database as database
 import core.scheduler as scheduler
 import server
+
+try:
+    from fastapi.testclient import TestClient
+except ImportError:  # pragma: no cover — dev extra guarantees it, be safe
+    TestClient = None
 
 # Short alias the P5/P3 tests use.
 core_scheduler = scheduler
@@ -304,3 +311,101 @@ class TestRunnerStatusEndpoint:
         status = asyncio.run(server.runner_status())
         assert result["skipped"] == "llm_not_configured"
         assert status["llm_configured"] is False
+
+
+# ── JS replay regression: real index.html script renders Reconnect ─────
+
+
+class TestConnectionsReconnect_JsReplay:
+    """Serve the real index.html through FastAPI's TestClient, snapshot the
+    CURRENT grouped `/api/integrations` payload shape with an expired
+    connection, and replay it against the SHIPPED inline JavaScript running
+    in a Node sandbox (linkedom + vm) — asserting the panel renders a
+    Reconnect button for it. The Round 17.2 walkthrough regression (payload
+    regrouped upstream, panel still mapping it flat, Reconnect silently
+    gone) is pinned here at the exact layer it happened: real JS, real
+    grouped payload.
+    """
+
+    @pytest.fixture(scope="class")
+    def js_harness(self):
+        node_exe = shutil.which("node")
+        if not node_exe:
+            pytest.skip("node not available; JS replay regression not run")
+        linkedom_dir = Path(__file__).parent / "js_replay"
+        node_modules = linkedom_dir / "node_modules"
+        if not (node_modules / "linkedom").exists():
+            subprocess.run(
+                [npm_exe(), "install", "--prefix", str(linkedom_dir), "--no-save", "linkedom"],
+                capture_output=True, timeout=300, check=True,
+            )
+        return {"node": node_exe, "dir": linkedom_dir}
+
+    def test_grouped_payload_with_expired_connection_renders_reconnect(self, js_harness):
+        client = TestClient(server.app)
+        r = client.get("/")
+        assert r.status_code == 200
+        html_path = tmp_dir() / "replay_index.html"
+        html_path.write_text(r.text, encoding="utf-8")
+
+        past = "2026-08-16T21:04:43"  # the exact shape list_integrations emits
+        grouped_payload = {
+            "connections": [
+                {"service": "google", "connections": [
+                    {"label": "tracy", "user_id": "", "connected_at": "2026-08-15T10:00:00",
+                     "expires_at": past, "scopes": ["email"], "status": "active"}],
+                },
+                {"service": "slack", "connections": [
+                    {"label": "work", "user_id": "", "connected_at": "2026-09-01T10:00:00",
+                     "expires_at": "2036-01-01T00:00:00", "scopes": ["chat"], "status": "active"}],
+                },
+            ],
+            "available_services": ["zoom", "email"],
+        }
+        answers = {
+            "resultPath": str(tmp_dir() / "replay_result.json"),
+            "responses": {
+                "/api/integrations GET": grouped_payload,
+                "/api/approvals": [],
+                "/api/settings": {},
+                "/api/tasks": [],
+                "/api/security/tier": {"tier": "semi_autonomous"},
+                "/api/gateway/status": {},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/runner/status": {"llm_configured": False},
+                "/api/scribble": {"content": ""},
+                "/api/memory/files": [],
+                "/api/integrations/test": {"ok": True},
+            },
+        }
+        answers_path = tmp_dir() / "replay_answers.json"
+        answers_path.write_text(json.dumps(answers), encoding="utf-8")
+        result_path = Path(answers["resultPath"])
+
+        proc = subprocess.run(
+            [js_harness["node"], str(js_harness["dir"] / "replay_driver.js"),
+             str(html_path), str(answers_path)],
+            capture_output=True, text=True, timeout=120, cwd=str(js_harness["dir"]),
+        )
+        if result_path.exists():
+            verdict = json.loads(result_path.read_text(encoding="utf-8"))
+        else:
+            verdict = {"threw": proc.stdout + proc.stderr}
+
+        assert verdict.get("threw") is None, f"inline JS threw: {verdict.get('threw')}"
+        assert verdict["expiredCount"] >= 1, "expired card not detected by the real JS"
+        assert verdict["reconnectCount"] >= 1, "Reconnect button not rendered by the real JS"
+        assert any("tracy" in lbl for lbl in verdict["labels"]), f"label missing: {verdict['labels']}"
+        assert "google" in verdict["firstReconnect"], f"wrong service wiring: {verdict['firstReconnect']}"
+
+
+def npm_exe():
+    return shutil.which("npm.cmd") or shutil.which("npm")
+
+
+def tmp_dir():
+    import tempfile
+    d = Path(tempfile.gettempdir()) / "freehand_js_replay"
+    d.mkdir(exist_ok=True)
+    return d

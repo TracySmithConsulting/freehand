@@ -27,7 +27,15 @@ noisy 404 on Open. The endpoint now returns only rows whose relative path
 resolves to an existing .md inside vault/ (icon-index went 183 → 54 real
 files).
 
-**Tests**: 1 new (stale-row hiding); full suite 461 passed, 2 skipped.
+**Tests**: 1 new (stale-row hiding) plus a JS-replay regression harness:
+`tests/test_round17_polish.py::TestConnectionsReconnect_JsReplay` serves
+the real index.html through FastAPI's TestClient, snapshots the CURRENT
+grouped `/api/integrations` payload with an expired connection, and runs
+the shipped inline JavaScript in a Node sandbox (linkedom + vm,
+`tests/js_replay/`) asserting the panel renders a Reconnect button wired
+to the right service/label — so the grouped-payload regression cannot
+silently return. Skips cleanly when node isn't installed. Full suite
+462 passed, 2 skipped.
 Walkthrough-verified live with a seeded checklist line: Sweep Now button →
 "1 processed, 1 task(s), 1 archived", task with computed next_run, Journal
 audit line, pad compacted; Memory search "dentist" → exactly the Journal
