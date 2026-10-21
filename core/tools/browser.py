@@ -715,7 +715,7 @@ async def screenshot(url: str, mode: str = "headless", full_page: bool = False) 
 
     Permission: screenshots are sensitive (can capture credentials, PII, session
     cookies on screen). Require approval like other browser actions. Tier=AUTONOMOUS
-    still blocks; tier=GOD_MODE allows.
+    still blocks; tier=FULL_ACCESS allows.
 
     Filename: derived from sha256(url) — collision-free.
 

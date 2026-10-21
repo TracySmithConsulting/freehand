@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 # Pitfall 27 (FreeHand): `core.oauth/__init__.py` shadows the `router`
 # module name with the APIRouter object. We need `shared_apps` (NOT

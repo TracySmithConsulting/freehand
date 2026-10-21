@@ -1,7 +1,7 @@
 """Tests for cross-agent detection and import."""
 
 import sys
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 import pytest
 from pathlib import Path
@@ -57,7 +57,7 @@ class TestHermesImport:
         if not hermes:
             pytest.skip("Hermes not installed")
         init_db()
-        vault = Path(r"C:\Users\trace\Documents\Default Project\vault")
+        vault = Path(__file__).resolve().parent.parent / "vault"
         import shutil
         shutil.rmtree(vault / "imports" / "hermes", ignore_errors=True)
         result = import_hermes(hermes, ImportOptions(agent="hermes", include_state=True, overwrite=True), vault)
@@ -82,7 +82,7 @@ class TestOpenClawImport:
         if not oc:
             pytest.skip("OpenClaw not installed")
         init_db()
-        vault = Path(r"C:\Users\trace\Documents\Default Project\vault")
+        vault = Path(__file__).resolve().parent.parent / "vault"
         import shutil
         shutil.rmtree(vault / "imports" / "openclaw", ignore_errors=True)
         result = import_openclaw(oc, ImportOptions(agent="openclaw", overwrite=True), vault)

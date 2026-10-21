@@ -367,7 +367,7 @@ def is_destructive_tool(tool_name: str) -> bool:
     sensitive | destructive). This accessor scans that storage so it
     works across the CLI->server process boundary. Used by the agent
     loop to force a per-call confirmation on destructive OC tools even
-    at GOD_MODE (where writes would otherwise auto-run).
+    at FULL_ACCESS (where writes would otherwise auto-run).
 
     Returns False for any non-OC / unknown tool (fail-safe: no extra
     confirmation beyond the tier system).

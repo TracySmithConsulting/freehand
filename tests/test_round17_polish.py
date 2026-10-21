@@ -242,7 +242,7 @@ class TestSaveSettingsTriggersRunner:
         monkeypatch.setattr(
             core_scheduler, "run_due_tasks", lambda: calls.append(1) or {"executed": 0, "failed": 0}
         )
-        result = asyncio.run(server.save_settings({"tier": "god_mode"}))
+        result = asyncio.run(server.save_settings({"tier": "full_access"}))
         assert result["status"] == "saved"
         assert result["runner_triggered"] is False
         assert not calls
@@ -451,7 +451,7 @@ class TestJsReplaySuite:
         )
         answers = {
             "responses": {
-                "/api/security/tier": {"tier": "god_mode"},
+                "/api/security/tier": {"tier": "full_access"},
                 "/api/tasks": [],
                 "/api/settings": {},
                 "/api/settings POST": {"status": "saved"},
@@ -459,7 +459,7 @@ class TestJsReplaySuite:
                 "/api/scribble": {"content": ""},
                 "/api/memory/files": [],
                 "/api/integrations": {"connections": [], "available_services": []},
-                "/api/gateway/status": {"tier": "god_mode", "pending_approvals": 1,
+                "/api/gateway/status": {"tier": "full_access", "pending_approvals": 1,
                                         "telegram": {"configured": True},
                                         "slack": {"configured": False},
                                         "whatsapp": {"auth_exists": True}},
@@ -499,8 +499,8 @@ class TestJsReplaySuite:
         )
         verdict = self._run_replay(js_harness, {
             "responses": {
-                "/api/security/tier": {"tier": "god_mode"},
-                "/api/security/tier POST": {"tier": "god_mode"},
+                "/api/security/tier": {"tier": "full_access"},
+                "/api/security/tier POST": {"tier": "full_access"},
                 "/api/tasks": [],
                 "/api/settings": {},
                 "/api/settings POST": {"status": "saved"},
@@ -508,7 +508,7 @@ class TestJsReplaySuite:
                 "/api/scribble": {"content": ""},
                 "/api/memory/files": [],
                 "/api/integrations": {"connections": [], "available_services": []},
-                "/api/gateway/status": {"tier": "god_mode", "pending_approvals": 0,
+                "/api/gateway/status": {"tier": "full_access", "pending_approvals": 0,
                                         "telegram": {"configured": False},
                                         "slack": {"configured": False},
                                         "whatsapp": {"auth_exists": False}},
@@ -517,16 +517,16 @@ class TestJsReplaySuite:
                 "/api/approvals": [],
             },
             "steps": [
-                {"set": ["tier-select", "god_mode"]},
+                {"set": ["tier-select", "full_access"]},
                 {"click": "#tier-form button"},
-                {"waitForStatus": "Tier set to: god_mode"},
+                {"waitForStatus": "Tier set to: full_access"},
             ],
             "verdict": verdict_expr,
         })
         assert verdict.get("threw") is None, verdict
         assert verdict.get("stepError") is None, verdict
-        assert verdict["badge"] == "god mode"
-        assert "Tier set to: god_mode" in verdict["statusText"]
+        assert verdict["badge"] == "full access"
+        assert "Tier set to: full_access" in verdict["statusText"]
 
     def test_gateway_status_renders_tables_and_prefills_form(self, js_harness):
         """Gateways: status table renders tier/pending/channel badges from
@@ -539,7 +539,7 @@ class TestJsReplaySuite:
         )
         verdict = self._run_replay(js_harness, {
             "responses": {
-                "/api/security/tier": {"tier": "god_mode"},
+                "/api/security/tier": {"tier": "full_access"},
                 "/api/tasks": [],
                 "/api/settings": {"telegram_bot_token": "123456:ABC-tok",
                                   "telegram_chat_whitelist": ["111", "222"],
@@ -549,7 +549,7 @@ class TestJsReplaySuite:
                 "/api/scribble": {"content": ""},
                 "/api/memory/files": [],
                 "/api/integrations": {"connections": [], "available_services": []},
-                "/api/gateway/status": {"tier": "god_mode", "pending_approvals": 5,
+                "/api/gateway/status": {"tier": "full_access", "pending_approvals": 5,
                                         "telegram": {"configured": True},
                                         "slack": {"configured": True},
                                         "whatsapp": {"auth_exists": False}},

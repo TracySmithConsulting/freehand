@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 from core.oauth import credential_store  # noqa: E402
 

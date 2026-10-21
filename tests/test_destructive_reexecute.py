@@ -2,7 +2,7 @@
 re-executes that exact tool call (source-gated).
 
 The force-confirm gate (commits 4803f68 / 5d10cc4) HOLDS a destructive OC
-tool at GOD_MODE and creates a pending approval. But approving it was a dead
+tool at FULL_ACCESS and creates a pending approval. But approving it was a dead
 action: handle_approval only flipped the DB status, so the out-of-band
 buttons (web /approve, Telegram, Slack) were decorative. This slice adds
 re_execute_approval(): when an approved destructive action is approved, re-drive

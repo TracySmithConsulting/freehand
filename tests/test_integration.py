@@ -1,7 +1,7 @@
 """Core integration tests for FreeHand."""
 
 import sys
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 import pytest
 from fastapi.testclient import TestClient

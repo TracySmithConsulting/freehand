@@ -105,7 +105,7 @@ curl -is "http://127.0.0.1:8000/api/integrations/hackernews/authorize?label=trac
 
 # Verify the broker tier-5 path
 python -c "
-import sys; sys.path.insert(0, 'C:/path/to/Default Project')
+import sys; sys.path.insert(0, '/path/to/freehand')
 from core.oauth import broker
 cid, sec, source = broker.get_client_credentials('hackernews')
 print(f'hackernews -> source={source}, creds={(cid, sec)}')

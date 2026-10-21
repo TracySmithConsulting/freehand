@@ -3,14 +3,14 @@
 The enable-time gate (commit 4803f68) confirmed *enabling* writes. This
 slice covers *invoking* them: a DESTRUCTIVE OC action (persisted risk ==
 "destructive") must ALWAYS pause for an out-of-band approval, even at
-GOD_MODE — closing the foot-gun where github.delete_repo ran unattended
+FULL_ACCESS — closing the foot-gun where github.delete_repo ran unattended
 in the highest-trust tier. Non-destructive writes keep today's tier
-behaviour (GOD_MODE still auto-runs them).
+behaviour (FULL_ACCESS still auto-runs them).
 
 Three slices:
   A. registry exposes a per-tool risk accessor (is_destructive_tool)
-  B. security.intercept_action(force_confirm=True) pauses even at GOD_MODE
-  C. the agent loop force-confirms destructive OC tools at GOD_MODE
+  B. security.intercept_action(force_confirm=True) pauses even at FULL_ACCESS
+  C. the agent loop force-confirms destructive OC tools at FULL_ACCESS
      (and does NOT confirm plain writes)
 
 These are RED tests: they fail until the implementation lands.
@@ -100,11 +100,11 @@ class TestRegistryRiskAccessor:
 
 
 class TestForceConfirmGate:
-    def test_force_confirm_pauses_at_god_mode(self, tmp_db, monkeypatch):
+    def test_force_confirm_pauses_at_full_access(self, tmp_db, monkeypatch):
         """The foot-gun fix: a destructive action must create a pending
-        approval EVEN in GOD_MODE (where every external action
+        approval EVEN in FULL_ACCESS (where every external action
         auto-approves today)."""
-        _set_tier(monkeypatch, security.PermissionTier.GOD_MODE)
+        _set_tier(monkeypatch, security.PermissionTier.FULL_ACCESS)
         result = security.intercept_action(
             "oauth_access", "delete repo",
             {"tool": "oc_github_default_delete_repo"},
@@ -113,10 +113,10 @@ class TestForceConfirmGate:
         assert result["allowed"] is False
         assert result.get("approval_id") is not None
 
-    def test_god_mode_still_auto_approves_without_force(self, tmp_db, monkeypatch):
-        """Regression guard: a plain external action at GOD_MODE with NO
+    def test_full_access_still_auto_approves_without_force(self, tmp_db, monkeypatch):
+        """Regression guard: a plain external action at FULL_ACCESS with NO
         force_confirm auto-approves immediately (unchanged behaviour)."""
-        _set_tier(monkeypatch, security.PermissionTier.GOD_MODE)
+        _set_tier(monkeypatch, security.PermissionTier.FULL_ACCESS)
         result = security.intercept_action(
             "oauth_access", "post message",
             {"tool": "oc_slack_default_post_message"},
@@ -139,7 +139,7 @@ class TestForceConfirmGate:
 
 # ── Slice C: agent-loop hook ─────────────────────────────────────────
 # Drives run_agent with a fake LLM that emits ONE tool call then a final
-# answer, at GOD_MODE. The loop must force-confirm destructive OC tools
+# answer, at FULL_ACCESS. The loop must force-confirm destructive OC tools
 # (execute_tool NOT called; an approval row is created) but still run
 # plain writes unattended (execute_tool called) — that's the behaviour
 # we're preserving.
@@ -182,17 +182,17 @@ class TestAgentLoopForceConfirm:
         result = asyncio.run(agent.run_agent("act", max_turns=3))
         return calls, result
 
-    def test_destructive_tool_held_for_approval_at_god_mode(
+    def test_destructive_tool_held_for_approval_at_full_access(
             self, tmp_db, monkeypatch):
-        """The foot-gun: at GOD_MODE a destructive OC tool must NOT fire
+        """The foot-gun: at FULL_ACCESS a destructive OC tool must NOT fire
         unattended — it pauses for an out-of-band approval."""
         calls, _ = self._drive(
             tmp_db, monkeypatch,
             "oc_github_default_delete_repo", destructive=True,
-            tier=security.PermissionTier.GOD_MODE,
+            tier=security.PermissionTier.FULL_ACCESS,
         )
         assert "oc_github_default_delete_repo" not in calls["executed"], (
-            "destructive tool ran unattended at GOD_MODE — force-confirm "
+            "destructive tool ran unattended at FULL_ACCESS — force-confirm "
             "gate is missing"
         )
         # An approval was created for it:
@@ -202,14 +202,14 @@ class TestAgentLoopForceConfirm:
                    or "delete_repo" in (a["payload"] or "")]
         assert matched, "no pending approval was created for the destructive call"
 
-    def test_plain_write_still_runs_at_god_mode(self, tmp_db, monkeypatch):
+    def test_plain_write_still_runs_at_full_access(self, tmp_db, monkeypatch):
         """Regression guard: a non-destructive write keeps today's
-        GOD_MODE behaviour — it executes without pausing."""
+        FULL_ACCESS behaviour — it executes without pausing."""
         calls, _ = self._drive(
             tmp_db, monkeypatch,
             "oc_slack_default_post_message", destructive=False,
-            tier=security.PermissionTier.GOD_MODE,
+            tier=security.PermissionTier.FULL_ACCESS,
         )
         assert "oc_slack_default_post_message" in calls["executed"], (
-            "plain write was unexpectedly gated at GOD_MODE — it should run"
+            "plain write was unexpectedly gated at FULL_ACCESS — it should run"
         )

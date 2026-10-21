@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 from core import mcp_server
 
@@ -142,13 +142,13 @@ class TestMcpToolCall:
         assert result["isError"] is True
         assert "Permission denied" in result["content"][0]["text"]
 
-    def test_write_tool_allowed_at_god_mode(self, monkeypatch):
-        """At GOD_MODE, write tools execute (same as in-process agent)."""
+    def test_write_tool_allowed_at_full_access(self, monkeypatch):
+        """At FULL_ACCESS, write tools execute (same as in-process agent)."""
         from core import agent_config
         from core.security import PermissionTier
 
         monkeypatch.setattr(mcp_server, "get_current_tier",
-                            lambda: PermissionTier.GOD_MODE)
+                            lambda: PermissionTier.FULL_ACCESS)
         monkeypatch.setattr(agent_config, "TOOL_REGISTRY",
                             {**agent_config.TOOL_REGISTRY, "write_docx": "write"})
 

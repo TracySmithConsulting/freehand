@@ -19,7 +19,14 @@ from core.database import DB_PATH
 class PermissionTier(Enum):
     AUTONOMOUS = "autonomous"
     SEMI_AUTONOMOUS = "semi_autonomous"
-    GOD_MODE = "god_mode"
+    FULL_ACCESS = "full_access"
+
+
+# Serialized values from settings/vaults written before Round 18.
+# "god_mode" (the old name of FULL_ACCESS) keeps loading as an alias.
+LEGACY_TIER_ALIASES = {
+    "god_mode": "full_access",
+}
 
 
 class ApprovalStatus(Enum):
@@ -63,6 +70,7 @@ def _save_settings(data: dict) -> None:
 def get_current_tier() -> PermissionTier:
     settings = _load_settings()
     tier_str = settings.get("tier", "semi_autonomous")
+    tier_str = LEGACY_TIER_ALIASES.get(tier_str, tier_str)
     try:
         return PermissionTier(tier_str)
     except ValueError:
@@ -70,6 +78,7 @@ def get_current_tier() -> PermissionTier:
 
 
 def set_tier(tier: str) -> str:
+    tier = LEGACY_TIER_ALIASES.get(tier, tier)
     try:
         PermissionTier(tier)
     except ValueError:
@@ -103,12 +112,12 @@ def intercept_action(
 ) -> dict:
     """Check if an action is allowed under the current permission tier.
 
-    - GOD_MODE: always allowed
+    - FULL_ACCESS: always allowed
     - AUTONOMOUS: blocked for all external actions
     - SEMI_AUTONOMOUS: pauses execution, creates pending approval
 
     ``force_confirm`` (Round 15 slice 2): when True, an external action
-    must pause for an out-of-band approval EVEN in GOD_MODE, where every
+    must pause for an out-of-band approval EVEN in FULL_ACCESS, where every
     external action otherwise auto-approves. This is how a destructive OC
     tool (e.g. github.delete_repo) is gated in the highest-trust tier.
     Non-external actions are unaffected, and a force_confirmed call at
@@ -123,9 +132,9 @@ def intercept_action(
     tier = get_current_tier()
     is_external = _is_external_action(action_type)
 
-    # GOD_MODE normally auto-approves. A force-confirmed external action
+    # FULL_ACCESS normally auto-approves. A force-confirmed external action
     # is the exception: it must still pause for an out-of-band approval.
-    if tier == PermissionTier.GOD_MODE and not (force_confirm and is_external):
+    if tier == PermissionTier.FULL_ACCESS and not (force_confirm and is_external):
         return {"allowed": True, "approval_id": None, "tier": tier.value}
 
     if not is_external:
@@ -134,7 +143,7 @@ def intercept_action(
     if tier == PermissionTier.AUTONOMOUS:
         return {"allowed": False, "approval_id": None, "tier": tier.value}
 
-    # SEMI_AUTONOMOUS — or GOD_MODE with force_confirm — create pending approval
+    # SEMI_AUTONOMOUS — or FULL_ACCESS with force_confirm — create pending approval
     payload_json = json.dumps(payload or {})
     conn = _get_conn()
     cursor = conn.execute(

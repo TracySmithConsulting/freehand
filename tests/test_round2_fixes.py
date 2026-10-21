@@ -21,7 +21,7 @@ from unittest.mock import patch, AsyncMock
 
 import pytest
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 from core import agent, scheduler, security as security_mod
 from core import security  # re-export for tests
@@ -54,10 +54,10 @@ class TestSettingsMerge:
         from server import _merge_settings, SETTINGS_ALLOWED_KEYS
 
         existing = {"api_key": "abc", "tier": "semi_autonomous", "oauth": {"redirect_uris": {"google": "x"}}}
-        updates = {"tier": "god_mode"}
+        updates = {"tier": "full_access"}
         merged, rejected = _merge_settings(existing, updates)
         assert merged["api_key"] == "abc"
-        assert merged["tier"] == "god_mode"
+        assert merged["tier"] == "full_access"
         assert merged["oauth"]["redirect_uris"]["google"] == "x"
 
     def test_merge_rejects_unknown_keys(self):
@@ -116,12 +116,12 @@ class TestSafeThreadPath:
 # ── N6: source-aware tier check ────────────────────────────────────────
 
 class TestSourceAwareTier:
-    def test_remote_source_demotes_god_mode_for_write(self, monkeypatch):
+    def test_remote_source_demotes_legacy_full_access_for_write(self, monkeypatch):
         """A write tool call from telegram/slack/whatsapp must NOT execute
-        freely even when tier == GOD_MODE — must require approval."""
+        freely even when tier == FULL_ACCESS — must require approval."""
         from core.security import PermissionTier
         monkeypatch.setattr(agent, "get_current_tier",
-                            lambda: PermissionTier.GOD_MODE)
+                            lambda: PermissionTier.FULL_ACCESS)
 
         calls = {"intercepted": 0}
 
@@ -158,15 +158,15 @@ class TestSourceAwareTier:
         monkeypatch.setattr(agent, "call_llm", fake_call_llm)
 
         result = asyncio.run(agent.run_agent("write a doc", source="telegram"))
-        assert calls["intercepted"] == 1, "Remote write tool must require approval even at GOD_MODE"
+        assert calls["intercepted"] == 1, "Remote write tool must require approval even at FULL_ACCESS"
         assert result["text"] == "done"
 
-    def test_local_source_keeps_god_mode(self, monkeypatch):
-        """A write tool call from web/CLI source with GOD_MODE must execute
+    def test_local_source_keeps_full_access(self, monkeypatch):
+        """A write tool call from web/CLI source with FULL_ACCESS must execute
         freely (the legacy behaviour)."""
         from core.security import PermissionTier
         monkeypatch.setattr(agent, "get_current_tier",
-                            lambda: PermissionTier.GOD_MODE)
+                            lambda: PermissionTier.FULL_ACCESS)
 
         calls = {"intercepted": 0, "ran_tool": False}
 
@@ -203,7 +203,7 @@ class TestSourceAwareTier:
         monkeypatch.setattr(agent, "call_llm", fake_call_llm)
 
         result = asyncio.run(agent.run_agent("write", source=""))
-        assert calls["intercepted"] == 0, "Local write tool at GOD_MODE must not intercept"
+        assert calls["intercepted"] == 0, "Local write tool at FULL_ACCESS must not intercept"
         assert calls["ran_tool"] is True
 
 

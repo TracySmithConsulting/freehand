@@ -32,7 +32,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 from core.oauth import broker  # noqa: E402
 from core.oauth.providers import get_connector  # noqa: E402

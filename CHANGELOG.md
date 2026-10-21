@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-10-20
 
+### Changed — Round 18: release hygiene (dark theme, tier rename, path scrub) (2026-10-21)
+
+Pre-release pass on packaging-safety details:
+
+- **Dark theme shipped.** The token layer gained a complete override set
+  under one `@media (prefers-color-scheme: dark)` block: warm charcoal
+  paper, chalk-cream writing, brighter rescued inks for every accent.
+  All text/background pairs measured >= 4.5:1 on the dark palette; the
+  focus ring measures ~8:1 on dark paper. `color-scheme` flips so native
+  form controls follow too. The two hand-drawn SVG strokes get
+  lighter-ink twins in dark mode. Light theme is pixel-identical to
+  before (verified via computed styles in the browser).
+- **"God Mode" renamed to "Full Access".** The permission tier users
+  kept calling by an awkward name is now `full_access` (`GOD_MODE` →
+  `FULL_ACCESS` in `core/security.py`). Serialized settings, the UI
+  select ("Full Access — Full system access"), MCP docs, gateway hint
+  text and all tests updated. Backward compatibility: `get_current_tier`
+  and `set_tier` accept the legacy `"god_mode"` value (`LEGACY_TIER_ALIASES`),
+  and the tier form normalizes it client-side, so existing vaults keep
+  working without a migration.
+- **No machine-specific paths in the repo.** 27 test files hardcoded
+  `C:\Users\<user>\\Documents\\Default Project` for imports and vault
+  paths; all now resolve the project root from `__file__`, so the suite
+  runs from any checkout location. Two of those hardcoded paths pointed
+  into the *real* vault during tests — part of the test-isolation debt
+  tracked earlier. The `docs/integrations` example path was genericized
+  to `/path/to/freehand`.
+- Housekeeping: leaked test rows (approvals, OAuth `pending_states`) were
+  again scrubbed from the real vault after full-suite runs; the root
+  cause (fixture isolation) remains open.
+
+### Changed — Round 17.3: freehand visual refresh of the shipped UI (2026-10-21)
+
+The dashboard previously read as the default template — system font,
+Bootstrap alert-palette badges, anonymous white cards. It now has an
+identity of its own, grounded in the product's own vocabulary (scribbles,
+journal, threads, vault):
+
+- Full CSS custom-property token layer (warm paper, ink, plum actions,
+  teal connected, peach highlights) — light theme, dark-mode-ready.
+- Freehand signature: hand-traced asymmetric card/button radii, dashed
+  postcard rules, hand-drawn squiggle underlines on headings, peach
+  legend chips, mono face for operator data (hotkeys, cron, tokens).
+- Spare-screen-reader wins kept front and centre: visible-on-focus skip
+  link, `scroll-margin-top` so sticky-nav jumps never hide focus,
+  `:focus-visible` outlines, reduced-motion respected, every text/bg
+  pair checked >= 4.5:1.
+- ~10 JS-injected inline styles now live in CSS classes (agent reply
+  bubble, tools list, runner alert, gateway status table), so colors and
+  spacing obey the tokens.
+- No behavior change: all panel ids/classes, live regions and the
+  replay-driver contracts are untouched.
+
 ### Fixed — Round 17.2: live UI walkthrough follow-ups (2026-10-21)
 
 Clicking through the real running app found two bugs unit tests missed:

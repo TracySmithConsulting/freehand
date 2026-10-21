@@ -113,7 +113,7 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
     """Dispatch a tool call to the existing execute_tool().
 
     Reuses the same permission/tier machinery as the in-process agent loop.
-    A write tool at GOD_MODE from an MCP call still executes (same as if
+    A write tool at FULL_ACCESS from an MCP call still executes (same as if
     FreeHand itself had decided to call it). Write tools at lower tiers
     are rejected — the MCP client should surface that to the user.
 
@@ -130,7 +130,7 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
             "content": [{"type": "text", "text": f"Unknown tool: {name}"}],
             "isError": True,
         }
-    if permission == "write" and tier != PermissionTier.GOD_MODE:
+    if permission == "write" and tier != PermissionTier.FULL_ACCESS:
         result = intercept_action(
             "oauth_access",
             f"MCP tool call: {name}",
@@ -145,7 +145,7 @@ def _mcp_tool_call(name: str, arguments: Dict) -> Dict:
                         f"Permission denied for {name}: "
                         f"write tools require explicit approval at the current "
                         f"permission tier. Use /approve in the FreeHand UI "
-                        f"first, or upgrade tier to GOD_MODE in settings."
+                        f"first, or upgrade tier to Full Access in settings."
                     ),
                 }],
                 "isError": True,

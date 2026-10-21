@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 # Pitfall 43: CliRunner() with no args (mix_stderr was removed in
 # current Typer). Don't pass kwargs that don't exist.

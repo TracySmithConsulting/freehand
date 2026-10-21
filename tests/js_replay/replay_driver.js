@@ -77,7 +77,7 @@ async function main() {
     </section>
     <section id="settings">
       <form id="tier-form">
-        <select id="tier-select"><option>autonomous</option><option selected>semi_autonomous</option><option>god_mode</option></select>
+        <select id="tier-select"><option>autonomous</option><option selected>semi_autonomous</option><option>full_access</option></select>
         <button type="submit">Save Tier</button>
       </form>
       <input id="omniroute">

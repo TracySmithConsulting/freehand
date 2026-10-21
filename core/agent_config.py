@@ -77,7 +77,7 @@ def list_available_tools() -> List[Dict]:
 # Permission classes:
 #   "read"  — does not change external state; allowed in any tier.
 #   "write" — mutates external state (filesystem, OAuth-protected APIs).
-#             Requires permission check (intercept_action) unless tier == GOD_MODE.
+#             Requires permission check (intercept_action) unless tier == FULL_ACCESS.
 # Keep this in sync with `TOOL_SCHEMAS` below — every entry here MUST
 # have a matching schema, or the tool won't appear in the LLM's
 # available tools.
@@ -524,7 +524,7 @@ You have access to the following tool categories:
 ## Current Tier: {tier}
 - autonomous: read-only access
 - semi_autonomous: may request approval for writes
-- god_mode: full access
+- full_access: full access (legacy value "god_mode" still accepted)
 
 ## Connected Services:
 {connected_str}

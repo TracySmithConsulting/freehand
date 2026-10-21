@@ -76,7 +76,7 @@ async def _call_api(token_data: dict, method: str, url: str, headers: dict = Non
 
 def _check_write_permission(action: str, service: str, label: str) -> dict:
     tier = get_current_tier()
-    if tier == PermissionTier.GOD_MODE:
+    if tier == PermissionTier.FULL_ACCESS:
         return {"allowed": True}
     if action in READ_ONLY:
         return {"allowed": True}

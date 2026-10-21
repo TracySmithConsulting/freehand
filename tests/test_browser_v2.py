@@ -15,11 +15,11 @@ from unittest.mock import MagicMock, patch, AsyncMock
 
 import pytest
 
-sys.path.insert(0, r"C:\Users\trace\Documents\Default Project")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
 # Chrome extension dir, derived portably from this file's location so the
 # manifest tests work on any OS / CI checkout (the files are git-tracked
-# under freehand/chrome_extension/). Replaces a hardcoded C:\Users\trace path.
+# under freehand/chrome_extension/). Replaces a hardcoded <project root> path.
 _EXTENSION_DIR = Path(__file__).resolve().parent.parent / "freehand" / "chrome_extension"
 
 
@@ -545,7 +545,7 @@ class TestToolRegistration:
             assert tool in tool_names, f"{tool} not in list_available_tools() output"
 
     def test_write_tools_require_approval(self):
-        """Write-classified browser tools require approval in non-GOD_MODE tier."""
+        """Write-classified browser tools require approval in non-FULL_ACCESS tier."""
         from core.agent_config import TOOL_REGISTRY
 
         write_tools = [

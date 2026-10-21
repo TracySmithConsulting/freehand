@@ -342,7 +342,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     # N6 fix: source-aware write authorisation. Tools like `write_docx` are
     # dangerous when triggered from a remote gateway. We restrict 'web' and
     # 'cli' to the full tier system, but require explicit confirmation for
-    # write tools triggered from remote gateways when tier is GOD_MODE.
+    # write tools triggered from remote gateways when tier is FULL_ACCESS.
     # This doesn't replace the tier system — it layers on top.
     # REMOTE_SOURCES is imported from core.security (single source of truth,
     # also used by re_execute_approval for its source-gating).
@@ -388,15 +388,15 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
 
         if permission == "write":
             # N6: tighten permission for remote sources.
-            # Even at GOD_MODE, write tools from telegram/slack/whatsapp go
+            # Even at FULL_ACCESS, write tools from telegram/slack/whatsapp go
             # through the approval workflow unless explicitly exempted.
             effective_tier = tier
-            if is_remote_source and tier == PermissionTier.GOD_MODE:
+            if is_remote_source and tier == PermissionTier.FULL_ACCESS:
                 # Demote write tools from remote sources to SEMI_AUTONOMOUS
                 # behaviour for this single call. The tier setting in
                 # settings.json is unchanged.
                 effective_tier = PermissionTier.SEMI_AUTONOMOUS
-            if effective_tier != PermissionTier.GOD_MODE:
+            if effective_tier != PermissionTier.FULL_ACCESS:
                 result = intercept_action(
                     "oauth_access",
                     f"Tool call: {tool_name}",
@@ -418,13 +418,13 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                     tool_result["role"] = "tool"
                     tool_result["tool_call_id"] = tool_call["id"]
             else:
-                # 'effective_tier' is GOD_MODE (either real, or remote source
-                # didn't apply because tier wasn't GOD_MODE).
+                # 'effective_tier' is FULL_ACCESS (either real, or remote source
+                # didn't apply because tier wasn't FULL_ACCESS).
                 #
                 # Round 15 slice 2 (foot-gun fix): destructive OC tools
                 # (persisted risk == "destructive", e.g. github.delete_repo)
                 # must STILL pause for an out-of-band approval even at
-                # GOD_MODE, where every other external write auto-runs.
+                # FULL_ACCESS, where every other external write auto-runs.
                 # Non-destructive writes keep today's "just runs" behaviour.
                 from core.tools import registry as _registry
                 from core.tools import composio_registry as _composio_registry
