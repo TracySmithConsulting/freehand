@@ -76,9 +76,9 @@ async function main() {
       <div id="agents-imports" aria-live="polite"></div>
     </section>
     <section id="settings">
-      <div id="tier-display" aria-live="polite"></div>
       <form id="tier-form">
         <select id="tier-select"><option>autonomous</option><option selected>semi_autonomous</option><option>god_mode</option></select>
+        <button type="submit">Save Tier</button>
       </form>
       <input id="omniroute">
       <input id="api-key">
@@ -121,15 +121,25 @@ async function main() {
   const sandboxWindow = parserWindow;
   sandboxWindow.document = document;
 
+  // Sequential response queues: responses["X LOADS"] = [first, second, …]
+  // pops per GET; the last value repeats. Covers load → action → reload
+  // flows where the same endpoint must answer differently per call.
+  const _queues = {};
+  for (const k of Object.keys(answers.responses)) {
+    if (k.endsWith(' LOADS')) _queues[k.slice(0, -6)] = answers.responses[k].slice();
+  }
   const _fetchLog = [];
   sandboxWindow.fetch = async (url, options) => {
     const base = String(url).split('?')[0];
     const method = (options && options.method) || 'GET';
     const key = base + ' ' + method;
-    _fetchLog.push(key + (options && options.method === 'POST' ? ' body=' + String(options.body || '').slice(0, 60) : ''));
-    const answer = answers.responses[key] !== undefined
-      ? answers.responses[key]
-      : answers.responses[base];
+    _fetchLog.push(key);
+    let answer;
+    if (method === 'GET' && _queues[base] && _queues[base].length) {
+      answer = _queues[base].length > 1 ? _queues[base].shift() : _queues[base][0];
+    } else {
+      answer = answers.responses[key] !== undefined ? answers.responses[key] : answers.responses[base];
+    }
     if (answer === undefined) {
       return { ok: false, status: 404, json: async () => ({ detail: 'no replay answer for ' + key }) };
     }
@@ -229,9 +239,18 @@ async function main() {
           }
         }
         if (!handled) {
-          if (typeof el.click === 'function') el.click();
-          else if (typeof el.onclick === 'function') el.onclick({ preventDefault() {} });
-          else throw new Error('scenario click: ' + step.click + ' has no click handler');
+          if (typeof el.onclick === 'function') {
+            el.onclick({ preventDefault() {} });
+          } else if (el.getAttribute && el.getAttribute('onclick')) {
+            // Runtime-rendered markup (approvals cards) wires handlers via
+            // onclick ATTRIBUTES; linkedom's .click() emits an event but
+            // nothing listens for attribute handlers, so eval them here.
+            vm.runInContext(el.getAttribute('onclick'), ctx, { filename: 'onclick-attr' });
+          } else if (typeof el.click === 'function') {
+            el.click();
+          } else {
+            throw new Error('scenario click: ' + step.click + ' has no click handler');
+          }
         }
       } else if (step.waitForStatus !== undefined) {
         const prefix = step.waitForStatus;
@@ -286,6 +305,11 @@ async function main() {
     return;
   }
   verdict.stepError = stepError;
+  if (answers.debug) {
+    verdict.debugFetchLog = _fetchLog;
+    verdict.debugTierDisplay = (doc.getElementById('tier-display') || {}).innerHTML || 'NO #tier-display';
+    verdict.debugApprovalsList = (doc.getElementById('approvals-list') || {}).innerHTML || 'NO #approvals-list';
+  }
   print(JSON.stringify(Object.assign({ threw: null }, verdict)));
 
 }

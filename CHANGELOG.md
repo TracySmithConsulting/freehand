@@ -37,8 +37,17 @@ auto-sync → results → Open button, LLM-save reporting runner activation
 Running the LLM-save scenario found and fixed a third real UI bug: the
 shipped handler read `data.runner_triggered` straight off the raw fetch
 Response without calling `.json()` first, so the "Task runner activating"
-message could never render. Harness skips cleanly without node. Full
-suite: 465 passed, 2 skipped.
+message could never render. Harness skips cleanly without node.
+
+The remaining panels are pinned too (R17.4): approvals (card renders with
+Approve/Reject → clicking Approve POSTs the action, announces it, and the
+reloaded list clears — via a per-endpoint response queue that answers
+differently on load and reload), tier save (form submit posts the select
+value, badge repaints, status announces), and gateway status (tier/pending/
+channel badge table renders AND the form pre-fills from /api/settings).
+Driver support added for sequential response queues and onclick-attribute
+handlers (runtime-rendered markup in linkedom). Full suite: 468 passed,
+2 skipped.
 `tests/test_round17_polish.py::TestConnectionsReconnect_JsReplay` serves
 the real index.html through FastAPI's TestClient, snapshots the CURRENT
 grouped `/api/integrations` payload with an expired connection, and runs

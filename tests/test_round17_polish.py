@@ -437,6 +437,136 @@ class TestJsReplaySuite:
         assert verdict["firstTitle"] == "Journal 2026-10"
         assert verdict["openBtn"] is True
 
+    def test_approvals_render_and_approve_reloads_empty(self, js_harness):
+        """Pending Approvals: one pending card renders with Approve/Reject
+        wired to handleApproval(id, action); clicking Approve POSTs the
+        action, announces it, and reloads the (now empty) list."""
+        verdict_expr = (
+            "({ approveBtns: [...document.querySelectorAll('#approvals-list button')]"
+            ".filter(b => b.textContent === 'Approve').length,"
+            " rejectBtns: [...document.querySelectorAll('#approvals-list button')]"
+            ".filter(b => b.textContent === 'Reject').length,"
+            " statusText: document.getElementById('status-region').textContent,"
+            " listAfter: document.getElementById('approvals-list').textContent })"
+        )
+        answers = {
+            "responses": {
+                "/api/security/tier": {"tier": "god_mode"},
+                "/api/tasks": [],
+                "/api/settings": {},
+                "/api/settings POST": {"status": "saved"},
+                "/api/runner/status": {"llm_configured": False},
+                "/api/scribble": {"content": ""},
+                "/api/memory/files": [],
+                "/api/integrations": {"connections": [], "available_services": []},
+                "/api/gateway/status": {"tier": "god_mode", "pending_approvals": 1,
+                                        "telegram": {"configured": True},
+                                        "slack": {"configured": False},
+                                        "whatsapp": {"auth_exists": True}},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/approvals/7/approve": {"status": "approved"},
+            },
+            "steps": [
+                {"waitMs": 300},
+                {"click": "#approvals-list .approval-actions button"},
+                {"waitMs": 400},
+            ],
+            "verdict": verdict_expr,
+        }
+        # /api/approvals must answer the LOAD with one card and the RELOAD
+        # (after the action) with none — the driver supports a response
+        # queue suffix for exactly this.
+        answers["responses"]["/api/approvals LOADS"] = [
+            [{"id": 7, "action_type": "browser_action",
+              "description": "Foreign-origin form submit blocked",
+              "created_at": "2026-10-21 09:00:08", "status": "pending"}],
+            [],
+        ]
+        verdict = self._run_replay(js_harness, answers)
+        assert verdict.get("threw") is None, verdict
+        assert verdict.get("stepError") is None, verdict
+        # Rendering happened (before the action, the card had both buttons).
+        assert "Approval approved." in verdict["statusText"]
+        assert "No pending approvals" in verdict["listAfter"]
+
+    def test_tier_save_updates_badge_and_status(self, js_harness):
+        """Tier form: submit posts the select's value and both announce
+        'Tier set to: …' and repaint the header badge."""
+        verdict_expr = (
+            "({ badge: document.querySelector('#tier-display .tier-badge').textContent,"
+            " statusText: document.getElementById('status-region').textContent })"
+        )
+        verdict = self._run_replay(js_harness, {
+            "responses": {
+                "/api/security/tier": {"tier": "god_mode"},
+                "/api/security/tier POST": {"tier": "god_mode"},
+                "/api/tasks": [],
+                "/api/settings": {},
+                "/api/settings POST": {"status": "saved"},
+                "/api/runner/status": {"llm_configured": False},
+                "/api/scribble": {"content": ""},
+                "/api/memory/files": [],
+                "/api/integrations": {"connections": [], "available_services": []},
+                "/api/gateway/status": {"tier": "god_mode", "pending_approvals": 0,
+                                        "telegram": {"configured": False},
+                                        "slack": {"configured": False},
+                                        "whatsapp": {"auth_exists": False}},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/approvals": [],
+            },
+            "steps": [
+                {"set": ["tier-select", "god_mode"]},
+                {"click": "#tier-form button"},
+                {"waitForStatus": "Tier set to: god_mode"},
+            ],
+            "verdict": verdict_expr,
+        })
+        assert verdict.get("threw") is None, verdict
+        assert verdict.get("stepError") is None, verdict
+        assert verdict["badge"] == "god mode"
+        assert "Tier set to: god_mode" in verdict["statusText"]
+
+    def test_gateway_status_renders_tables_and_prefills_form(self, js_harness):
+        """Gateways: status table renders tier/pending/channel badges from
+        /api/gateway/status AND pre-fills the form fields from /api/settings."""
+        verdict_expr = (
+            "({ rows: [...document.querySelectorAll('#gateway-status tr')].length,"
+            " tgRowBadges: [...(document.querySelectorAll('#gateway-status tr')[2] || {querySelectorAll: function(){return []}}).querySelectorAll('.badge')].map(b => b.textContent),"
+            " tgToken: document.getElementById('tg-token').value,"
+            " slackToken: document.getElementById('slack-token').value })"
+        )
+        verdict = self._run_replay(js_harness, {
+            "responses": {
+                "/api/security/tier": {"tier": "god_mode"},
+                "/api/tasks": [],
+                "/api/settings": {"telegram_bot_token": "123456:ABC-tok",
+                                  "telegram_chat_whitelist": ["111", "222"],
+                                  "slack_signing_secret": "sig-abc",
+                                  "slack_bot_token": "xoxb-slack-tok"},
+                "/api/runner/status": {"llm_configured": False},
+                "/api/scribble": {"content": ""},
+                "/api/memory/files": [],
+                "/api/integrations": {"connections": [], "available_services": []},
+                "/api/gateway/status": {"tier": "god_mode", "pending_approvals": 5,
+                                        "telegram": {"configured": True},
+                                        "slack": {"configured": True},
+                                        "whatsapp": {"auth_exists": False}},
+                "/api/agents": [],
+                "/api/agents/imported": [],
+                "/api/approvals": [],
+            },
+            "steps": [{"waitMs": 400}],
+            "verdict": verdict_expr,
+        })
+        assert verdict.get("threw") is None, verdict
+        assert verdict.get("stepError") is None, verdict
+        assert verdict["rows"] == 5  # tier, pending, telegram, slack, whatsapp
+        assert verdict["tgRowBadges"] == ["configured"]
+        assert verdict["tgToken"] == "123456:ABC-tok"
+        assert verdict["slackToken"] == "xoxb-slack-tok"
+
     def test_llm_save_reports_runner_activation_and_updates_idle_notice(self, js_harness):
         """Settings: save LLM key (server says runner_triggered) → status
         announcement + idle notice box re-checks /api/runner/status (which
