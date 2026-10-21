@@ -693,6 +693,7 @@
     <!-- Task Scheduler -->
     <section id="tasks" aria-labelledby="task-heading">
       <h2 id="task-heading">Task Scheduler</h2>
+      <div id="task-runner-status" aria-live="polite"></div>
       <div id="task-list" aria-live="polite">
         <p class="empty-state">Loading tasks...</p>
       </div>
@@ -1243,6 +1244,7 @@
       });
 
       function loadTasks() {
+        checkRunnerStatus();
         var listEl = document.getElementById('task-list');
         listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
@@ -1434,6 +1436,25 @@
         })
         .catch(function() {});
 
+      // R17-P5: mirror the task runner's own health check (R17-P3 surfaces
+      // side in the Tasks tab; saving an LLM key re-checks immediately).
+      function checkRunnerStatus() {
+        var box = document.getElementById('task-runner-status');
+        if (!box) return;
+        apiFetch('/api/runner/status')
+        .then(function(res) { return res.json(); })
+        .then(function(status) {
+          if (status.llm_configured) {
+            box.innerHTML = '';
+          } else {
+            box.innerHTML =
+              '<p class="empty-state" style="color:#c0392b;">Task runner is idle: no LLM is configured, so scheduled tasks are NOT executing. ' +
+              '<a href="#settings">Save an LLM API key under Settings</a> to activate it.</p>';
+          }
+        })
+        .catch(function() { /* status is advisory; leave the box untouched */ });
+      }
+
       document.getElementById('llm-save-btn').addEventListener('click', function() {
         var llmConfig = {
           provider: document.getElementById('llm-provider').value,
@@ -1446,8 +1467,13 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm: llmConfig })
         })
-        .then(function() {
-          showStatus('LLM settings saved.', 'success');
+        .then(function(data) {
+          showStatus(
+            data.runner_triggered
+              ? 'LLM settings saved. Task runner activating — scheduled tasks fire shortly.'
+              : 'LLM settings saved.',
+            'success');
+          checkRunnerStatus();
         })
         .catch(function() {
           showStatus('Failed to save LLM settings.', 'error');
@@ -1524,8 +1550,10 @@
                       '<div class="connection-meta">' + (isExpired ? '<span style="color:#c0392b;">' + timeLeft + '</span>' : timeLeft) + ' · ' + escapeHtml(conn.connected_at) + '</div>' +
                       '<div class="connection-meta">' + escapeHtml(userLabel) + '</div>' +
                       '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' +
-                    '</div>' +
-                    '<div class="connection-actions">' +
+                    '</div>' +                      '<div class="connection-actions">' +
+                      (isExpired
+                        ? '<button class="secondary" onclick="reconnectConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Reconnect ' + escapeHtml(svc) + ' (' + escapeHtml(conn.label) + ')">Reconnect</button> '
+                        : '') +
                       '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Test</button>' +
                       '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Disconnect</button>' +
                     '</div>';
@@ -1651,6 +1679,13 @@
         label = label.trim() || 'default';
         window.open('/api/integrations/' + service + '/authorize?label=' + encodeURIComponent(label), '_blank', 'width=600,height=700');
       }
+
+      // R17-P6: expired tokens used to be announced only in the boot log.
+      // A reconnect reuses the same authorize endpoint with the SAME label,
+      // so the existing connection row is refreshed in place.
+      window.reconnectConnection = function(service, label) {
+        window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(label), '_blank', 'width=600,height=700');
+      };
 
       window.disconnectService = function(service, label) {
         if (!confirm('Disconnect ' + service + ' (' + label + ')?')) return;

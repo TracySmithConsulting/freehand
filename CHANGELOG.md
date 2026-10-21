@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] — 2026-10-20
 
+### Added — Round 17.1: medium polish batch (2026-10-21)
+
+The three medium items from the round-17 survey, closing the loop between
+setup and feedback.
+
+**Same-tick LLM activation (R17-P5).** Saving LLM settings now kicks a
+due-tasks pass in the background (`POST /api/settings` returns
+`runner_triggered`) instead of waiting for the next 30s scheduler tick —
+saved keys feel alive within seconds, not at the next cron cadence.
+Non-fatal when there's no running loop, and silently idles if the saved
+config still isn't usable.
+
+**Reconnect on expired connections (R17-P6).** Expired cards in the
+Connections panel carry a Reconnect button that reopens the authorize
+flow with the connection's SAME label, refreshing the row in place —
+previously "Token expired — user should reconnect" lived only in the
+boot log.
+
+**Runner-idle surfacing (R17-P3).** The Tasks tab shows a red note —
+"Task runner is idle: no LLM is configured, so scheduled tasks are NOT
+executing" — backed by a new `GET /api/runner/status` endpoint that
+mirrors the exact check `run_due_tasks()` itself uses (whitespace-only
+keys count as unconfigured, same as the runner's gate). Refreshed with
+every task-list load and immediately after an LLM save.
+
+**Tests**: 8 new in `tests/test_round17_polish.py` (trigger/no-trigger
+gates, persistence after save, runner-status agreement with the runner's
+own skip-reason). Full suite: 460 passed, 2 skipped. Live smoke: boot,
+`/api/runner/status` correct while idle, empty-key save does not trigger.
+
 ### Added — Round 17: Polish pass (2026-10-21)
 
 Small visible fixes found by walking the app against the real vault.

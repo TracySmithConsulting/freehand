@@ -7,10 +7,13 @@ Covers:
   one-shot (invalid cron) rows alone.
 - Memory panel backend: /api/memory/files index listing and /api/memory/file
   vault-boundary-validated reader (traversal, non-.md, missing-file rejections).
+- R17-P5: saving LLM settings kicks a due-tasks pass in the background.
+- R17-P3: /api/runner/status mirrors the runner's own "LLM configured?" check.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -23,6 +26,9 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import core.database as database
 import core.scheduler as scheduler
 import server
+
+# Short alias the P5/P3 tests use.
+core_scheduler = scheduler
 
 
 # ── R17-P2: backfill_next_run ────────────────────────────────────────────
@@ -185,3 +191,103 @@ class TestMemoryFileEndpoint:
             asyncio.run(server.memory_file(path="vault/Journal/2026-10.md"))
         assert exc.value.status_code == 404
         assert "sync" in str(exc.value.detail).lower()
+
+
+# ── R17-P5/P3: LLM-save → immediate due-tasks pass; runner status ───────
+
+
+class TestSaveSettingsTriggersRunner:
+    def _patch_settings_path(self, tmp_path, monkeypatch) -> Path:
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(json.dumps({"tier": "semi_autonomous"}))
+        monkeypatch.setattr(server, "VAULT_SETTINGS_PATH", settings_path)
+        return settings_path
+
+    def test_saving_llm_key_triggers_a_due_tasks_pass(self, tmp_path, monkeypatch):
+        self._patch_settings_path(tmp_path, monkeypatch)
+        calls = []
+        monkeypatch.setattr(
+            core_scheduler, "run_due_tasks", lambda: calls.append(1) or {"executed": 0, "failed": 0}
+        )
+        result = asyncio.run(server.save_settings(
+            {"llm": {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-test"}}
+        ))
+        assert result["status"] == "saved"
+        assert result["runner_triggered"] is True
+        assert calls, "runner should have been invoked asynchronously"
+
+    def test_saving_non_llm_settings_does_not_trigger_runner(self, tmp_path, monkeypatch):
+        settings_path = self._patch_settings_path(tmp_path, monkeypatch)
+        calls = []
+        monkeypatch.setattr(
+            core_scheduler, "run_due_tasks", lambda: calls.append(1) or {"executed": 0, "failed": 0}
+        )
+        result = asyncio.run(server.save_settings({"tier": "god_mode"}))
+        assert result["status"] == "saved"
+        assert result["runner_triggered"] is False
+        assert not calls
+
+    def test_saving_empty_llm_config_does_not_trigger(self, tmp_path, monkeypatch):
+        self._patch_settings_path(tmp_path, monkeypatch)
+        calls = []
+        monkeypatch.setattr(
+            core_scheduler, "run_due_tasks", lambda: calls.append(1) or {"executed": 0, "failed": 0}
+        )
+        result = asyncio.run(server.save_settings({"llm": {"api_key": "   "}}))
+        assert result["runner_triggered"] is False
+        assert not calls
+
+    def test_saved_settings_persist_after_llm_save(self, tmp_path, monkeypatch):
+        settings_path = self._patch_settings_path(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            core_scheduler, "run_due_tasks", lambda: {"executed": 0, "failed": 0}
+        )
+        asyncio.run(server.save_settings(
+            {"llm": {"api_key": "sk-test"}}
+        ))
+        saved = json.loads(settings_path.read_text())
+        assert saved["llm"]["api_key"] == "sk-test"
+
+
+class TestRunnerStatusEndpoint:
+    def _patch_agent_config(self, tmp_path, monkeypatch, llm: dict | None):
+        import core.agent_config as agent_config
+        settings_path = tmp_path / "settings.json"
+        settings_path.write_text(
+            json.dumps({"llm": llm} if llm is not None else {})
+        )
+        monkeypatch.setattr(agent_config, "SETTINGS_PATH", settings_path)
+
+    def test_idle_when_no_llm_configured(self, tmp_path, monkeypatch):
+        self._patch_agent_config(tmp_path, monkeypatch, None)
+        status = asyncio.run(server.runner_status())
+        assert status["llm_configured"] is False
+        assert status["provider"] is None
+
+    def test_active_when_api_key_present(self, tmp_path, monkeypatch):
+        self._patch_agent_config(
+            tmp_path, monkeypatch,
+            {"provider": "openai", "model": "gpt-4o-mini", "api_key": "sk-x"},
+        )
+        status = asyncio.run(server.runner_status())
+        assert status["llm_configured"] is True
+        assert status["provider"] == "openai"
+
+    def test_whitespace_key_counts_as_unconfigured(self, tmp_path, monkeypatch):
+        """Mirrors run_due_tasks' own .strip() check — a blank key must not
+        make the UI claim the runner is active."""
+        self._patch_agent_config(
+            tmp_path, monkeypatch,
+            {"provider": "openai", "model": "gpt-4o-mini", "api_key": "  ", "base_url": ""},
+        )
+        status = asyncio.run(server.runner_status())
+        assert status["llm_configured"] is False
+
+    def test_matches_the_runners_own_gate(self, tmp_path, monkeypatch):
+        """runner_status and run_due_tasks must agree on 'is there an LLM?'"""
+        self._patch_agent_config(tmp_path, monkeypatch, None)
+        monkeypatch.setattr(scheduler, "_TASK_RUNNER_WARNED", True)
+        result = scheduler.run_due_tasks()
+        status = asyncio.run(server.runner_status())
+        assert result["skipped"] == "llm_not_configured"
+        assert status["llm_configured"] is False

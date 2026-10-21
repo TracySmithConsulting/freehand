@@ -85,6 +85,8 @@ app = FastAPI(
 # DB_PATH is imported from core.database (canonical vault/agent.db path)
 VAULT_DIR = Path(__file__).parent / "vault"
 SCRIBBLE_PATH = VAULT_DIR / "00_Scribble.md"
+# Module-level so tests can monkeypatch it; the /api/settings handlers use it.
+VAULT_SETTINGS_PATH = VAULT_DIR / "settings.json"
 
 # N9 fix: request body size limit middleware.
 # Without a cap, anyone with X-API-Key can POST a 100MB body to
@@ -537,24 +539,57 @@ def _deep_merge_dicts(existing: dict, updates: dict) -> dict:
 
 @app.get("/api/settings", dependencies=[Depends(require_api_key)])
 async def get_settings():
-    settings_path = Path(__file__).parent / "vault" / "settings.json"
-    if settings_path.exists():
-        return json.loads(settings_path.read_text())
+    if VAULT_SETTINGS_PATH.exists():
+        return json.loads(VAULT_SETTINGS_PATH.read_text())
     return {"api_key": "", "omniroute": ""}
 
 
 @app.post("/api/settings", dependencies=[Depends(require_api_key)])
 async def save_settings(body: dict):
-    settings_path = Path(__file__).parent / "vault" / "settings.json"
     existing = {}
-    if settings_path.exists():
+    if VAULT_SETTINGS_PATH.exists():
         try:
-            existing = json.loads(settings_path.read_text())
+            existing = json.loads(VAULT_SETTINGS_PATH.read_text())
         except Exception:
             pass
     merged, rejected = _merge_settings(existing, body)
-    settings_path.write_text(json.dumps(merged))
-    return {"status": "saved", "rejected": rejected}
+    VAULT_SETTINGS_PATH.write_text(json.dumps(merged))
+    # R17-P5: a newly saved LLM key previously meant the task runner sat idle
+    # until the next scheduler tick. Kick a due-tasks pass off in the
+    # background (run_due_tasks is thread-safe and idles cleanly when the
+    # config still isn't usable) so the first saved key gives immediate
+    # feedback. Non-fatal if there's no running loop (bare test calls).
+    llm = body.get("llm") if isinstance(body.get("llm"), dict) else {}
+    runner_triggered = bool(
+        str(llm.get("api_key", "")).strip() or str(llm.get("base_url", "")).strip()
+    )
+    if runner_triggered:
+        from core.scheduler import run_due_tasks
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            runner_triggered = False
+        else:
+            loop.create_task(asyncio.to_thread(run_due_tasks))
+    return {"status": "saved", "rejected": rejected, "runner_triggered": runner_triggered}
+
+
+@app.get("/api/runner/status", dependencies=[Depends(require_api_key)])
+async def runner_status():
+    """One-shot task-runner health for the Tasks tab: is an LLM even
+    configured? Mirrors exactly the check run_due_tasks() uses, so the UI
+    notices 'runner idle — no LLM configured' the moment it matters.
+    """
+    from core.agent_config import get_llm_config
+    cfg = get_llm_config()
+    configured = bool(
+        str(cfg.get("api_key", "")).strip() or str(cfg.get("base_url", "")).strip()
+    )
+    return {
+        "llm_configured": configured,
+        "provider": cfg.get("provider") if configured else None,
+        "model": cfg.get("model") if configured else None,
+    }
 
 
 @app.post("/api/agent/command", dependencies=[Depends(require_api_key)])
