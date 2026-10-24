@@ -1,0 +1,11 @@
+{
+	# Shared Caddyfile - generated once, then hand-edited.
+	# auto_https stays ON so named tenant vhosts get real certificates.
+}
+
+:80 {
+	# Catch-all so an unknown host doesn't silently get a cert.
+	abort
+}
+
+import /etc/caddy/sites/*.site

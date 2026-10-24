@@ -5,6 +5,91 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 2026-10-24
+
+### Added — multi-tenant provisioning (`scripts/provision_tenant.py`)
+
+Provisions a per-customer FreeHand instance: own vault, own Fernet key, own
+container set, own ports, own Caddy vhost. Nothing is shared between
+customers. See `docs/deployment/tenant-provisioning.md`.
+
+- `scripts/provision_tenant.py` — the provisioning CLI.
+- `tests/test_provision_tenant.py` — 60 tests covering the behaviour below.
+- `docs/deployment/tenant-provisioning.md` — operator guide.
+- `caddy/Caddyfile` + `caddy/sites/` — the shared reverse-proxy config.
+- `compose.yml` — a `caddy` service behind the `proxy` profile.
+
+### Fixed — defects found while building the above
+
+Each of these was found by running the code, not by reading it.
+
+- **Ports collided between tenants.** The first draft wrote a
+  `compose.override.yml` that had to be merged with the repo's
+  `compose.yml`. Compose *merges* `ports` lists rather than replacing
+  them, so every tenant also bound port 8000 and 3001, and the second
+  tenant to start collided with the first. Each tenant now gets a
+  complete, self-contained `compose.yml`; an override was also tried and
+  rejected because `extends:` resolves relative paths against the
+  declaring file, which would point every tenant at the same vault.
+- **Caddy could not reach any tenant.** The vhost proxied to
+  `127.0.0.1:<port>`, but Caddy runs in a container, so its loopback is
+  its own — not the host's, where the tenant's port is published. Every
+  request returned 502. The vhosts now use `host.docker.internal`, and the
+  Caddy service carries `extra_hosts: ["host.docker.internal:host-gateway"]`.
+- **No certificates would ever have been issued.** The shared Caddyfile
+  set `auto_https off`, which suppresses automatic certificate issuance
+  for *every* site including named vhosts; Caddy's own `adapt` output
+  shows `automatic_https: {disable: true}`. `auto_https` is now left on.
+- **The basic-auth password could not authenticate.** The plaintext was
+  passed to `caddy hash-password` with `text=True`, which makes Python
+  translate `\n` to `os.linesep` — so on Windows Caddy received
+  `password\r\n` and hashed `password\r`, producing a hash that did not
+  match the password the customer was given. The stdin write is now
+  bytes. Verified against a live Caddy: correct password 200, wrong
+  password 401.
+- **The password was exposed in the process table.** `--plaintext <pw>`
+  puts it in argv, which is world-readable in `/proc` on a shared VPS.
+  The plaintext now goes over stdin.
+- **The encryption key was briefly world-readable.** `write_text()`
+  followed by `chmod 0600` creates the file with the umask (0644) and
+  only narrows it afterwards. The file is now created 0600 at creation
+  time via `os.open`. Measured on Linux: 0600 with the fix, 0644 without.
+- **`auto_https` / `basicauth` / redirect status.** `basicauth` is
+  deprecated in Caddy 2 (now `basic_auth`); the HTTP→HTTPS redirect uses
+  308 rather than 301 so POSTs keep their method.
+- **`--destroy` left the containers running.** It deleted the directory
+  out from under them, and Docker recreated the vault path as empty. The
+  containers are now stopped first, and the tenant's OpenConnector volume
+  is removed too.
+- **Non-ASCII customer names produced illegal Docker names.**
+  `str.isalnum()` is Unicode-aware, so "café" passed validation and then
+  failed at `docker compose up` with an unrelated message. The character
+  class is now ASCII-only.
+- **A bare IP was accepted as a hostname.** An IPv4 passes the FQDN
+  regex, but Caddy cannot obtain a Let's Encrypt certificate for an IP.
+- **The OpenConnector encryption key was the wrong length.**
+  `token_urlsafe(32)` produces 43 characters; OpenConnector requires
+  exactly 32 bytes, so it is now 32 random bytes, base64-encoded.
+- **The image could not be built.** `UID`/`GID` defaulted to `0`, and the
+  Dockerfile's `groupadd --system --gid ${GID}` fails because GID 0
+  (root) already exists. They now default to `1000`, matching the
+  repo's own compose file, and the generated `.env` carries the host
+  user's uid/gid so the vault bind mount stays writable.
+
+### Changed — Python 3.13 support
+
+- `datetime.utcfromtimestamp()` and `datetime.utcnow()` are deprecated in
+  Python 3.12+ and scheduled for removal. Replaced with timezone-aware
+  equivalents in `core/oauth/manager.py`, `core/tools/browser.py` and
+  `server.py`. The full suite passes on 3.13.15.
+- `requires-python` is unchanged at `>=3.11`; 3.13 was already
+  permitted. A `Programming Language :: Python :: 3.13` Trove classifier
+  is now declared in `pyproject.toml` as accurate metadata. It is
+  *display-only*: it does not affect wheel selection (pip resolves from
+  `Requires-Python` plus the wheel's own tags), so it makes no difference
+  for this pure-Python distribution — it just tells users what is tested.
+  Adding 3.13 to the CI matrix is a follow-up, not included here.
+
 ## [0.1.9] — 2026-10-21
 
 ### Changed — Round 18: release hygiene (dark theme, tier rename, path scrub) (2026-10-21)

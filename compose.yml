@@ -135,9 +135,54 @@ services:
       retries: 5
       start_period: 15s
 
+  # ── Caddy (reverse proxy / TLS / basic auth) ──────────────────────────
+  # Optional: this profile is off by default. Enable it with
+  #   docker compose --profile proxy up -d
+  # for a single-tenant box where FreeHand should be reachable over HTTPS
+  # with basic auth in front of it.
+  #
+  # Multi-tenant boxes do NOT use this service. scripts/provision_tenant.py
+  # writes each tenant's own self-contained compose.yml (one vault, one port
+  # set, one container set per customer) and expects ONE shared Caddy
+  # container - named `freehand-caddy` - that imports every tenant's
+  # Caddyfile.site. See docs/deployment/tenant-provisioning.md.
+  caddy:
+    image: caddy:2-alpine
+    container_name: freehand-caddy
+    restart: unless-stopped
+    profiles: ["proxy"]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    extra_hosts:
+      # Lets the tenant vhosts reach a tenant's FreeHand port, which is
+      # published on the HOST's 127.0.0.1. Without this, Caddy's own
+      # loopback is used and every proxy returns 502.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # The shared Caddyfile imports every tenant vhost from ./caddy/sites.
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/sites:/etc/caddy/sites:ro
+      # Caddy's own state (TLS certs, ACME account) must persist across
+      # restarts or it re-requests certificates on every boot.
+      - caddy-data:/data
+      - caddy-config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
 volumes:
   oc-data:
     # OC's own SQLite store. Anonymous Docker volume (managed by Docker,
     # not by host filesystem). Survives `docker compose down` but is
     # removed by `docker compose down -v`.
     name: freehand-oc-data
+  caddy-data:
+    # Caddy's TLS certificates and ACME account. Deleting this volume
+    # forces every tenant to re-issue its certificate.
+    name: freehand-caddy-data
+  caddy-config:
+    name: freehand-caddy-config
