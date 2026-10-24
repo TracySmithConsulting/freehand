@@ -996,7 +996,14 @@ async def save_checkpoint(name: str, url: str, mode: str = "headless") -> dict:
                 "name": name,
                 "url": page.url,
                 "title": await page.title(),
-                "saved_at": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+                # datetime.utcnow() is deprecated in Python 3.12+. Keep the
+                # same trailing-Z shape with a timezone-aware UTC stamp.
+                "saved_at": (
+                    __import__("datetime")
+                    .datetime.now(__import__("datetime").timezone.utc)
+                    .isoformat()
+                    .replace("+00:00", "Z")
+                ),
                 "dom_state": dom_state,
                 "cookies": cookies,
                 "local_storage": local_storage,

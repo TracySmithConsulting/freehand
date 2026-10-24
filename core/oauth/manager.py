@@ -81,7 +81,12 @@ def save_connection(service, label, token_data, scopes, user_id=""):
             )
         else:
             expires_at = datetime.now(timezone.utc).timestamp() + int(expires_in)
-        expires_at = datetime.utcfromtimestamp(expires_at).isoformat()
+        # datetime.utcfromtimestamp() is deprecated in Python 3.12+ and
+        # scheduled for removal. fromtimestamp(..., timezone.utc) is the
+        # timezone-aware equivalent and produces the same ISO string.
+        expires_at = datetime.fromtimestamp(
+            expires_at, tz=timezone.utc
+        ).replace(tzinfo=None).isoformat()
     conn = _get_conn()
     cursor = conn.execute(
         """
