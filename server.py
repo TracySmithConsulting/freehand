@@ -3,7 +3,7 @@ import secrets as _secrets
 import sqlite3
 import asyncio
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -315,7 +315,12 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+    # datetime.utcnow() is deprecated in Python 3.12+; utcnow() returns a
+    # naive datetime, so keep the same naive-UTC shape via timezone.utc.
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
+    }
 
 
 @app.get("/api/v1/status", dependencies=[Depends(require_api_key)])
