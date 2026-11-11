@@ -116,6 +116,12 @@ services:
       - COMPOSIO_AUTH_CONFIG_FACEBOOK=${COMPOSIO_AUTH_CONFIG_FACEBOOK:-}
       - COMPOSIO_AUTH_CONFIG_INSTAGRAM=${COMPOSIO_AUTH_CONFIG_INSTAGRAM:-}
       - COMPOSIO_BASE_URL=${COMPOSIO_BASE_URL:-https://backend.composio.dev}
+      # The WhatsApp bridge runs on the host (npm start in freehand/bridge).
+      # Inside this container 127.0.0.1 is the container, so reach the host.
+      - FREEHAND_BRIDGE_URL=${FREEHAND_BRIDGE_URL:-http://host.docker.internal:8765}
+    extra_hosts:
+      # Docker Desktop provides host.docker.internal; Linux needs this line.
+      - "host.docker.internal:host-gateway"
     volumes:
       # Mount the host's vault directory so encryption.key, connections.db,
       # broker_config.json, credential_store.json, AND agent.db all

@@ -52,7 +52,15 @@ def _save_settings(data: dict) -> None:
 
 
 def _get_bridge_url() -> str:
-    return f"http://127.0.0.1:{BRIDGE_PORT}"
+    """Base URL of the WhatsApp bridge.
+
+    FREEHAND_BRIDGE_URL overrides the default. It is needed when FreeHand
+    runs in Docker and the bridge on the host: inside the container
+    127.0.0.1 is the container itself (compose.yml sets
+    http://host.docker.internal:8765).
+    """
+    custom = os.environ.get("FREEHAND_BRIDGE_URL", "").strip().rstrip("/")
+    return custom or f"http://127.0.0.1:{BRIDGE_PORT}"
 
 
 # Chat replies are capped just under Telegram's 4096-character message limit

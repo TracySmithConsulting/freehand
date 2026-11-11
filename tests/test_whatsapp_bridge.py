@@ -179,6 +179,13 @@ def test_bridge_http_error_is_reported(monkeypatch):
     assert asyncio.run(gateway._whatsapp_send_message(JID, "x")) is False
 
 
+def test_bridge_url_can_point_at_the_docker_host(monkeypatch):
+    monkeypatch.setenv("FREEHAND_BRIDGE_URL", "http://host.docker.internal:8765/")
+    assert gateway._get_bridge_url() == "http://host.docker.internal:8765"
+    monkeypatch.delenv("FREEHAND_BRIDGE_URL")
+    assert gateway._get_bridge_url() == f"http://127.0.0.1:{gateway.BRIDGE_PORT}"
+
+
 def test_default_port_matches_the_bridge():
     js = (BRIDGE_DIR / "bridge-server.js").read_text(encoding="utf-8")
     assert f"const DEFAULT_PORT = {gateway.BRIDGE_PORT};" in js
