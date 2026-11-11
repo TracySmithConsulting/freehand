@@ -18,6 +18,27 @@ def _load_settings() -> dict:
     return {}
 
 
+def resolve_public_base_url(settings: dict) -> str:
+    """The external https URL people and providers use to reach FreeHand.
+
+    One answer for every caller (OAuth/Composio callbacks, approval links):
+      1. env FREEHAND_PUBLIC_BASE_URL   (set by the tenant compose file)
+      2. settings["public_base_url"]
+      3. settings["oauth"]["public_base_url"]  (older key, still honoured)
+    Returns "" when none is set; never has a trailing slash.
+    """
+    oauth = settings.get("oauth") if isinstance(settings.get("oauth"), dict) else {}
+    for value in (
+        os.environ.get("FREEHAND_PUBLIC_BASE_URL", ""),
+        settings.get("public_base_url", ""),
+        oauth.get("public_base_url", ""),
+    ):
+        value = str(value or "").strip().rstrip("/")
+        if value:
+            return value
+    return ""
+
+
 def get_llm_config() -> dict:
     settings = _load_settings()
     llm = settings.get("llm", {})

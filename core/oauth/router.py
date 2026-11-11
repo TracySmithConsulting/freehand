@@ -271,10 +271,8 @@ def _get_redirect_uri(service: str, request: Request) -> str:
     # OAuth providers such as Meta require an HTTPS callback on a public
     # hostname. A configured base URL lets a local UI or reverse proxy use
     # the same stable callback instead of deriving it from the incoming host.
-    public_base = (
-        os.environ.get("FREEHAND_PUBLIC_BASE_URL", "").strip()
-        or settings.get("oauth", {}).get("public_base_url", "").strip()
-    ).rstrip("/")
+    from core.agent_config import resolve_public_base_url
+    public_base = resolve_public_base_url(settings)
     if public_base:
         return f"{public_base}/api/integrations/{service}/callback"
 
@@ -283,7 +281,9 @@ def _get_redirect_uri(service: str, request: Request) -> str:
     # Route is /api/integrations/{service}/callback — NOT
     # /api/integrations/callback/{service}. The latter is what the
     # original code generated, which is why every OAuth callback 404'd.
-    current = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/api/integrations/{service}/callback"
+    # netloc, not hostname:port — port is None on a default port, which
+    # used to produce "https://host:None/...".
+    current = f"{request.url.scheme}://{request.url.netloc}/api/integrations/{service}/callback"
     if stored and stored != current:
         if "oauth" not in settings:
             settings["oauth"] = {}
@@ -291,16 +291,14 @@ def _get_redirect_uri(service: str, request: Request) -> str:
             settings["oauth"]["redirect_uris"] = {}
         settings["oauth"]["redirect_uris"][service] = current
         _save_oauth_settings(settings)
-    return current or current
+    return current
 
 
 def _get_composio_callback_uri(service: str, label: str, request: Request) -> str:
     """Build the callback Composio will redirect to after hosted auth."""
     settings = _load_oauth_settings()
-    public_base = (
-        os.environ.get("FREEHAND_PUBLIC_BASE_URL", "").strip()
-        or settings.get("oauth", {}).get("public_base_url", "").strip()
-    ).rstrip("/")
+    from core.agent_config import resolve_public_base_url
+    public_base = resolve_public_base_url(settings)
     if public_base:
         base = public_base
     else:

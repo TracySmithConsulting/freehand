@@ -235,8 +235,8 @@ def _get_approval_base_url() -> str:
 
     Returns the URL with no trailing slash.
     """
-    settings = _load_settings()
-    base = settings.get("public_base_url", "").strip().rstrip("/")
+    from core.agent_config import resolve_public_base_url
+    base = resolve_public_base_url(_load_settings())
     if base:
         return base
     # Fallback with warning. Single warning per process is enough.

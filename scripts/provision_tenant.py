@@ -397,6 +397,8 @@ services:
       - OOMOL_CONNECT_BASE_URL=http://open-connector:3001
       - OOMOL_CONNECT_CONSOLE_URL=${{OOMOL_CONNECT_CONSOLE_URL}}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${{OC_RUNTIME_TOKEN}}
+      # Public https address behind Caddy; OAuth callbacks are built from it.
+      - FREEHAND_PUBLIC_BASE_URL=${{FREEHAND_PUBLIC_BASE_URL:-}}
       - COMPOSIO_API_KEY=${{COMPOSIO_API_KEY:-}}
       - COMPOSIO_AUTH_CONFIG_FACEBOOK=${{COMPOSIO_AUTH_CONFIG_FACEBOOK:-}}
       - COMPOSIO_AUTH_CONFIG_INSTAGRAM=${{COMPOSIO_AUTH_CONFIG_INSTAGRAM:-}}
@@ -418,7 +420,7 @@ volumes:
 """
 
 
-def build_env(customer: str, oc_port: int, console_url: str) -> str:
+def build_env(customer: str, oc_port: int, console_url: str, public_url: str = "") -> str:
     """Per-customer secrets. Each gets its own runtime token and OC key."""
     runtime_token = secrets.token_urlsafe(32)
     oc_admin = secrets.token_urlsafe(24)
@@ -446,7 +448,12 @@ OC_RUNTIME_TOKEN={runtime_token}
 OC_ENCRYPTION_KEY={oc_encryption}
 
 # FreeHand
-OOMOL_CONNECT_CONSOLE_URL={console_url}{uid_gid}
+OOMOL_CONNECT_CONSOLE_URL={console_url}
+# The tenant's public https address. OAuth and Composio callbacks and
+# approval links are built from this; behind Caddy, FreeHand cannot work
+# it out from the request. Register {{this}}/api/integrations/<service>/callback
+# with each OAuth provider.
+FREEHAND_PUBLIC_BASE_URL={public_url}{uid_gid}
 
 # Composio (optional - leave blank unless the customer uses it)
 COMPOSIO_API_KEY=
@@ -754,7 +761,8 @@ def provision(
     write_secret_file(vault / "settings.json", json.dumps(settings, indent=2))
 
     # 4. Per-customer secrets.
-    write_secret_file(base / ".env", build_env(customer, oc_port, console_url))
+    public_url = f"https://{hostname}" if hostname else ""
+    write_secret_file(base / ".env", build_env(customer, oc_port, console_url, public_url))
 
     # 5. Self-contained compose file. See build_compose() for why this is
     #    not an override of the repo's compose.yml.

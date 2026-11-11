@@ -111,6 +111,13 @@ Every other path stays behind basic auth. Tenants provisioned before this
 change need their `Caddyfile.site` regenerated (or edited by hand) and Caddy
 reloaded before Telegram or Slack will work.
 
+**The public address is set for you.** The tenant `.env` sets
+`FREEHAND_PUBLIC_BASE_URL=https://<hostname>`, and every OAuth/Composio callback
+and approval link is built from it (behind Caddy, FreeHand cannot work it out
+from the request). Register `https://<hostname>/api/integrations/<service>/callback`
+with each OAuth provider. Tenants provisioned earlier: add that line to their
+`.env` and to the `freehand` service environment, then recreate the container.
+
 **`basicauth` is deprecated.** Use `basic_auth`. Caddy 2 logs a
 deprecation warning on every load otherwise.
 
