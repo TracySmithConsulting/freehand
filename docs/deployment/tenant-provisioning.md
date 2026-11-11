@@ -103,6 +103,14 @@ proxies to `127.0.0.1:8100` returns **502**. The vhosts therefore proxy to
 `extra_hosts: ["host.docker.internal:host-gateway"]` so that name resolves
 to the host.
 
+**Chat webhooks skip the password.** Telegram and Slack cannot send
+basic-auth credentials, so the vhost exempts exactly `POST /api/gateway/telegram`
+and `POST /api/gateway/slack`. FreeHand authenticates those itself (Telegram
+secret-token header, Slack request signature) and then checks `allow_from`.
+Every other path stays behind basic auth. Tenants provisioned before this
+change need their `Caddyfile.site` regenerated (or edited by hand) and Caddy
+reloaded before Telegram or Slack will work.
+
 **`basicauth` is deprecated.** Use `basic_auth`. Caddy 2 logs a
 deprecation warning on every load otherwise.
 
