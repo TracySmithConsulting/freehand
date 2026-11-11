@@ -1323,6 +1323,10 @@
       }
 
       var last401WarnAt = 0;
+      var lastRefusedSaveAt = 0;
+      var REFUSED_SAVE_MSG =
+        'Not saved: FreeHand needs its API key first. Enter it under ' +
+        'API Keys & OmniRoute and press Remember, then save again.';
 
       function apiFetch(url, options) {
         options = options || {};
@@ -1330,7 +1334,15 @@
         var key = storedApiKey();
         if (key) headers['X-API-Key'] = key;
         options.headers = headers;
+        var method = (options.method || 'GET').toUpperCase();
         return fetch(url, options).then(function(res) {
+          if (res.status === 401 && method !== 'GET') {
+            // A refused save must never look like success: the save
+            // handlers used to say "saved" whatever the server answered.
+            lastRefusedSaveAt = Date.now();
+            showStatus(REFUSED_SAVE_MSG, 'error');
+            throw new Error('unauthorized');
+          }
           // A stored-but-rejected key means the server key changed; say so
           // once (rate-limited) rather than on every poll.
           if (res.status === 401 && key && Date.now() - last401WarnAt > 30000) {
@@ -1346,6 +1358,11 @@
       let statusTimeout = null;
 
       function showStatus(message, type) {
+        // A save handler's generic "Failed to save ..." right after a
+        // refused save would hide the reason; keep the useful message.
+        if (type === 'error' && Date.now() - lastRefusedSaveAt < 1000) {
+          message = REFUSED_SAVE_MSG;
+        }
         statusRegion.textContent = message;
         statusRegion.className = 'status-region visible ' + (type || '');
         clearTimeout(statusTimeout);
@@ -1751,7 +1768,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm: llmConfig })
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
         .then(function(data) {
           showStatus(
             data.runner_triggered
