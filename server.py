@@ -499,6 +499,7 @@ SETTINGS_ALLOWED_KEYS = frozenset({
     "api_key", "omniroute", "llm", "tier", "oauth", "telegram",
     "telegram_bot_token", "telegram_chat_id", "telegram_chat_whitelist",
     "telegram_webhook_secret", "telegram_allow_from", "allowed_read_dirs",
+    "allowed_write_dirs",
     "slack", "slack_bot_token", "slack_webhook_url", "slack_signing_secret",
     "slack_allow_from", "whatsapp", "whatsapp_enabled", "whatsapp_pairing_phone",
     "bridge_secret", "whatsapp_allow_from", "public_base_url",

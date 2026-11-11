@@ -2,8 +2,8 @@
 
 Wraps python-docx, openpyxl, and python-pptx for reading and writing
 .docx, .xlsx, and .pptx files. All writes are checked against the
-project workspace boundary — writes outside the project root require
-approval via intercept_action().
+write boundary — the vault plus settings.allowed_write_dirs — and must
+carry the tool's own extension (see _check_write_permission).
 """
 
 import json
@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from core.security import intercept_action, PROJECT_ROOT
+from core.security import PROJECT_ROOT
 
 
 def _is_within(path: str, root: Path) -> bool:
@@ -75,15 +75,56 @@ def check_read_allowed(path: str) -> Optional[str]:
     )
 
 
-def _check_write_permission(path: str) -> dict:
-    """Return approval result for a write operation."""
-    if _is_within_workspace(path):
-        return {"allowed": True, "approval_id": None}
-    return intercept_action(
-        action_type="write_file",
-        description=f"Write to {path}",
-        payload={"path": path, "within_workspace": False},
-    )
+def allowed_write_roots() -> List[Path]:
+    """Folders the agent may write documents into: the vault, plus any
+    folders listed in settings["allowed_write_dirs"]."""
+    from core import agent_config
+    roots = [Path(agent_config.VAULT_DIR)]
+    try:
+        extra = agent_config._load_settings().get("allowed_write_dirs") or []
+    except Exception:
+        extra = []
+    if isinstance(extra, str):
+        extra = [extra]
+    for d in extra:
+        if isinstance(d, str) and d.strip():
+            roots.append(Path(d.strip()).expanduser())
+    return roots
+
+
+def _check_write_permission(path: str, extension: str) -> dict:
+    """Decide whether an office write may go ahead.
+
+    Two rules, both hard (no approval can override them):
+      1. The file must have the tool's own extension (.docx / .xlsx /
+         .pptx), so a write can never replace code, settings.json,
+         encryption.key or any other non-document file.
+      2. It must land in allowed_write_roots() (the vault by default).
+
+    Approval for *whether* to write at all happens earlier, in the agent
+    loop's tier check. This used to raise a second "write_file" approval
+    for paths outside the project folder; that approval carried no tool, so
+    approving it could never run anything, while everything inside the
+    project folder (including the code) was writable without a check.
+    """
+    if not path or not str(path).strip():
+        return {"allowed": False, "error": "path is required"}
+    if Path(path).suffix.lower() != extension:
+        return {
+            "allowed": False,
+            "error": f"Refusing to write {path}: this tool only writes {extension} files.",
+        }
+    roots = allowed_write_roots()
+    if any(_is_within(path, r) for r in roots):
+        return {"allowed": True}
+    listed = ", ".join(str(r) for r in roots)
+    return {
+        "allowed": False,
+        "error": (
+            f"Writing {path} is not allowed. The agent can only write into: "
+            f"{listed}. Add a folder to settings 'allowed_write_dirs' to allow more."
+        ),
+    }
 
 
 def read_docx(path: str) -> dict:
@@ -144,12 +185,12 @@ def write_docx(path: str, title: str, content: List[str]) -> dict:
 
     Returns dict with status and path info.
     """
-    result = _check_write_permission(path)
+    result = _check_write_permission(path, ".docx")
     if not result.get("allowed", False):
         return {
             "error": "Permission denied",
-            "approval_id": result.get("approval_id"),
-            "message": "Write action requires approval. Use /approve <id> to allow.",
+            "approval_id": None,
+            "message": result.get("error", "Write not allowed."),
         }
 
     from docx import Document
@@ -222,12 +263,12 @@ def write_xlsx(path: str, data: Dict[str, List[List[Any]]]) -> dict:
 
     Returns dict with status and path info.
     """
-    result = _check_write_permission(path)
+    result = _check_write_permission(path, ".xlsx")
     if not result.get("allowed", False):
         return {
             "error": "Permission denied",
-            "approval_id": result.get("approval_id"),
-            "message": "Write action requires approval. Use /approve <id> to allow.",
+            "approval_id": None,
+            "message": result.get("error", "Write not allowed."),
         }
 
     from openpyxl import Workbook
@@ -300,12 +341,12 @@ def write_pptx(path: str, slides: List[Dict]) -> dict:
 
     Returns dict with status and path info.
     """
-    result = _check_write_permission(path)
+    result = _check_write_permission(path, ".pptx")
     if not result.get("allowed", False):
         return {
             "error": "Permission denied",
-            "approval_id": result.get("approval_id"),
-            "message": "Write action requires approval. Use /approve <id> to allow.",
+            "approval_id": None,
+            "message": result.get("error", "Write not allowed."),
         }
 
     from pptx import Presentation
