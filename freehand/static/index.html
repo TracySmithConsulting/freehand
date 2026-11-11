@@ -1230,8 +1230,10 @@
           Connectors vs gateways: a <strong>connector</strong> is an account the agent
           acts <em>with</em> (e.g. your Slack shared app → post/read channels).
           A <strong>gateway</strong> is a channel that reaches <em>you</em> — where
-          approval buttons and remote commands arrive (Telegram / Slack / WhatsApp
+          approval requests and remote commands arrive (Telegram / Slack / WhatsApp
           bot tokens below). Different credentials, different jobs.
+          From chat you can approve or deny only requests made from that same
+          chat; destructive actions must be approved here in the console.
         </p>
         <div id="gateway-status" aria-live="polite">
           <p class="empty-state">Loading gateway status...</p>

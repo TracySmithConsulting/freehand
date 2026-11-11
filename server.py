@@ -402,12 +402,10 @@ async def api_approve(approval_id: int):
         result = handle_approval(approval_id, "approve")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    # Round 15 slice 3: closing the loop. If this approval is a
-    # locally-originated destructive action, approving it now re-executes
-    # the held tool call (the button was decorative before — approving
-    # only flipped the DB status). Source-gated: remote-origin approvals
-    # stay veto/record-only, so a remote /approve cannot fire a
-    # destructive action.
+    # Approving in the web console re-runs the exact held tool call,
+    # whatever channel requested it — this is the trusted surface. Chat
+    # gateways approve via core.security.approve_from_remote, which only
+    # releases the caller's own, registered, non-destructive requests.
     result["re_execute"] = await re_execute_approval(approval_id)
     return result
 

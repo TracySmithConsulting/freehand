@@ -13,7 +13,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import agent_config
 from core import database
-from core.security import get_current_tier, intercept_action, handle_approval
+from core.security import get_current_tier, approve_from_remote, deny_from_remote
 from core.memory import sync_vault_to_sqlite
 from core.scheduler import process_scribble, create_task, append_scribble
 
@@ -206,27 +206,21 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
             return "No memories found for: " + query
         return "Use: /memory <search query>"
 
-    if text.startswith("/approve"):
-        parts = text.split()
-        if len(parts) >= 2:
-            try:
-                aid = int(parts[1])
-                result = handle_approval(aid, "approve")
-                return f"Approved action #{aid}"
-            except ValueError:
-                return "Invalid approval ID."
-        return "Use: /approve <id>"
-
-    if text.startswith("/deny"):
-        parts = text.split()
-        if len(parts) >= 2:
-            try:
-                aid = int(parts[1])
-                result = handle_approval(aid, "deny")
-                return f"Denied action #{aid}"
-            except ValueError:
-                return "Invalid approval ID."
-        return "Use: /deny <id>"
+    # "/approve 5" or "approve 5" — Slack swallows messages that start with
+    # "/" as slash commands, so the bare form must work there too.
+    # A bare word needs a numeric id ("approve 5"); otherwise a message like
+    # "deny it" is ordinary chat for the agent. "/approve" alone gets usage.
+    decision = (
+        re.match(r"^/(approve|deny)\b\s*(\S*)\s*$", text, re.IGNORECASE)
+        or re.match(r"^(approve|deny)\s+(\d+)\s*$", text, re.IGNORECASE)
+    )
+    if decision:
+        verb, arg = decision.group(1).lower(), decision.group(2)
+        if not arg.isdigit():
+            return f"Use: /{verb} <id>"
+        if verb == "approve":
+            return await approve_from_remote(int(arg), source, str(caller_id))
+        return deny_from_remote(int(arg), source, str(caller_id))
 
     if text.startswith("/tier"):
         # Changing the permission tier is a local-only operation. A remote
@@ -278,18 +272,15 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
 
 
 async def _handle_agent_command(text: str, source: str, caller_id: str, tier) -> str:
-    """Route text to the agent command endpoint with security check."""
-    result = intercept_action("execute", f"Agent command: {text[:50]}", {"text": text, "source": source}, source, caller_id)
-    if not result["allowed"]:
-        if result["approval_id"]:
-            approval_msg = f"Action requires approval (ID: {result['approval_id']}). Reply with /approve {result['approval_id']} or /deny {result['approval_id']}."
-            if source == "telegram":
-                await _telegram_send_message(caller_id, approval_msg)
-            elif source == "slack":
-                await _slack_send_message(caller_id, approval_msg)
-            return approval_msg
-        return "Action blocked by permission tier. Use /tier to change."
+    """Run a chat message through the agent.
 
+    There is no blanket "approve this message" gate any more: the sender is
+    already authenticated (webhook secret / Slack signature / bridge secret)
+    and on the allow_from list, and the agent loop gates every write tool
+    by tier, demoting remote writes to an approval even at full_access.
+    The old gate created an approval for EVERY chat message that nothing
+    could ever release, so chat only worked at full_access.
+    """
     # Run the agent in-process. This used to POST to
     # http://127.0.0.1:8000/api/agent/command without an X-API-Key (always
     # 401), read a non-existent "result" field, and gave up after 30s — so

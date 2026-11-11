@@ -405,7 +405,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                 result = intercept_action(
                     "oauth_access",
                     f"Tool call: {tool_name}",
-                    {"tool": tool_name, "args": tool_args, "source": source},
+                    {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id},
                     source,
                     caller_id,
                 )
@@ -437,7 +437,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                     result = intercept_action(
                         "oauth_access",
                         f"Destructive tool call: {tool_name}",
-                        {"tool": tool_name, "args": tool_args, "source": source},
+                        {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id},
                         source,
                         caller_id,
                         force_confirm=True,
