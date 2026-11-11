@@ -56,6 +56,10 @@ async function start() {
         auth: authState,
         printQRInTerminal: false,
         markOnlineOnConnect: false,
+        // Skip the optional props/blocklist/privacy fetch on connect. The
+        // bridge never uses them, and WhatsApp often times out answering,
+        // which Baileys logs as a scary "unexpected error in 'init queries'".
+        fireInitQueries: false,
         logger,
     });
     state.sock = sock;
