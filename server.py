@@ -770,7 +770,7 @@ async def whatsapp_webhook(request: Request):
     text = data.get("text", "")
     if not remote_jid or not text:
         return {"error": "remote_jid and text required"}
-    result = await handle_whatsapp_message(remote_jid, text)
+    result = await handle_whatsapp_message(remote_jid, text, data.get("message_id"))
     return result
 
 

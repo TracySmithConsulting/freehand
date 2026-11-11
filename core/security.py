@@ -165,7 +165,7 @@ def intercept_action(
     })
 
     # Send external notification if source is telegram/slack
-    if source in ("telegram", "slack"):
+    if source in ("telegram", "slack", "whatsapp"):
         _send_external_approval(
             action_type, description, approval_id, source,
             caller_id=caller_id, payload=payload,
@@ -213,6 +213,8 @@ def _send_external_approval(
         _send_telegram_approval(action_type, description, approval_id, caller_id, details)
     elif source == "slack":
         _send_slack_approval(action_type, description, approval_id, details)
+    elif source == "whatsapp":
+        _send_whatsapp_approval(action_type, description, approval_id, caller_id, details)
 
 
 def _approval_details(payload: Optional[dict], cap: int = 400) -> str:
@@ -283,6 +285,40 @@ def _send_telegram_approval(
     try:
         payload = json.dumps({"chat_id": chat_id, "text": text}).encode()
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception:
+        pass
+
+
+def _send_whatsapp_approval(
+    action_type: str,
+    description: str,
+    approval_id: int,
+    caller_id: Optional[str] = None,
+    details: str = "",
+) -> None:
+    """Send the approval prompt to the WhatsApp chat that asked, via the
+    bridge's authenticated /reply endpoint."""
+    jid = str(caller_id or "").strip()
+    secret = str(_load_settings().get("bridge_secret", "")).strip()
+    if not jid or not secret or not _HAS_HTTP:
+        return
+    from core.gateway import _get_bridge_url  # lazy: gateway imports security
+    text = (
+        f"Approval request #{approval_id}\n"
+        f"Action: {action_type}\n"
+        f"Description: {description}\n"
+        + (f"Details: {details}\n" if details else "")
+        + f"\nReply /approve {approval_id} or /deny {approval_id}"
+    )
+    try:
+        payload = json.dumps({"jid": jid, "text": text}).encode()
+        req = urllib.request.Request(
+            _get_bridge_url() + "/reply",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Bridge-Secret": secret},
+        )
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
     except Exception:

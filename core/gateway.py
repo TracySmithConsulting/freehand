@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import hmac
 import hashlib
@@ -26,7 +27,17 @@ log = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).parent.parent
 VAULT_DIR = PROJECT_ROOT / "vault"
 SCRIBBLE_PATH = VAULT_DIR / "00_Scribble.md"
-BRIDGE_PORT = 8765
+# Must match the bridge's BRIDGE_PORT (freehand/bridge/.env, default 8765).
+BRIDGE_PORT = int(os.environ.get("FREEHAND_BRIDGE_PORT", "8765"))
+BRIDGE_DIR = PROJECT_ROOT / "freehand" / "bridge"
+
+
+def _whatsapp_auth_dir() -> Path:
+    """Where the bridge keeps the linked-device session (WHATSAPP_AUTH_DIR,
+    else freehand/bridge/auth_info_baileys). The status check used to look
+    in a non-existent top-level bridge/ folder and always said "not linked"."""
+    custom = os.environ.get("WHATSAPP_AUTH_DIR", "").strip()
+    return Path(custom) if custom else BRIDGE_DIR / "auth_info_baileys"
 
 
 def _load_settings() -> dict:
@@ -44,25 +55,56 @@ def _get_bridge_url() -> str:
     return f"http://127.0.0.1:{BRIDGE_PORT}"
 
 
-def _truncate(text: str, max_len: int = 280) -> str:
+# Chat replies are capped just under Telegram's 4096-character message limit
+# (Slack and WhatsApp allow more). This was 280, which cut off most agent
+# answers mid-sentence.
+CHAT_REPLY_MAX_CHARS = 4000
+
+
+def _truncate(text: str, max_len: int = CHAT_REPLY_MAX_CHARS) -> str:
     if len(text) <= max_len:
         return text
     return text[:max_len - 3] + "..."
 
 
 async def _send_to_bridge(path: str, json_data: dict = None) -> dict:
-    """Send a request to the WhatsApp bridge server."""
+    """POST to the WhatsApp bridge, authenticated with settings.bridge_secret.
+
+    The bridge rejects every request without the shared secret (it used to
+    accept anything from anyone who could reach it).
+    """
+    secret = str(_load_settings().get("bridge_secret", "")).strip()
+    if not secret:
+        return {"error": "bridge_secret not configured - run `freehand gateway secret`"}
     url = _get_bridge_url() + path
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 url,
                 json=json_data or {},
-                timeout=aiohttp.ClientTimeout(total=10)
+                headers={"X-Bridge-Secret": secret},
+                timeout=aiohttp.ClientTimeout(total=15)
             ) as resp:
-                return await resp.json()
+                try:
+                    data = await resp.json(content_type=None)
+                except Exception:
+                    data = {}
+                if not isinstance(data, dict):
+                    data = {}
+                if resp.status >= 400 and "error" not in data:
+                    data["error"] = f"Bridge returned HTTP {resp.status}"
+                return data
     except Exception:
         return {"error": "Bridge unavailable"}
+
+
+async def _whatsapp_send_message(jid: str, text: str) -> bool:
+    """Send a WhatsApp message through the bridge."""
+    resp = await _send_to_bridge("/reply", {"jid": jid, "text": _truncate(text)})
+    if not resp.get("sent"):
+        log.warning("WhatsApp reply not sent: %s", resp.get("error", "unknown"))
+        return False
+    return True
 
 
 async def _telegram_send_message(chat_id: str, text: str) -> bool:
@@ -166,6 +208,20 @@ def _verify_slack_signature(body: str, signature: str, timestamp: str) -> bool:
 #   settings["telegram_chat_whitelist"] = same role; if both set, the
 #   union is allowed. New deployments should use allow_from.
 
+def _whatsapp_identity(value) -> str:
+    """Normalise a WhatsApp number or id for allow_from comparison.
+
+    Phone-number ids ("27821234567@s.whatsapp.net", "27821234567:3@...",
+    "+27 82 123 4567") become their digits. Other ids (e.g. "...@lid",
+    which WhatsApp uses when it hides the number) are compared exactly.
+    """
+    s = str(value or "").strip()
+    user, _, domain = s.partition("@")
+    if domain in ("", "s.whatsapp.net", "c.us"):
+        return re.sub(r"\D", "", user.split(":")[0])
+    return s.lower()
+
+
 def _check_allow_from(channel: str, caller_id: str) -> bool:
     """Return True if caller_id is allowed for the given channel.
 
@@ -181,6 +237,11 @@ def _check_allow_from(channel: str, caller_id: str) -> bool:
     if not allow and channel == "telegram":
         allow = settings.get("telegram_chat_whitelist", [])
     allow = [str(x) for x in allow] if allow else []
+    if channel == "whatsapp":
+        # Numbers may be listed as "+27 82 123 4567" while the bridge sends
+        # the WhatsApp id "27821234567@s.whatsapp.net"; compare digits.
+        allow = [_whatsapp_identity(x) for x in allow]
+        caller_id = _whatsapp_identity(caller_id)
 
     if not allow:
         # Closed-by-default + warn
@@ -288,13 +349,12 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
         return f"Synced {count} file(s) to memory index"
 
     if text.startswith("/pair"):
-        phone = text[5:].strip().replace("+", "")
-        if phone:
-            resp = await _send_to_bridge("/pair", {"phone": phone})
-            if "code" in resp:
-                return f"Your pairing code is: {resp['code']}\nEnter this in WhatsApp to link your device."
-            return f"Pairing error: {resp.get('error', 'unknown')}"
-        return "Use: /pair <phone_number>"
+        # Linking a WhatsApp account to FreeHand is an owner action, like
+        # changing the tier: never from a remote chat.
+        return (
+            "WhatsApp pairing can only be started from the FreeHand web console "
+            "or with `freehand gateway pair <phone>`."
+        )
 
     # Default: route to agent command
     return await _handle_agent_command(text, source, caller_id, tier)
@@ -458,18 +518,25 @@ async def handle_slack_webhook(body: str, headers: dict) -> dict:
     return {"ok": True, "queued": True}
 
 
-async def handle_whatsapp_message(remote_jid: str, text: str) -> dict:
-    """Handle an incoming WhatsApp message, route it, and send response back."""
-    # N12c: allow_from check on WhatsApp JID
+async def handle_whatsapp_message(remote_jid: str, text: str, message_id: Optional[str] = None) -> dict:
+    """Accept a WhatsApp message from the bridge and answer it in the background.
+
+    The caller (server.py) has already checked X-Bridge-Secret. The reply
+    goes out through the bridge's /reply; the bridge ignores this response
+    body (it used to queue the whole JSON object as message text).
+    """
+    # N12c: allow_from check on the WhatsApp id
     if not _check_allow_from("whatsapp", remote_jid):
-        return {"response": "Not authorized", "bridge": {"skipped": "allow_from"}}
-    response = await _route_to_agent(text, source="whatsapp", caller_id=remote_jid)
-    # Send response back via bridge
-    bridge_resp = await _send_to_bridge("/reply", {
-        "jid": remote_jid,
-        "text": response
-    })
-    return {"response": response, "bridge": bridge_resp}
+        # Logged so the owner can find the exact id to allow (WhatsApp may
+        # send a hidden-number "...@lid" id instead of the phone number).
+        log.warning("WhatsApp message from %s ignored: not on whatsapp_allow_from", remote_jid)
+        return {"ok": True, "skipped": "allow_from"}
+
+    if message_id and not _first_delivery(f"whatsapp:{message_id}"):
+        return {"ok": True, "duplicate": True}
+
+    _spawn(_reply_in_background("whatsapp", remote_jid, text, _whatsapp_send_message))
+    return {"ok": True, "queued": True}
 
 
 def get_gateway_status() -> dict:
@@ -495,7 +562,8 @@ def get_gateway_status() -> dict:
         "whatsapp": {
             "enabled": settings.get("whatsapp_enabled", False),
             "pairing_phone": settings.get("whatsapp_pairing_phone", ""),
-            "auth_exists": (PROJECT_ROOT / "bridge" / "auth_info_baileys").exists(),
+            "auth_exists": (_whatsapp_auth_dir() / "creds.json").exists(),
+            "bridge_secret_set": bool(str(settings.get("bridge_secret", "")).strip()),
         },
         "bridge_port": BRIDGE_PORT,
     }

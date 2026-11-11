@@ -1,194 +1,140 @@
-require('dotenv').config();
-const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+'use strict';
+// WhatsApp connection (Baileys). Owned by bridge-server.js, which starts it,
+// registers the incoming-message handler, and exposes /pair and /reply.
+//
+// Nov 2026 rewrite. The old version:
+//  - exported `sock` / `isConnected` by value at require time (null/false),
+//    so the server always thought WhatsApp was disconnected and /reply
+//    could never send;
+//  - routed messages through two JSON queue files that were cleared after
+//    fire-and-forget requests, losing anything that arrived or failed in
+//    between, and queued FreeHand's whole JSON reply as message text;
+//  - forwarded group chats, broadcasts and status updates to the agent.
+
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
+const {
+    makeWASocket,
+    useMultiFileAuthState,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+} = require('@whiskeysockets/baileys');
 
-const logger = pino({ timestamp: () => ',"time":"' + new Date().toJSON() + '"' });
+// The linked-device session. Treat this folder like a password: anyone
+// with a copy can read and send your WhatsApp messages.
+const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR || path.join(__dirname, 'auth_info_baileys');
+const RECONNECT_DELAY_MS = 3000;
 
-const AUTH_DIR = path.join(__dirname, 'auth_info_baileys');
-const QUEUE_FILE = path.join(__dirname, 'message_queue.json');
-const RESPONSE_QUEUE_FILE = path.join(__dirname, 'response_queue.json');
+const logger = pino({ level: process.env.LOG_LEVEL || 'warn' });
 
-let sock = null;
-let isConnected = false;
-let pairingCode = null;
-let pairingPhone = null;
+const state = {
+    sock: null,
+    connected: false,
+    pairingCode: null,
+    pairingPhone: null,
+};
+let messageHandler = null;
 
-function loadQueue(filePath) {
-    try {
-        if (fs.existsSync(filePath)) {
-            return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-        }
-    } catch (e) {}
-    return [];
+// Only one-to-one chats reach the agent. Groups (@g.us), broadcast lists,
+// status updates and channels (@newsletter) are ignored.
+function isDirectChat(jid) {
+    return typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'));
 }
 
-function saveQueue(filePath, data) {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+function textOf(message) {
+    if (!message) return '';
+    return message.conversation || message.extendedTextMessage?.text || '';
 }
 
-function appendQueue(filePath, item) {
-    const queue = loadQueue(filePath);
-    queue.push(item);
-    saveQueue(filePath, queue);
-}
+async function start() {
+    const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
+    const { version } = await fetchLatestBaileysVersion();
 
-async function connectToWhatsApp() {
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const { version, isLatest } = await fetchLatestBaileysVersion();
-
-    sock = makeWASocket({
+    const sock = makeWASocket({
         version,
-        auth: state,
+        auth: authState,
         printQRInTerminal: false,
         markOnlineOnConnect: false,
-        generateHighQualityLinkPreview: true,
-        logger: logger,
+        logger,
     });
+    state.sock = sock;
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            console.log(`Connection closed due to ${lastDisconnect?.error?.output?.statusCode}, reconnecting: ${shouldReconnect}`);
-            if (shouldReconnect) {
-                connectToWhatsApp();
+        if (connection === 'open') {
+            state.connected = true;
+            state.pairingCode = null;
+            console.log('WhatsApp connected.');
+        } else if (connection === 'close') {
+            state.connected = false;
+            const code = lastDisconnect?.error?.output?.statusCode;
+            if (code === DisconnectReason.loggedOut) {
+                console.log('WhatsApp logged out; clearing the saved session. Pair again to reconnect.');
+                try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (e) { /* ignore */ }
             } else {
-                isConnected = false;
-                // Clear auth on logout
-                try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch (e) {}
+                console.log(`WhatsApp connection closed (${code}); reconnecting in ${RECONNECT_DELAY_MS / 1000}s.`);
             }
-        } else if (connection === 'open') {
-            isConnected = true;
-            console.log('WhatsApp connected successfully!');
-            // Process any queued messages
-            processMessageQueue();
+            // Always start a fresh socket: after a logout this yields a new,
+            // unregistered session that can be paired again.
+            setTimeout(() => start().catch((e) => console.error(`Reconnect failed: ${e.message}`)), RECONNECT_DELAY_MS);
         }
     });
 
-    sock.ev.on('messages.upsert', async ({ messages }) => {
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return; // history sync, not new messages
         for (const msg of messages) {
-            if (!msg.message) continue;
-            const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-            if (!text) continue;
-
-            const remoteJid = msg.key.remoteJid;
-            const fromMe = msg.key.fromMe;
-
-            if (fromMe) continue;
-
-            // Normalize JID
-            let cleanJid = remoteJid;
-            if (cleanJid.includes('@s.whatsapp.net')) {
-                cleanJid = cleanJid.replace('@s.whatsapp.net', '');
+            if (!msg.message || msg.key.fromMe) continue;
+            const jid = msg.key.remoteJid;
+            if (!isDirectChat(jid)) continue;
+            const text = textOf(msg.message).trim();
+            if (!text || !messageHandler) continue;
+            try {
+                await messageHandler({ jid, text, id: msg.key.id });
+            } catch (e) {
+                console.error(`Failed to hand message to FreeHand: ${e.message}`);
             }
-
-            console.log(`Received message from ${cleanJid}: ${text.substring(0, 100)}`);
-
-            // Queue message for Python bridge to process
-            appendQueue(QUEUE_FILE, {
-                jid: remoteJid,
-                clean_jid: cleanJid,
-                text: text,
-                timestamp: new Date().toISOString(),
-            });
         }
     });
 }
 
+function onMessage(handler) {
+    messageHandler = handler;
+}
+
+async function sendText(jid, text) {
+    if (!state.sock || !state.connected) {
+        throw new Error('WhatsApp not connected');
+    }
+    await state.sock.sendMessage(jid, { text });
+}
+
 async function requestPairingCode(phone) {
-    if (!sock) {
-        return { error: 'WhatsApp not connected. Start the bridge first.' };
+    if (!state.sock) {
+        return { error: 'WhatsApp is still starting. Try again in a few seconds.' };
+    }
+    if (state.connected) {
+        return { error: 'Already linked. Unlink the device in WhatsApp first to pair again.' };
     }
     try {
-        const code = await sock.requestPairingCode(phone.replace(/[^0-9]/g, ''));
-        pairingCode = code;
-        pairingPhone = phone;
-        console.log(`Pairing code for ${phone}: ${code}`);
-        return { code, phone };
+        const digits = String(phone).replace(/[^0-9]/g, '');
+        const code = await state.sock.requestPairingCode(digits);
+        state.pairingCode = code;
+        state.pairingPhone = digits;
+        return { code, phone: digits };
     } catch (e) {
         return { error: e.message };
     }
 }
 
-async function processMessageQueue() {
-    const queue = loadQueue(QUEUE_FILE);
-    if (queue.length === 0) return;
-
-    const baseUrl = process.env.PYTHON_API_URL || 'http://127.0.0.1:8000';
-    const http = require('http');
-
-    for (const item of queue) {
-        const body = JSON.stringify({
-            remote_jid: item.jid,
-            clean_jid: item.clean_jid,
-            text: item.text,
-        });
-
-        const options = {
-            hostname: '127.0.0.1',
-            port: 8766,
-            path: '/inbound',
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-            },
-        };
-
-        const req = http.request(options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                try {
-                    const resp = JSON.parse(data);
-                    if (resp.response) {
-                        // Queue response to send back
-                        appendQueue(RESPONSE_QUEUE_FILE, {
-                            jid: item.jid,
-                            text: resp.response,
-                        });
-                    }
-                } catch (e) {}
-            });
-        });
-        req.on('error', (e) => {
-            console.error(`Failed to send to Python: ${e.message}`);
-        });
-        req.write(body);
-        req.end();
-    }
-
-    // Clear processed queue
-    saveQueue(QUEUE_FILE, []);
+function status() {
+    return {
+        connected: state.connected,
+        pairingPhone: state.pairingPhone,
+        pairingCode: state.pairingCode,
+    };
 }
 
-async function processResponseQueue() {
-    const queue = loadQueue(RESPONSE_QUEUE_FILE);
-    if (queue.length === 0) return;
-
-    for (const item of queue) {
-        if (!sock || !isConnected) continue;
-        try {
-            await sock.sendMessage(item.jid, { text: item.text });
-            console.log(`Sent response to ${item.jid}`);
-        } catch (e) {
-            console.error(`Failed to send: ${e.message}`);
-        }
-    }
-
-    saveQueue(RESPONSE_QUEUE_FILE, []);
-}
-
-// Start connection
-connectToWhatsApp();
-
-// Poll queues
-setInterval(processMessageQueue, 2000);
-setInterval(processResponseQueue, 1000);
-
-// Export for bridge-server.js
-module.exports = { sock, requestPairingCode, isConnected, getPairingCode: () => pairingCode };
+module.exports = { start, onMessage, sendText, requestPairingCode, status, isDirectChat, AUTH_DIR };
