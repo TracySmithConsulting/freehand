@@ -249,3 +249,48 @@ def test_slack_prompt_has_no_dead_link_buttons(monkeypatch):
     (body,) = sent.bodies
     assert not any(b.get("type") == "actions" for b in body["blocks"])
     assert "approve 9" in json.dumps(body)
+
+
+# ── Chat approvals expire ──────────────────────────────────────────────
+
+def _age(aid: int, hours: float) -> None:
+    conn = sqlite3.connect(str(database.DB_PATH))
+    conn.execute(
+        "UPDATE approvals SET created_at = datetime('now', ?) WHERE id = ?",
+        (f"-{hours * 3600:.0f} seconds", aid),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_fresh_chat_approval_still_works(executed):
+    aid = _pending({"tool": "write_docx", "args": {}, "source": "telegram", "caller_id": "42"})
+    _age(aid, 23)
+    assert _say(f"/approve {aid}").startswith(f"Approved #{aid}")
+    assert len(executed) == 1
+
+
+def test_stale_chat_approval_refused_but_console_can_still_approve(executed):
+    aid = _pending({"tool": "write_docx", "args": {"path": "a.docx"},
+                    "source": "telegram", "caller_id": "42"})
+    _age(aid, 25)
+    reply = _say(f"/approve {aid}")
+    assert "more than 24 hours old" in reply
+    assert executed == []
+    assert _status(aid) == "pending"
+
+    client = TestClient(server.app, headers={"X-API-Key": server.get_or_create_api_key()})
+    assert client.post(f"/api/approvals/{aid}/approve").json()["re_execute"]["re_executed"] is True
+    assert executed == [("write_docx", {"path": "a.docx"})]
+
+
+def test_stale_request_can_still_be_denied_from_chat():
+    aid = _pending({"tool": "write_docx", "args": {}, "source": "telegram", "caller_id": "42"})
+    _age(aid, 72)
+    assert _say(f"/deny {aid}") == f"Denied #{aid}."
+    assert _status(aid) == "rejected"
+
+
+def test_unreadable_timestamp_counts_as_stale():
+    assert security._is_stale({"created_at": "not a date"}) is True
+    assert security._is_stale({"created_at": None}) is True

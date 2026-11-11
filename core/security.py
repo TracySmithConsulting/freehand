@@ -529,6 +529,27 @@ def _remote_ownership_refusal(row: Optional[dict], source: str, caller_id: str) 
     return None
 
 
+# A chat approval must be given while the request is fresh. An old pending
+# request (the person may have forgotten it, or the situation changed) can
+# still be approved in the web console, where it is shown in full.
+REMOTE_APPROVAL_MAX_AGE_SECONDS = 24 * 3600
+
+
+def _is_stale(row: dict) -> bool:
+    """True if the approval is older than REMOTE_APPROVAL_MAX_AGE_SECONDS.
+
+    created_at is SQLite CURRENT_TIMESTAMP (UTC, "YYYY-MM-DD HH:MM:SS").
+    An unreadable timestamp counts as stale (fail closed).
+    """
+    from datetime import datetime, timezone
+    try:
+        created = datetime.strptime(str(row.get("created_at")), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return True
+    age = datetime.now(timezone.utc).replace(tzinfo=None) - created
+    return age.total_seconds() > REMOTE_APPROVAL_MAX_AGE_SECONDS
+
+
 def _summarise_result(result: Optional[dict], cap: int = 500) -> str:
     content = (result or {}).get("content", "")
     if not isinstance(content, str):
@@ -542,6 +563,14 @@ async def approve_from_remote(approval_id: int, source: str, caller_id: str) -> 
     refusal = _remote_ownership_refusal(row, source, caller_id)
     if refusal:
         return refusal
+
+    if _is_stale(row):
+        hours = REMOTE_APPROVAL_MAX_AGE_SECONDS // 3600
+        return (
+            f"Approval #{approval_id} is more than {hours} hours old, so it can't be "
+            "approved from chat. Approve it in the FreeHand web console if it's still "
+            f"wanted, or reply /deny {approval_id}."
+        )
 
     tool = _payload_of(row).get("tool")
     if tool:
