@@ -3,6 +3,9 @@ import re
 import hmac
 import hashlib
 import asyncio
+import logging
+import threading
+import time
 from pathlib import Path
 from typing import Dict, Optional, List
 from datetime import datetime, timezone
@@ -17,6 +20,8 @@ from core.security import get_current_tier, approve_from_remote, deny_from_remot
 from core.memory import sync_vault_to_sqlite
 from core.scheduler import process_scribble, create_task, append_scribble
 
+
+log = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).parent.parent
 VAULT_DIR = PROJECT_ROOT / "vault"
@@ -70,12 +75,20 @@ async def _telegram_send_message(chat_id: str, text: str) -> bool:
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
-                timeout=aiohttp.ClientTimeout(total=10)
-            ) as resp:
-                return resp.status == 200
+            # Agent replies often contain an unbalanced * or _ (file names,
+            # snake_case), which makes Telegram reject Markdown with a 400 —
+            # the reply used to vanish silently. Retry as plain text.
+            for extra in ({"parse_mode": "Markdown"}, {}):
+                async with session.post(
+                    url,
+                    json={"chat_id": chat_id, "text": text, **extra},
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        return True
+                    if resp.status != 400:
+                        return False
+            return False
     except Exception:
         return False
 
@@ -103,14 +116,30 @@ async def _slack_send_message(channel: str, text: str) -> bool:
         return False
 
 
+SLACK_MAX_CLOCK_SKEW_SECONDS = 300
+
+
 def _verify_slack_signature(body: str, signature: str, timestamp: str) -> bool:
-    """Verify Slack webhook signature."""
+    """Verify a Slack request signature (Slack's v0 signing scheme).
+
+    Fails closed: with no slack_signing_secret configured, every request is
+    rejected (this used to return True, i.e. accept anything). The request
+    timestamp must be within 5 minutes of now, as Slack recommends, so a
+    captured request cannot be replayed later.
+    """
     settings = _load_settings()
     signing_secret = settings.get("slack_signing_secret", "").strip()
-    if not signing_secret:
-        return True
-    ts = timestamp
-    sig_base_string = f"v0:{ts}:{body}"
+    if not signing_secret or not signature or not timestamp:
+        if not signing_secret:
+            log.warning("slack_signing_secret not set — rejecting Slack webhook")
+        return False
+    try:
+        ts = int(timestamp)
+    except ValueError:
+        return False
+    if abs(time.time() - ts) > SLACK_MAX_CLOCK_SKEW_SECONDS:
+        return False
+    sig_base_string = f"v0:{timestamp}:{body}"
     my_signature = "v0=" + hmac.new(
         signing_secret.encode(), sig_base_string.encode(), hashlib.sha256
     ).hexdigest()
@@ -300,21 +329,87 @@ async def _handle_scribble_command(text: str, source: str, caller_id: str) -> st
     checklist format via the scheduler's single-writer appender."""
     return append_scribble(text[9:].strip())
 
+# ── Fast acknowledgement + duplicate suppression ───────────────────────
+# Slack requires a 2xx within 3 seconds and otherwise re-delivers the same
+# event up to 3 more times; Telegram re-delivers an update when the webhook
+# is slow or errors. An agent run takes far longer than that, so the
+# webhooks used to run the agent once per delivery: one Slack message could
+# run it four times (duplicate replies, duplicate approvals, and at
+# full_access duplicate posts).
+#
+# Now each webhook authenticates, checks allow_from and the delivery id,
+# returns immediately, and runs the agent in a background task. Delivery
+# ids (Telegram update_id, Slack event_id) are remembered for an hour, so
+# any re-delivery is dropped.
+
+DELIVERY_TTL_SECONDS = 3600
+_seen_deliveries: Dict[str, float] = {}
+_seen_lock = threading.Lock()
+_background_tasks: set = set()
+
+
+def _first_delivery(key: str) -> bool:
+    """True the first time a delivery id is seen (within the TTL)."""
+    now = time.monotonic()
+    with _seen_lock:
+        for k, ts in list(_seen_deliveries.items()):
+            if now - ts > DELIVERY_TTL_SECONDS:
+                del _seen_deliveries[k]
+        if key in _seen_deliveries:
+            return False
+        _seen_deliveries[key] = now
+        return True
+
+
+def _spawn(coro) -> asyncio.Task:
+    """Run ``coro`` in the background after the webhook has returned.
+
+    The event loop only keeps weak references to tasks, so we hold a strong
+    one until it finishes. Exceptions are logged rather than lost.
+    """
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_tasks.add(task)
+
+    def _done(t: asyncio.Task) -> None:
+        _background_tasks.discard(t)
+        if not t.cancelled() and t.exception() is not None:
+            log.error("gateway background task failed", exc_info=t.exception())
+
+    task.add_done_callback(_done)
+    return task
+
+
+async def _reply_in_background(source: str, caller_id: str, text: str, send) -> None:
+    """Run one chat message through the agent and send the reply."""
+    try:
+        response = await _route_to_agent(text, source=source, caller_id=caller_id)
+    except Exception as e:  # never leave the person without an answer
+        log.exception("%s message failed", source)
+        response = f"Error: {str(e)[:200]}"
+    await send(caller_id, response)
+
+
 async def handle_telegram_webhook(update: dict) -> dict:
-    """Process an incoming Telegram webhook update."""
+    """Accept an incoming Telegram update and answer it in the background.
+
+    The caller (server.py) has already checked the webhook secret token.
+    """
     message = update.get("message", {})
     chat_id = str(message.get("chat", {}).get("id", ""))
     text = (message.get("text") or "").strip()
     if not text:
         return {"ok": True}
 
-    # N12a: allow_from check (second layer after bot-token auth)
+    # N12a: allow_from check (second layer after the secret token)
     if not _check_allow_from("telegram", chat_id):
         return {"ok": True}  # Silently drop — don't leak bot existence
 
-    response = await _route_to_agent(text, source="telegram", caller_id=chat_id)
-    await _telegram_send_message(chat_id, response)
-    return {"ok": True}
+    update_id = update.get("update_id")
+    if update_id is not None and not _first_delivery(f"telegram:{update_id}"):
+        return {"ok": True, "duplicate": True}
+
+    _spawn(_reply_in_background("telegram", chat_id, text, _telegram_send_message))
+    return {"ok": True, "queued": True}
 
 
 async def handle_slack_webhook(body: str, headers: dict) -> dict:
@@ -338,6 +433,10 @@ async def handle_slack_webhook(body: str, headers: dict) -> dict:
     event = data.get("event", {})
     if event.get("type") != "message":
         return {"ok": True}
+    # Ignore bot posts (including FreeHand's own replies, which would
+    # otherwise loop) and edits/deletes/joins, which carry a subtype.
+    if event.get("bot_id") or event.get("subtype"):
+        return {"ok": True}
 
     text = (event.get("text") or "").strip()
     if not text:
@@ -348,10 +447,15 @@ async def handle_slack_webhook(body: str, headers: dict) -> dict:
     if not _check_allow_from("slack", user_id):
         return {"ok": True}  # Silently drop
 
+    # Slack re-delivers when it doesn't get a 2xx within 3 seconds; the
+    # event_id is identical on every retry.
+    event_id = data.get("event_id") or event.get("client_msg_id") or event.get("ts")
+    if event_id and not _first_delivery(f"slack:{event_id}"):
+        return {"ok": True, "duplicate": True}
+
     channel = event.get("channel", "")
-    response = await _route_to_agent(text, source="slack", caller_id=channel)
-    await _slack_send_message(channel, response)
-    return {"ok": True}
+    _spawn(_reply_in_background("slack", channel, text, _slack_send_message))
+    return {"ok": True, "queued": True}
 
 
 async def handle_whatsapp_message(remote_jid: str, text: str) -> dict:
