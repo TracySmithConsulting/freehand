@@ -229,13 +229,13 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
         return "Use: /deny <id>"
 
     if text.startswith("/tier"):
-        new_tier = text[5:].strip()
-        try:
-            from core.security import set_tier
-            set_tier(new_tier)
-            return f"Tier set to: {new_tier}"
-        except ValueError as e:
-            return str(e)
+        # Changing the permission tier is a local-only operation. A remote
+        # gateway (or anyone who forged a message from one) must never be
+        # able to lift itself to full_access.
+        return (
+            f"Tier is {tier.value}. The tier can only be changed from the "
+            "FreeHand web console, not from chat."
+        )
 
     if text.startswith("/status"):
         pending = 0
@@ -290,20 +290,18 @@ async def _handle_agent_command(text: str, source: str, caller_id: str, tier) ->
             return approval_msg
         return "Action blocked by permission tier. Use /tier to change."
 
-    # Execute via agent command endpoint
-    import aiohttp
-    base_url = "http://127.0.0.1:8000"
+    # Run the agent in-process. This used to POST to
+    # http://127.0.0.1:8000/api/agent/command without an X-API-Key (always
+    # 401), read a non-existent "result" field, and gave up after 30s — so
+    # every chat command silently answered "Command processed."
+    from core.agent import run_command
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                base_url + "/api/agent/command",
-                json={"command": text, "source": source, "caller_id": caller_id},
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as resp:
-                data = await resp.json()
-                return data.get("result", "Command processed.")
+        data = await run_command(text, source=source, caller_id=caller_id)
     except Exception as e:
-        return f"Error: {str(e)[:100]}"
+        return f"Error: {str(e)[:200]}"
+    if data.get("error"):
+        return f"Error: {str(data['error'])[:300]}"
+    return data.get("text") or "Done (the agent returned no text)."
 
 
 async def _handle_scribble_command(text: str, source: str, caller_id: str) -> str:

@@ -16,13 +16,63 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from core.security import intercept_action, PROJECT_ROOT
 
 
-def _is_within_workspace(path: str) -> bool:
-    """Check whether a file path is inside the project workspace."""
+def _is_within(path: str, root: Path) -> bool:
+    """True if ``path`` resolves to ``root`` or somewhere beneath it.
+
+    Uses a real path-component comparison. The old string-prefix check
+    treated a sibling like ``<root>2/secret`` as inside ``<root>``.
+    """
     try:
-        resolved = Path(path).resolve()
-        return str(resolved).startswith(str(PROJECT_ROOT.resolve()))
+        return Path(path).resolve().is_relative_to(Path(root).resolve())
     except Exception:
         return False
+
+
+def _is_within_workspace(path: str) -> bool:
+    """Check whether a file path is inside the project workspace."""
+    return _is_within(path, PROJECT_ROOT)
+
+
+def allowed_read_roots() -> List[Path]:
+    """Folders the agent may read documents from.
+
+    Always the vault; plus any folders the owner lists in
+    settings["allowed_read_dirs"]. Read dynamically so tests (and a
+    settings change) take effect without a restart.
+    """
+    from core import agent_config
+    roots = [Path(agent_config.VAULT_DIR)]
+    try:
+        extra = agent_config._load_settings().get("allowed_read_dirs") or []
+    except Exception:
+        extra = []
+    if isinstance(extra, str):
+        extra = [extra]
+    for d in extra:
+        if isinstance(d, str) and d.strip():
+            roots.append(Path(d.strip()).expanduser())
+    return roots
+
+
+def check_read_allowed(path: str) -> Optional[str]:
+    """Return None if ``path`` may be read by the agent, else an error message.
+
+    Agent- and API-driven document reads are confined to
+    allowed_read_roots(). Without this, a prompt-injected instruction in
+    an email or web page could make the agent read any file on the machine
+    (e.g. .env, SSH keys) and then post it somewhere. The local CLI calls
+    read_docx() etc. directly and is not confined.
+    """
+    if not path or not str(path).strip():
+        return "path is required"
+    roots = allowed_read_roots()
+    if any(_is_within(path, r) for r in roots):
+        return None
+    listed = ", ".join(str(r) for r in roots)
+    return (
+        f"Reading {path} is not allowed. The agent can only read files in: "
+        f"{listed}. Add a folder to settings 'allowed_read_dirs' to allow more."
+    )
 
 
 def _check_write_permission(path: str) -> dict:

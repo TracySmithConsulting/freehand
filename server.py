@@ -141,7 +141,7 @@ async def limit_request_body(request: Request, call_next):
 # Exceptions (no auth required):
 #   GET  /                          - serves the static web UI
 #   GET  /health                    - liveness probe
-#   POST /api/gateway/telegram      - bot-token-based auth + allow_from
+#   POST /api/gateway/telegram      - webhook secret header + allow_from
 #   POST /api/gateway/slack         - HMAC signature + allow_from
 #   POST /api/gateway/whatsapp      - bridge-secret header + allow_from
 #
@@ -296,6 +296,9 @@ async def startup_event():
     _tool_registry.bootstrap()
     from core.tools import composio_registry as _composio_tool_registry
     _composio_tool_registry.bootstrap()
+    # Encrypt any legacy plaintext client_secret in broker_config.json
+    # (providers block). Idempotent — no-op once migrated.
+    oauth_broker.migrate_plaintext_secrets()
     # Log any expired connections on startup
     from core.oauth.manager import list_connections, is_token_expired
     all_conns = list_connections()
@@ -497,6 +500,7 @@ async def security_check(body: dict):
 SETTINGS_ALLOWED_KEYS = frozenset({
     "api_key", "omniroute", "llm", "tier", "oauth", "telegram",
     "telegram_bot_token", "telegram_chat_id", "telegram_chat_whitelist",
+    "telegram_webhook_secret", "telegram_allow_from", "allowed_read_dirs",
     "slack", "slack_bot_token", "slack_webhook_url", "slack_signing_secret",
     "slack_allow_from", "whatsapp", "whatsapp_enabled", "whatsapp_pairing_phone",
     "bridge_secret", "whatsapp_allow_from", "public_base_url",
@@ -605,23 +609,9 @@ async def agent_command(body: dict):
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
 
-    # N3 fix: truncate command before storing. Full text goes to the agent
-    # loop but only the first 200 chars land in the memories table. Sensitive
-    # secrets in commands are not persisted indefinitely.
-    import hashlib
-    cmd_truncated = command[:200]
-    cmd_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()[:16]
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO memories (path, title, content) VALUES (?, ?, ?)",
-        ("/agent/command", f"Command ({cmd_hash}): " + cmd_truncated[:50], cmd_truncated)
-    )
-    conn.commit()
-    conn.close()
-
-    # Run the agent
-    from core.agent import run_agent
-    result = await run_agent(command, source=source, caller_id=caller_id)
+    # Records a truncated copy (N3) and runs the agent loop.
+    from core.agent import run_command
+    result = await run_command(command, source=source, caller_id=caller_id)
     return result
 
 
@@ -718,8 +708,24 @@ async def api_sweep():
 # exception list above. Inside each handler we enforce allow_from as the
 # second layer (see core/gateway.py).
 
+# Telegram signs nothing, so the webhook must be registered with a
+# secret_token (setWebhook ... secret_token=<telegram_webhook_secret>);
+# Telegram then sends it back in X-Telegram-Bot-Api-Secret-Token on every
+# update. Without this check, anyone who can reach this URL could forge an
+# update from an allowed chat_id (chat ids are not secrets). Closed when
+# the secret is unset, same as the WhatsApp bridge.
 @app.post("/api/gateway/telegram")
 async def telegram_webhook(request: Request):
+    settings = _load_settings_for_auth()
+    expected = str(settings.get("telegram_webhook_secret", "")).strip()
+    if not expected:
+        return JSONResponse(
+            {"error": "telegram_webhook_secret not configured in settings.json"},
+            status_code=503,
+        )
+    provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "").strip()
+    if not provided or not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing Telegram secret token")
     try:
         update = await request.json()
     except Exception:
@@ -791,8 +797,17 @@ async def whatsapp_pair(body: dict):
 
 # ── Tool Endpoints ─────────────────────────────────────────────────────────────
 
+def _require_readable(path: str) -> None:
+    """403 unless the path is inside the vault or settings.allowed_read_dirs."""
+    from core.tools.office import check_read_allowed
+    denied = check_read_allowed(path)
+    if denied:
+        raise HTTPException(status_code=403, detail=denied)
+
+
 @app.get("/api/tools/office/read/docx", dependencies=[Depends(require_api_key)])
 async def tool_read_docx(path: str):
+    _require_readable(path)
     result = read_docx(path)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -814,6 +829,7 @@ async def tool_write_docx(body: dict):
 
 @app.get("/api/tools/office/read/xlsx", dependencies=[Depends(require_api_key)])
 async def tool_read_xlsx(path: str):
+    _require_readable(path)
     result = read_xlsx(path)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -834,6 +850,7 @@ async def tool_write_xlsx(body: dict):
 
 @app.get("/api/tools/office/read/pptx", dependencies=[Depends(require_api_key)])
 async def tool_read_pptx(path: str):
+    _require_readable(path)
     result = read_pptx(path)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])

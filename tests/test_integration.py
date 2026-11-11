@@ -235,9 +235,18 @@ class TestAuthEnforcement:
         assert r.status_code == 200
 
     def test_gateway_telegram_does_not_require_api_key(self, raw_client):
-        # Gateway endpoints have their own auth mechanism
-        r = raw_client.post("/api/gateway/telegram", json={"message": {}})
-        # Telegram handler returns {"ok": True} or {"ok": False, "error": "Invalid JSON"}
+        # Gateway endpoints have their own auth mechanism: for Telegram, the
+        # webhook secret token header (not the X-API-Key).
+        import json as _json
+        import server as _server
+        (_server.VAULT_DIR / "settings.json").write_text(
+            _json.dumps({"telegram_webhook_secret": "tg-secret"})
+        )
+        r = raw_client.post(
+            "/api/gateway/telegram",
+            json={"message": {}},
+            headers={"X-Telegram-Bot-Api-Secret-Token": "tg-secret"},
+        )
         assert r.status_code == 200
 
     def test_wrong_api_key_rejected(self, raw_client):
