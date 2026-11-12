@@ -110,6 +110,15 @@ def test_no_public_test_passwords_as_defaults(test_value):
     assert test_value not in (PROJECT_ROOT / ".env.example").read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("compose", ["repo", "tenant"])
+def test_open_connector_data_is_kept_where_oc_writes_it(compose, tmp_path):
+    """OC writes to /app/data. Mounting /data left its data in an unnamed
+    volume that was replaced, empty, on every rebuild."""
+    text = REPO_COMPOSE if compose == "repo" else pt.build_compose("acme", 8100, 8101, tmp_path)
+    assert "- oc-data:/app/data" in text
+    assert "- oc-data:/data" not in text
+
+
 def test_compose_requires_each_secret():
     for name in ("OC_ADMIN_TOKEN", "OC_RUNTIME_TOKEN", "OC_ENCRYPTION_KEY"):
         assert f"${{{name}:?" in REPO_COMPOSE, name

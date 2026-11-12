@@ -17,9 +17,9 @@
 # Vault persistence:
 #   ./vault → /app/vault — host directory mounted into both services.
 #   FreeHand writes encryption.key + connections.db + broker_config.json
-#   there. OC writes its own SQLite store at /data inside the container
-#   (an anonymous volume). Don't confuse the two — only ./vault is
-#   bind-mounted; OC's /data is Docker-managed.
+#   there. OC writes its own SQLite store (connect.sqlite) at /app/data
+#   inside its container, kept in the named volume freehand-oc-data.
+#   Don't confuse the two — only ./vault is bind-mounted.
 #
 # Health checks:
 #   OC: wget /health  (returns 200 OK)
@@ -58,9 +58,11 @@ services:
       - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
       - OOMOL_CONNECT_ENCRYPTION_KEY=${OC_ENCRYPTION_KEY:?OC_ENCRYPTION_KEY is not set - run python scripts/setup_env.py}
     volumes:
-      # OC's own SQLite store — Docker-managed anonymous volume,
-      # separate from FreeHand's ./vault. Don't conflate.
-      - oc-data:/data
+      # OC's own SQLite store. OC keeps it in /app/data (its
+      # OOMOL_CONNECT_DATA_DIR). This used to mount /data, which OC never
+      # uses, so its data sat in an unnamed volume and a new, empty one
+      # was created whenever the container was rebuilt.
+      - oc-data:/app/data
     healthcheck:
       # OC's /health endpoint returns {"ok": true} when ready.
       # wget --spider does a HEAD request, which OC handles correctly.

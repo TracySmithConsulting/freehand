@@ -49,15 +49,23 @@ def new_value(name: str) -> str:
 
 
 def oc_has_data() -> bool:
-    """True if OpenConnector's data volume exists (or Docker can't say)."""
+    """True if OpenConnector has saved data (or Docker can't say)."""
     try:
-        proc = subprocess.run(
+        exists = subprocess.run(
             ["docker", "volume", "inspect", OC_VOLUME],
             capture_output=True, timeout=30, check=False,
         )
+        if exists.returncode != 0:
+            return False
+        # An existing but empty volume holds nothing a new key could break.
+        probe = subprocess.run(
+            ["docker", "run", "--rm", "-v", f"{OC_VOLUME}:/d:ro", "alpine",
+             "test", "-e", "/d/connect.sqlite"],
+            capture_output=True, timeout=120, check=False,
+        )
     except (OSError, subprocess.TimeoutExpired):
         return True  # can't tell: be safe and keep the key
-    return proc.returncode == 0
+    return probe.returncode != 1  # 1 = no database; anything else, be safe
 
 
 def read_lines(path: Path) -> list[str]:

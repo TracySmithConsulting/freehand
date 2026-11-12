@@ -371,7 +371,8 @@ services:
       - OOMOL_CONNECT_RUNTIME_TOKEN=${{OC_RUNTIME_TOKEN}}
       - OOMOL_CONNECT_ENCRYPTION_KEY=${{OC_ENCRYPTION_KEY}}
     volumes:
-      - oc-data:/data
+      # OC keeps its data in /app/data (OOMOL_CONNECT_DATA_DIR), not /data.
+      - oc-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
       interval: 10s

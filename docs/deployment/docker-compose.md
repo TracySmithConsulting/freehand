@@ -66,7 +66,7 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 │               │                                  │               │
 │               ▼                                  ▼               │
 │  ┌────────────────────────┐     ┌────────────────────────────┐  │
-│  │ oc-data (anon volume)  │     │ ./vault  (bind mount)     │  │
+│  │ oc-data (named volume) │     │ ./vault  (bind mount)     │  │
 │  │ OC's SQLite store      │     │ encryption.key             │  │
 │  │                        │     │ connections.db             │  │
 │  │                        │     │ broker_config.json         │  │
@@ -81,9 +81,9 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 | Host path | Container path | Owner | Purpose |
 |---|---|---|---|
 | `./vault` | `/app/vault` | `freehand:freehand` | FreeHand's encrypted vault — encryption.key, connection tokens, broker config, credential store, AND agent.db (Round 10 PR 1 consolidated these into one directory) |
-| (anonymous) | `/data` (in OC) | OC's runtime user | OC's own SQLite store |
+| `freehand-oc-data` | `/app/data` (in OC) | OC's runtime user | OC's own SQLite store (`connect.sqlite`) |
 
-**`./vault` is bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/data` is an anonymous Docker volume (named `freehand-oc-data`) that survives `down` but is removed by `down -v`.
+**`./vault` is bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/app/data` is the named Docker volume `freehand-oc-data`, which survives `down` and rebuilds but is removed by `down -v`. (Before Nov 2026 the volume was mounted at `/data`, which OC never uses, so OC's data lived in an unnamed volume and was left behind on each rebuild.)
 
 > **Round 10 PR 1 note**: Round 9 had two separate bind-mounts (`./vault` and `./agent.db`) which forced the Windows-only `FREEHAND_USER=0:0` workaround because Docker Desktop on Windows uses gRPC-FUSE and doesn't propagate host UID mappings cleanly across two mounts. Round 10 puts agent.db inside `./vault` — one mount covers everything, no Windows workaround needed for that reason alone.
 
@@ -215,7 +215,7 @@ tar -xzf freehand-vault-YYYYMMDD.tar.gz
 docker compose up -d
 ```
 
-**OC's own data** (`/data` inside the OC container, anonymous Docker volume `freehand-oc-data`): contains Slack token records, GitHub OAuth configs, etc. Not currently backed up by this process — pull it via `docker compose exec open-connector ...` if you need it.
+**OC's own data** (`/app/data` inside the OC container, Docker volume `freehand-oc-data`): contains Slack token records, GitHub OAuth configs, etc. Not currently backed up by this process — pull it via `docker compose exec open-connector ...` if you need it.
 
 ## When NOT to use
 
