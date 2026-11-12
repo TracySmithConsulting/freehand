@@ -7,7 +7,7 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 
 const { createApp, makeForwarder, secretMatches } = require('../bridge-server');
-const { isDirectChat } = require('../whatsapp');
+const { isDirectChat, isSelfChat, classifyMessage } = require('../whatsapp');
 
 const SECRET = 'a-long-test-bridge-secret';
 
@@ -118,7 +118,7 @@ test('forwarder sends the secret and message id to FreeHand', async () => {
     assert.deepEqual(received, [{
         path: '/api/gateway/whatsapp',
         secret: SECRET,
-        body: { remote_jid: '27821234567@s.whatsapp.net', text: 'hi', message_id: 'MSG1' },
+        body: { remote_jid: '27821234567@s.whatsapp.net', text: 'hi', message_id: 'MSG1', from_self: false },
     }]);
 });
 
@@ -126,4 +126,52 @@ test('forwarder raises on a FreeHand error so it gets logged', async () => {
     const fakeFetch = async () => ({ ok: false, status: 401 });
     const forward = makeForwarder('http://x', SECRET, fakeFetch);
     await assert.rejects(forward({ jid: '1@s.whatsapp.net', text: 'x', id: '1' }), /HTTP 401/);
+});
+
+// ── Self chat ("Message yourself") ─────────────────────────────────────
+
+const ME = { id: '27821234567:12@s.whatsapp.net', lid: '98765432:12@lid' };
+
+function msg(remoteJid, { fromMe = false, id = 'M1', text = 'hello' } = {}) {
+    return { key: { remoteJid, fromMe, id }, message: { conversation: text } };
+}
+
+test('the linked number\'s own chat is recognised in both id forms', () => {
+    assert.equal(isSelfChat('27821234567@s.whatsapp.net', ME), true);
+    assert.equal(isSelfChat('98765432@lid', ME), true);
+    assert.equal(isSelfChat('27820000000@s.whatsapp.net', ME), false);
+    assert.equal(isSelfChat('27821234567@lid', ME), false); // number is not a lid
+    assert.equal(isSelfChat('27821234567@s.whatsapp.net', null), false);
+});
+
+test('messages from other people are forwarded, not marked as self', () => {
+    assert.deepEqual(classifyMessage(msg('27820000000@s.whatsapp.net'), ME, new Set()),
+        { jid: '27820000000@s.whatsapp.net', text: 'hello', id: 'M1', fromSelf: false });
+});
+
+test('the owner typing in the self chat is forwarded as self', () => {
+    const out = classifyMessage(msg('98765432@lid', { fromMe: true }), ME, new Set());
+    assert.deepEqual(out, { jid: '98765432@lid', text: 'hello', id: 'M1', fromSelf: true });
+});
+
+test('the owner\'s chats with other people are never forwarded', () => {
+    assert.equal(classifyMessage(msg('27820000000@s.whatsapp.net', { fromMe: true }), ME, new Set()), null);
+});
+
+test('the bridge\'s own replies in the self chat are not answered again', () => {
+    const sent = new Set(['REPLY1']);
+    assert.equal(classifyMessage(msg('27821234567@s.whatsapp.net', { fromMe: true, id: 'REPLY1' }), ME, sent), null);
+});
+
+test('groups, empty and non-text messages are ignored', () => {
+    assert.equal(classifyMessage(msg('123-456@g.us'), ME, new Set()), null);
+    assert.equal(classifyMessage(msg('27820000000@s.whatsapp.net', { text: '   ' }), ME, new Set()), null);
+    assert.equal(classifyMessage({ key: { remoteJid: '1@s.whatsapp.net' }, message: { imageMessage: {} } }, ME, new Set()), null);
+});
+
+test('forwarder marks self-chat messages', async () => {
+    let body;
+    const fakeFetch = async (url, opts) => { body = JSON.parse(opts.body); return { ok: true }; };
+    await makeForwarder('http://x', SECRET, fakeFetch)({ jid: '98765432@lid', text: 'hi', id: '9', fromSelf: true });
+    assert.equal(body.from_self, true);
 });

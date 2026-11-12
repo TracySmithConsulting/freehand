@@ -177,10 +177,17 @@ def gateway(subcommand: str = typer.Argument(help="status|start|stop|pair|secret
         from core.gateway import handle_whatsapp_pair
         result = asyncio.run(handle_whatsapp_pair(phone))
         if "code" in result:
-            typer.echo("Pairing code for " + result["phone"] + ": " + result["code"])
-            typer.echo("Enter this code in WhatsApp on your phone to link the device.")
+            typer.echo("Linking code for " + result["phone"] + ": " + result["code"])
+            typer.echo("On the phone with that number, open WhatsApp, then Settings, Linked devices,")
+            typer.echo("Link a device, 'Link with phone number instead', and type the code.")
+            typer.echo("")
+            typer.echo("Linked your own number? Talk to FreeHand in your 'Message yourself' chat.")
+            typer.echo("Linked a separate number? Add your own number to whatsapp_allow_from,")
+            typer.echo("in the web console under Remote Gateways, WhatsApp, step 3.")
+        elif result.get("error") == "Bridge unavailable":
+            typer.echo("The WhatsApp bridge is not running. In the freehand/bridge folder, run: npm start")
         else:
-            typer.echo("Error: " + result.get("error", "unknown"))
+            typer.echo("Could not get a code: " + result.get("error", "unknown error"))
 
     elif subcommand == "secret":
         # The shared secret between FreeHand and the WhatsApp bridge. Created

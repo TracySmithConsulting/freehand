@@ -47,6 +47,56 @@ function textOf(message) {
     return message.conversation || message.extendedTextMessage?.text || '';
 }
 
+// "27821234567:12@s.whatsapp.net" -> { user: "27821234567", server: "s.whatsapp.net" }
+function splitJid(jid) {
+    const [left, server = ''] = String(jid || '').split('@');
+    return { user: left.split(':')[0], server };
+}
+
+// True if `jid` is the linked account's own "Message yourself" chat.
+// `me` is sock.user: { id: "<number>:<device>@s.whatsapp.net", lid: "<id>:<device>@lid" }.
+function isSelfChat(jid, me) {
+    if (!me) return false;
+    const chat = splitJid(jid);
+    if (!chat.user) return false;
+    const own = chat.server === 'lid' ? splitJid(me.lid) : splitJid(me.id);
+    return own.user !== '' && own.user === chat.user;
+}
+
+// IDs of messages this bridge sent. In the self chat, the bridge's own
+// replies come back as messages "from me"; without this they would be
+// answered again, forever.
+const SENT_ID_LIMIT = 500;
+const sentIds = new Set();
+function rememberSent(id) {
+    if (!id) return;
+    sentIds.add(id);
+    if (sentIds.size > SENT_ID_LIMIT) sentIds.delete(sentIds.values().next().value);
+}
+
+// Decide what to do with one incoming message. Returns null to ignore it,
+// or { jid, text, id, fromSelf } to hand to FreeHand.
+//  - Other people's one-to-one chats go to FreeHand (FreeHand checks its
+//    allow list).
+//  - Messages the account owner types in other people's chats are never
+//    forwarded: those are their own conversations.
+//  - The owner's "Message yourself" chat is forwarded with fromSelf, so
+//    someone with only one WhatsApp number can still talk to FreeHand.
+function classifyMessage(msg, me, sent = sentIds) {
+    if (!msg || !msg.message || !msg.key) return null;
+    const jid = msg.key.remoteJid;
+    if (!isDirectChat(jid)) return null;
+    const text = textOf(msg.message).trim();
+    if (!text) return null;
+    const id = msg.key.id;
+    if (msg.key.fromMe) {
+        if (!isSelfChat(jid, me)) return null;
+        if (id && sent.has(id)) return null; // our own reply
+        return { jid, text, id, fromSelf: true };
+    }
+    return { jid, text, id, fromSelf: false };
+}
+
 async function start() {
     const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const { version } = await fetchLatestBaileysVersion();
@@ -90,13 +140,10 @@ async function start() {
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
         if (type !== 'notify') return; // history sync, not new messages
         for (const msg of messages) {
-            if (!msg.message || msg.key.fromMe) continue;
-            const jid = msg.key.remoteJid;
-            if (!isDirectChat(jid)) continue;
-            const text = textOf(msg.message).trim();
-            if (!text || !messageHandler) continue;
+            const incoming = classifyMessage(msg, sock.user);
+            if (!incoming || !messageHandler) continue;
             try {
-                await messageHandler({ jid, text, id: msg.key.id });
+                await messageHandler(incoming);
             } catch (e) {
                 console.error(`Failed to hand message to FreeHand: ${e.message}`);
             }
@@ -112,7 +159,8 @@ async function sendText(jid, text) {
     if (!state.sock || !state.connected) {
         throw new Error('WhatsApp not connected');
     }
-    await state.sock.sendMessage(jid, { text });
+    const sent = await state.sock.sendMessage(jid, { text });
+    rememberSent(sent?.key?.id);
 }
 
 async function requestPairingCode(phone) {
@@ -141,4 +189,7 @@ function status() {
     };
 }
 
-module.exports = { start, onMessage, sendText, requestPairingCode, status, isDirectChat, AUTH_DIR };
+module.exports = {
+    start, onMessage, sendText, requestPairingCode, status,
+    isDirectChat, isSelfChat, classifyMessage, AUTH_DIR,
+};

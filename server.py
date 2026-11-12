@@ -106,12 +106,21 @@ def _get_max_body_bytes() -> int:
         return DEFAULT_MAX_BODY_BYTES
 
 
+# Chat webhooks: authenticated by their own secret or signature (see each
+# handler), never by X-API-Key. Nothing else under /api/gateway/ is exempt.
+CHAT_WEBHOOK_PATHS = frozenset({
+    "/api/gateway/telegram",
+    "/api/gateway/slack",
+    "/api/gateway/whatsapp",
+})
+
+
 @app.middleware("http")
 async def limit_request_body(request: Request, call_next):
     """Reject requests whose Content-Length exceeds the cap."""
     # Allow gateway webhooks (they may carry Slack/Telegram payloads —
     # typically small but we want to be permissive here so callbacks work).
-    if request.url.path.startswith("/api/gateway/"):
+    if request.url.path in CHAT_WEBHOOK_PATHS:
         return await call_next(request)
 
     # Health/static: no body expected.
@@ -195,8 +204,12 @@ async def require_api_key(request: Request) -> None:
     path = request.url.path
     if path in ("/", "/health"):
         return
-    if path.startswith("/api/gateway/"):
-        return  # Telegram/Slack/WhatsApp each have their own auth mechanism
+    if path in CHAT_WEBHOOK_PATHS:
+        # Telegram/Slack/WhatsApp each have their own auth mechanism. Only
+        # these exact paths: this used to skip every /api/gateway/* path,
+        # so the gateway status, settings form and WhatsApp pairing needed
+        # no key at all.
+        return
 
     expected = get_or_create_api_key()
 
@@ -502,7 +515,7 @@ SETTINGS_ALLOWED_KEYS = frozenset({
     "allowed_write_dirs",
     "slack", "slack_bot_token", "slack_webhook_url", "slack_signing_secret",
     "slack_allow_from", "whatsapp", "whatsapp_enabled", "whatsapp_pairing_phone",
-    "bridge_secret", "whatsapp_allow_from", "public_base_url",
+    "bridge_secret", "whatsapp_allow_from", "whatsapp_allow_self", "public_base_url",
     "sweep_interval", "allowed_browser_domains", "user",
     "max_request_body_bytes", "max_screenshot_size_mb",
 })
@@ -770,7 +783,9 @@ async def whatsapp_webhook(request: Request):
     text = data.get("text", "")
     if not remote_jid or not text:
         return {"error": "remote_jid and text required"}
-    result = await handle_whatsapp_message(remote_jid, text, data.get("message_id"))
+    result = await handle_whatsapp_message(
+        remote_jid, text, data.get("message_id"), from_self=data.get("from_self") is True
+    )
     return result
 
 
@@ -781,8 +796,10 @@ async def gateway_status():
 
 @app.post("/api/gateway/settings", dependencies=[Depends(require_api_key)])
 async def gateway_settings(body: dict):
-    result = update_gateway_settings(body)
-    return result
+    try:
+        return update_gateway_settings(body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/gateway/whatsapp/pair", dependencies=[Depends(require_api_key)])

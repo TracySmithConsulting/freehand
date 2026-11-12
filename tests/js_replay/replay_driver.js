@@ -104,7 +104,9 @@ async function main() {
       <form id="gateway-form">
         <input id="tg-token"><input id="tg-whitelist">
         <input id="slack-signing"><input id="slack-token">
+        <p id="wa-bridge-state"></p>
         <input id="wa-phone"><p id="wa-code-hint"></p>
+        <textarea id="wa-allow"></textarea><input type="checkbox" id="wa-allow-self" checked>
         <button id="wa-pair-btn" type="button">Pair</button>
         <button type="button" id="gateway-save-btn">Save Gateway Settings</button>
       </form>

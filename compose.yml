@@ -4,7 +4,7 @@
 # FreeHand waits for OC to be ready before starting.
 #
 # Usage:
-#   cp .env.example .env       # edit tokens for your install
+#   python scripts/setup_env.py   # creates .env with random passwords
 #   docker compose up -d       # bring up both services in background
 #   docker compose logs -f     # tail logs from both
 #   docker compose down        # stop (vault volume preserved)
@@ -26,7 +26,8 @@
 #   FreeHand: Python urllib against its own root  (returns HTML)
 #
 # Production hardening (out of scope for this compose file):
-#   - Replace the test tokens in .env with real ones via `openssl rand`
+#   - scripts/setup_env.py generates the OpenConnector secrets; compose
+#     refuses to start without them (there are no built-in defaults)
 #   - Consider external Postgres for OC (replace SQLite with the
 #     postgres image, wire DATABASE_URL)
 #   - FreeHand's vault encryption key is auto-generated on first
@@ -37,9 +38,12 @@
 services:
   # ── OpenConnector runtime ──────────────────────────────────────────
   open-connector:
-    # Pin a specific tag (not :latest) for production reproducibility.
-    # :latest is fine for local dev — bump when upgrading.
-    image: ghcr.io/oomol-lab/open-connector:latest
+    # Pinned by digest so every install runs the version that was tested;
+    # ":latest" changes underneath you. Keep in step with OC_IMAGE in
+    # scripts/provision_tenant.py. To upgrade: docker pull
+    # ghcr.io/oomol-lab/open-connector:latest, test it, then copy the new
+    # digest from `docker image inspect --format "{{.RepoDigests}}"`.
+    image: ghcr.io/oomol-lab/open-connector@sha256:61e5e29a9ae7d8e817e8050d062ed57134e069cea3e7eef7cb15349c11b7a76d
     container_name: freehand-open-connector
     restart: unless-stopped
     # 127.0.0.1 keeps OC off the network. If FreeHand is later reachable
@@ -48,9 +52,11 @@ services:
       - "127.0.0.1:3001:3001"
     environment:
       - PORT=3001
-      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:-admintest123}
-      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:-runttest123}
-      - OOMOL_CONNECT_ENCRYPTION_KEY=${OC_ENCRYPTION_KEY:-this-is-a-thirty-two-byte-test-key}
+      # No defaults: the old built-in test values were public. Compose
+      # stops with a message if .env doesn't set these.
+      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:?OC_ADMIN_TOKEN is not set - run python scripts/setup_env.py}
+      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
+      - OOMOL_CONNECT_ENCRYPTION_KEY=${OC_ENCRYPTION_KEY:?OC_ENCRYPTION_KEY is not set - run python scripts/setup_env.py}
     volumes:
       # OC's own SQLite store — Docker-managed anonymous volume,
       # separate from FreeHand's ./vault. Don't conflate.
@@ -109,7 +115,7 @@ services:
       # Override this for a hosted deployment, e.g.
       # https://connect.example.com.
       - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://127.0.0.1:3001}
-      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:-runttest123}
+      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
       # Optional: Composio-managed Meta authentication. These stay unset
       # unless Facebook/Instagram should use the Composio adapter.
       - COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}

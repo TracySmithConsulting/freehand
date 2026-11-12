@@ -526,15 +526,37 @@ async def handle_slack_webhook(body: str, headers: dict) -> dict:
     return {"ok": True, "queued": True}
 
 
-async def handle_whatsapp_message(remote_jid: str, text: str, message_id: Optional[str] = None) -> dict:
+def _whatsapp_self_allowed() -> bool:
+    """Whether the linked number may talk to FreeHand in its own
+    "Message yourself" chat (setting whatsapp_allow_self, default on).
+
+    People with only one WhatsApp number link their own number, so the
+    self chat is the only place they can reach FreeHand.
+    """
+    return _load_settings().get("whatsapp_allow_self", True) is not False
+
+
+async def handle_whatsapp_message(
+    remote_jid: str,
+    text: str,
+    message_id: Optional[str] = None,
+    from_self: bool = False,
+) -> dict:
     """Accept a WhatsApp message from the bridge and answer it in the background.
 
     The caller (server.py) has already checked X-Bridge-Secret. The reply
     goes out through the bridge's /reply; the bridge ignores this response
     body (it used to queue the whole JSON object as message text).
+
+    from_self means the bridge saw the linked number write in its own
+    "Message yourself" chat. That person is the account owner, so it is
+    allowed without an allow_from entry (unless whatsapp_allow_self is off).
+    The bridge sets it only for that chat, and only FreeHand's bridge, which
+    holds the shared secret, can reach this code.
     """
+    owner = from_self is True and _whatsapp_self_allowed()
     # N12c: allow_from check on the WhatsApp id
-    if not _check_allow_from("whatsapp", remote_jid):
+    if not owner and not _check_allow_from("whatsapp", remote_jid):
         # Logged so the owner can find the exact id to allow (WhatsApp may
         # send a hidden-number "...@lid" id instead of the phone number).
         log.warning("WhatsApp message from %s ignored: not on whatsapp_allow_from", remote_jid)
@@ -547,6 +569,22 @@ async def handle_whatsapp_message(remote_jid: str, text: str, message_id: Option
     return {"ok": True, "queued": True}
 
 
+def _bridge_health() -> dict:
+    """Ask the WhatsApp bridge whether it is running and connected.
+
+    Its /health needs no secret and reveals nothing sensitive. This is the
+    reliable check: in Docker, FreeHand can't see the bridge's session
+    folder on the host, so the file check alone said "not linked".
+    """
+    import urllib.request
+    try:
+        with urllib.request.urlopen(_get_bridge_url() + "/health", timeout=1.5) as resp:
+            data = json.loads(resp.read().decode("utf-8") or "{}")
+        return {"running": True, "connected": bool(data.get("whatsapp_connected"))}
+    except (OSError, ValueError, AttributeError):  # URLError/timeouts are OSError
+        return {"running": False, "connected": False}
+
+
 def get_gateway_status() -> dict:
     """Return current gateway connection status."""
     settings = _load_settings()
@@ -555,6 +593,8 @@ def get_gateway_status() -> dict:
     conn = sqlite3.connect(str(database.DB_PATH))
     pending = conn.execute("SELECT COUNT(*) FROM approvals WHERE status='pending'").fetchone()[0]
     conn.close()
+    bridge = _bridge_health()
+    session_saved = (_whatsapp_auth_dir() / "creds.json").exists()
 
     return {
         "tier": tier.value,
@@ -570,17 +610,55 @@ def get_gateway_status() -> dict:
         "whatsapp": {
             "enabled": settings.get("whatsapp_enabled", False),
             "pairing_phone": settings.get("whatsapp_pairing_phone", ""),
-            "auth_exists": (_whatsapp_auth_dir() / "creds.json").exists(),
+            # Linked if the bridge says so, or (bridge stopped) its saved
+            # session is visible from here.
+            "auth_exists": bridge["connected"] or session_saved,
+            "bridge_running": bridge["running"],
+            "connected": bridge["connected"],
             "bridge_secret_set": bool(str(settings.get("bridge_secret", "")).strip()),
+            "allow_from": list(settings.get("whatsapp_allow_from", []) or []),
+            "allow_self": settings.get("whatsapp_allow_self", True) is not False,
         },
         "bridge_port": BRIDGE_PORT,
     }
 
 
+# What the console's gateway form may change. Anything else (tier, API
+# key, LLM settings ...) has its own, narrower endpoint; this one used to
+# accept any key at all.
+GATEWAY_SETTING_KEYS = frozenset({
+    "telegram_bot_token", "telegram_chat_whitelist", "telegram_allow_from",
+    "telegram_webhook_secret",
+    "slack_bot_token", "slack_signing_secret", "slack_allow_from",
+    "whatsapp_allow_from", "whatsapp_allow_self", "whatsapp_enabled",
+    "whatsapp_pairing_phone",
+})
+
+
+def _clean_list(value) -> list:
+    """Accept a list or a comma/newline-separated string; drop blanks."""
+    if isinstance(value, str):
+        value = re.split(r"[,\n]", value)
+    if not isinstance(value, list):
+        return []
+    return [str(x).strip() for x in value if str(x).strip()]
+
+
 def update_gateway_settings(updates: dict) -> dict:
-    """Update gateway settings and return new status."""
+    """Update gateway settings and return new status.
+
+    Raises ValueError naming any key the gateway form may not set.
+    """
+    rejected = sorted(k for k in updates if k not in GATEWAY_SETTING_KEYS)
+    if rejected:
+        raise ValueError("Not a gateway setting: " + ", ".join(rejected))
     settings = _load_settings()
-    settings.update(updates)
+    for key, value in updates.items():
+        if key.endswith("_allow_from") or key == "telegram_chat_whitelist":
+            value = _clean_list(value)
+        elif key == "whatsapp_allow_self":
+            value = bool(value)
+        settings[key] = value
     _save_settings(settings)
     return get_gateway_status()
 

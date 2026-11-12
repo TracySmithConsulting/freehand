@@ -106,7 +106,7 @@ def test_unlisted_number_is_skipped(chat):
 def test_endpoint_requires_secret_and_passes_message_id(monkeypatch):
     seen = {}
 
-    async def fake_handle(remote_jid, text, message_id=None):
+    async def fake_handle(remote_jid, text, message_id=None, from_self=False):
         seen.update(jid=remote_jid, text=text, id=message_id)
         return {"ok": True, "queued": True}
 
@@ -240,12 +240,131 @@ def test_pairing_cannot_be_started_from_chat(monkeypatch):
 
 
 def test_status_reports_link_and_secret(tmp_path, monkeypatch):
+    monkeypatch.setattr(gateway, "_bridge_health", lambda: {"running": False, "connected": False})
     monkeypatch.setenv("WHATSAPP_AUTH_DIR", str(tmp_path))
     assert gateway.get_gateway_status()["whatsapp"]["auth_exists"] is False
     (tmp_path / "creds.json").write_text("{}")
     status = gateway.get_gateway_status()["whatsapp"]
     assert status["auth_exists"] is True
     assert status["bridge_secret_set"] is True
+
+
+def test_status_asks_the_bridge_when_the_session_folder_is_out_of_sight(tmp_path, monkeypatch):
+    """In Docker, FreeHand can't see the bridge's session folder on the host."""
+    monkeypatch.setenv("WHATSAPP_AUTH_DIR", str(tmp_path))  # empty: no creds.json
+    monkeypatch.setattr(gateway, "_bridge_health", lambda: {"running": True, "connected": True})
+    status = gateway.get_gateway_status()["whatsapp"]
+    assert status["auth_exists"] is True
+    assert status["connected"] is True and status["bridge_running"] is True
+    assert status["allow_from"] == ["+27 82 123 4567"]
+    assert status["allow_self"] is True
+
+
+def test_bridge_health_reports_a_stopped_bridge(monkeypatch):
+    monkeypatch.setenv("FREEHAND_BRIDGE_URL", "http://127.0.0.1:9")  # nothing listens
+    assert gateway._bridge_health() == {"running": False, "connected": False}
+
+
+# ── Self chat ("Message yourself") ─────────────────────────────────────
+
+SELF_JID = "98765432@lid"  # not on the allow list
+
+
+def test_owner_self_chat_is_answered_without_an_allow_list_entry(chat):
+    async def scenario():
+        r = await gateway.handle_whatsapp_message(SELF_JID, "hi", "SELF1", from_self=True)
+        await _drain()
+        return r
+
+    assert asyncio.run(scenario()) == {"ok": True, "queued": True}
+    assert chat["ran"] == [("whatsapp", SELF_JID, "hi")]
+    assert chat["sent"][0][0] == SELF_JID
+
+
+def test_self_chat_can_be_switched_off(chat):
+    settings = gateway._load_settings()
+    settings["whatsapp_allow_self"] = False
+    gateway._save_settings(settings)
+
+    async def scenario():
+        r = await gateway.handle_whatsapp_message(SELF_JID, "hi", "SELF2", from_self=True)
+        await _drain()
+        return r
+
+    assert asyncio.run(scenario())["skipped"] == "allow_from"
+    assert chat["ran"] == []
+
+
+def test_from_self_must_be_exactly_true(chat):
+    async def scenario():
+        r = await gateway.handle_whatsapp_message(SELF_JID, "hi", "SELF3", from_self="yes")
+        await _drain()
+        return r
+
+    assert asyncio.run(scenario())["skipped"] == "allow_from"
+
+
+def test_endpoint_passes_from_self(monkeypatch):
+    seen = {}
+
+    async def fake_handle(remote_jid, text, message_id=None, from_self=False):
+        seen.update(jid=remote_jid, from_self=from_self)
+        return {"ok": True, "queued": True}
+
+    monkeypatch.setattr(server, "handle_whatsapp_message", fake_handle)
+    client = TestClient(server.app)
+    headers = {"X-Bridge-Secret": "a-long-test-bridge-secret"}
+    client.post("/api/gateway/whatsapp", headers=headers,
+                json={"remote_jid": SELF_JID, "text": "hi", "message_id": "S", "from_self": True})
+    assert seen == {"jid": SELF_JID, "from_self": True}
+    client.post("/api/gateway/whatsapp", headers=headers,
+                json={"remote_jid": SELF_JID, "text": "hi", "message_id": "T", "from_self": "true"})
+    assert seen["from_self"] is False
+
+
+# ── Gateway settings form ──────────────────────────────────────────────
+
+def test_gateway_settings_save_the_allow_list_and_self_switch(monkeypatch):
+    monkeypatch.setattr(gateway, "_bridge_health", lambda: {"running": True, "connected": True})
+    status = gateway.update_gateway_settings({
+        "whatsapp_allow_from": "+27 82 123 4567\n, +27 83 000 0000 ,\n",
+        "whatsapp_allow_self": False,
+    })
+    assert status["whatsapp"]["allow_from"] == ["+27 82 123 4567", "+27 83 000 0000"]
+    assert status["whatsapp"]["allow_self"] is False
+
+
+def test_gateway_settings_refuse_non_gateway_keys(monkeypatch):
+    """The gateway form used to accept any key, including the tier."""
+    monkeypatch.setattr(gateway, "_bridge_health", lambda: {"running": False, "connected": False})
+    before = gateway._load_settings()
+    with pytest.raises(ValueError, match="tier"):
+        gateway.update_gateway_settings({"tier": "full_access", "slack_bot_token": "x"})
+    assert gateway._load_settings() == before
+    key = server.get_or_create_api_key()
+    r = TestClient(server.app).post("/api/gateway/settings", json={"tier": "full_access"},
+                                    headers={"X-API-Key": key})
+    assert r.status_code == 400
+
+
+@pytest.mark.parametrize("method,path,body", [
+    ("get", "/api/gateway/status", None),
+    ("post", "/api/gateway/settings", {"whatsapp_allow_from": ["+1 555 0100"]}),
+    ("post", "/api/gateway/whatsapp/pair", {"phone": "15550100"}),
+])
+def test_gateway_admin_endpoints_need_the_api_key(method, path, body, monkeypatch):
+    """require_api_key used to skip every /api/gateway/* path, so anyone who
+    could reach FreeHand could read the status, change the allow lists or
+    start WhatsApp pairing."""
+    async def fake_pair(phone):
+        raise AssertionError("pairing must not start without the key")
+
+    monkeypatch.setattr(server, "handle_whatsapp_pair", fake_pair)
+    client = TestClient(server.app)
+    call = getattr(client, method)
+    r = call(path) if body is None else call(path, json=body)
+    assert r.status_code == 401
+    assert "+1 555 0100" not in gateway._load_settings().get("whatsapp_allow_from", [])
 
 
 # ── The bridge's own tests ─────────────────────────────────────────────

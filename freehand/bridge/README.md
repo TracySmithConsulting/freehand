@@ -8,7 +8,21 @@ come back the same way.
 Only one-to-one chats are handled. Group chats, broadcast lists, status
 updates and channels are ignored.
 
+## Which number to use
+
+We recommend a separate WhatsApp number for FreeHand, such as a spare SIM
+or a WhatsApp Business number. It keeps FreeHand's chats apart from your
+own, so it's cleaner.
+
+No second number? That's fine. Link your own number, and talk to FreeHand
+in your "Message yourself" chat. To find that chat, start a new chat in
+WhatsApp and pick your own name at the top of the contact list. Your other
+chats are never sent to FreeHand.
+
 ## Set up
+
+The web console walks you through steps 3 and 5, under Remote Gateways,
+WhatsApp.
 
 1. Install the bridge's dependencies. You need Node.js 20.12 or newer:
 
@@ -27,9 +41,15 @@ updates and channels are ignored.
    Copy `.env.example` to `.env` in this folder, and set `BRIDGE_SECRET` to
    the value that command printed.
 
-3. Allow your own number. In FreeHand's settings, set
-   `whatsapp_allow_from`, for example `["+27 82 123 4567"]`. Spaces and the
-   plus sign don't matter.
+3. Say who may talk to FreeHand. In the web console, under Remote
+   Gateways, WhatsApp, step 3, list the phone numbers, one per line, with
+   country code. Spaces and the plus sign don't matter. (This is the
+   `whatsapp_allow_from` setting.)
+
+   - Linked a separate number? Put your own personal number on the list.
+   - Linked your own number? You don't need to list anything. Leave "Let
+     the linked number talk to FreeHand" switched on, and use your
+     "Message yourself" chat.
 
 4. Start the bridge, and leave it running:
 
@@ -67,6 +87,11 @@ Check the result with `freehand gateway status`.
   put the value in this folder's `.env`.
 - **"Invalid or missing X-Bridge-Secret"**: the two copies of the secret
   don't match. Copy it again from `freehand gateway secret`.
+- **The web console says "bridge not running"**: open this folder and run
+  `npm start`, then reload the page.
+- **You linked your own number and messages get no reply**: make sure
+  you're writing in your "Message yourself" chat, not someone else's chat,
+  and that "Let the linked number talk to FreeHand" is switched on.
 - **A message gets no reply**: check that the sender is on
   `whatsapp_allow_from`. Some chats arrive with a hidden-number ID ending in
   `@lid`. The FreeHand log shows the ID, and you can add that exact ID to

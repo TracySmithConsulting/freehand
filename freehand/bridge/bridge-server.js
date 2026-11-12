@@ -87,11 +87,11 @@ function createApp(wa, secret) {
 
 function makeForwarder(freehandUrl, secret, fetchImpl = fetch) {
     const url = `${freehandUrl.replace(/\/+$/, '')}/api/gateway/whatsapp`;
-    return async ({ jid, text, id }) => {
+    return async ({ jid, text, id, fromSelf = false }) => {
         const resp = await fetchImpl(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Bridge-Secret': secret },
-            body: JSON.stringify({ remote_jid: jid, text, message_id: id }),
+            body: JSON.stringify({ remote_jid: jid, text, message_id: id, from_self: fromSelf === true }),
             signal: AbortSignal.timeout(15000),
         });
         if (!resp.ok) {

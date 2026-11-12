@@ -10,7 +10,7 @@ A single `docker compose up` brings up two services:
 
 | Service | Image | Port | Purpose |
 |---|---|---|---|
-| `open-connector` | `ghcr.io/oomol-lab/open-connector:latest` | 3001 | Node runtime that hosts 1500+ provider OAuth configs (Round 7 tier-5 fallback) |
+| `open-connector` | `ghcr.io/oomol-lab/open-connector` (pinned by digest) | 3001 | Node runtime that hosts 1500+ provider OAuth configs (Round 7 tier-5 fallback) |
 | `freehand` | Local Dockerfile build | 8000 | Python FastAPI app |
 
 Both bind to `127.0.0.1` only — no LAN exposure. To expose on a tailnet or VPS, change the `ports:` lines in `compose.yml` from `127.0.0.1:PORT:PORT` to `PORT:PORT`.
@@ -22,9 +22,8 @@ Both bind to `127.0.0.1` only — no LAN exposure. To expose on a tailnet or VPS
 git clone https://github.com/TracySmithConsulting/freehand.git
 cd freehand
 
-# 2. Create the env file with your tokens (defaults are placeholders)
-cp .env.example .env
-# Edit .env if you need real OC tokens (see "Environment variables" below)
+# 2. Create .env with random OpenConnector passwords
+python scripts/setup_env.py
 
 # 3. (Round 10 PR 1: no chmod needed — agent.db now lives inside ./vault/)
 
@@ -90,16 +89,20 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 
 ## Environment variables
 
-`compose.yml` reads from `.env` (gitignored). `.env.example` shows the full template:
+`compose.yml` reads from `.env` (gitignored). Create it with:
 
 ```bash
-OC_ADMIN_TOKEN=admintest123
-OC_RUNTIME_TOKEN=runttest123
-OC_ENCRYPTION_KEY=this-is-a-thirty-two-byte-test-key
-UID=1000
-GID=1000
-FREEHAND_USER=0:0   # Windows compatibility default
+python scripts/setup_env.py
 ```
+
+That copies `.env.example` and fills in random values for `OC_ADMIN_TOKEN`,
+`OC_RUNTIME_TOKEN` and `OC_ENCRYPTION_KEY`. Run it again on an existing
+install to replace the old public test values (`admintest123`,
+`runttest123`). It keeps the encryption key if OpenConnector already has
+data, because a new key makes saved connections unreadable.
+
+`compose.yml` has no defaults for these three: it stops with a message
+naming the missing value instead of starting with a guessable password.
 
 **Production hardening** (recommended before exposing to a network):
 
