@@ -76,10 +76,10 @@ def client():
 class TestAuthorizeContentNegotiation:
     def test_browser_html_gets_302_to_consent(self, client):
         """The Connect-button case: a popup sends Accept: text/html for a
-        STATIC service (google) and must land on the provider consent page,
+        STATIC service (zoom) and must land on the provider consent page,
         NOT a JSON body."""
         r = client.get(
-            "/api/integrations/google/authorize?label=work",
+            "/api/integrations/zoom/authorize?label=work",
             headers={"Accept": "text/html"},
             follow_redirects=False,
         )
@@ -90,7 +90,7 @@ class TestAuthorizeContentNegotiation:
     def test_api_client_still_gets_json(self, client):
         """Regression guard: no Accept-html (curl, MCP, docs examples)
         keeps the existing JSON contract byte-for-byte."""
-        r = client.get("/api/integrations/google/authorize?label=work")
+        r = client.get("/api/integrations/zoom/authorize?label=work")
         assert r.status_code == 200
         body = r.json()
         assert "authorize_url" in body
@@ -113,7 +113,7 @@ class TestAuthorizeContentNegotiation:
             )
         assert r.status_code == 302, r.text[:200]
         loc = r.headers.get("location", "")
-        assert loc == "http://127.0.0.1:3001/providers/linear", loc
+        assert loc == "http://127.0.0.1:3001/providers/linear?connectionName=default", loc
         assert "authorize=linear" not in loc, loc
 
     def test_oc_service_console_url_override(self, client, monkeypatch):
@@ -131,7 +131,7 @@ class TestAuthorizeContentNegotiation:
                 follow_redirects=False,
             )
         assert r.status_code == 302
-        assert r.headers.get("location", "") == "http://127.0.0.1:5173/providers/github"
+        assert r.headers.get("location", "") == "http://127.0.0.1:5173/providers/github?connectionName=default"
 
     def test_oc_service_api_client_unchanged_302(self, client):
         """OC services were ALWAYS 302 (even for API clients) — keep that;
@@ -179,8 +179,10 @@ class TestListIntegrationsOcServices:
         assert body.get("oc_services") == []
 
     def test_available_services_unchanged(self, client):
-        """The static allowlist stays as available_services — no OC
-        pollution of it."""
-        with patch.object(router_mod, "_oc_catalogue", lambda: ["github"]):
+        """available_services is the static allowlist plus the featured
+        OpenConnector apps (Gmail, Calendar, Sheets, Outlook) — never the
+        rest of the OC catalogue, and no featured app twice."""
+        with patch.object(router_mod, "_oc_catalogue", lambda: ["github", "gmail"]):
             body = client.get("/api/integrations").json()
-        assert set(body["available_services"]) == set(ALLOWED_SERVICES)
+        assert set(body["available_services"]) == set(ALLOWED_SERVICES) | set(router_mod.OC_FEATURED_SERVICES)
+        assert body["oc_services"] == ["github"]

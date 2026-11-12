@@ -367,6 +367,8 @@ services:
       - "127.0.0.1:{oc_port}:3001"
     environment:
       - PORT=3001
+      # The console's public address; OC builds its OAuth callback from it.
+      - OOMOL_CONNECT_ORIGIN=${{OOMOL_CONNECT_CONSOLE_URL}}
       - OOMOL_CONNECT_ADMIN_TOKEN=${{OC_ADMIN_TOKEN}}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${{OC_RUNTIME_TOKEN}}
       - OOMOL_CONNECT_ENCRYPTION_KEY=${{OC_ENCRYPTION_KEY}}

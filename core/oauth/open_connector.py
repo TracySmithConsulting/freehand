@@ -401,7 +401,12 @@ def get_service_actions(service_id: str) -> list:
     return _cached(f"service_actions:{service_id}", _loader)
 
 
-def execute_action(action_id: str, input_data: dict, connection_name: Optional[str] = None) -> Optional[dict]:
+def execute_action(
+    action_id: str,
+    input_data: dict,
+    connection_name: Optional[str] = None,
+    timeout: float = 10.0,
+) -> Optional[dict]:
     """Run one provider action by id against the provider's API.
 
     This is OC's `execute_action` MCP tool. Live-verified 06 Oct 2026:
@@ -452,7 +457,7 @@ def execute_action(action_id: str, input_data: dict, connection_name: Optional[s
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=10.0) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             if resp.status != 200:
                 log.debug("execute_action %s: status %d", action_id, resp.status)
                 return None

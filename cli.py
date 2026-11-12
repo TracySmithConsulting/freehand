@@ -220,6 +220,18 @@ def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom
     from core.oauth.providers import get_connector
     from core.oauth.manager import get_connection
 
+    if service in ("google", "microsoft"):
+        # Nov 2026: Google and Microsoft accounts live in OpenConnector.
+        import os
+        console = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/") or "http://localhost:3001"
+        apps = (["gmail", "googlecalendar", "googlesheets"] if service == "google"
+                else ["outlook", "outlook_calendar"])
+        typer.echo(f"{service.capitalize()} accounts are connected in OpenConnector.")
+        typer.echo(f"Open each of these and choose Connect, naming the connection '{label}':")
+        for app_id in apps:
+            typer.echo(f"  {console}/providers/{app_id}")
+        raise SystemExit(0)
+
     conn = get_connection(service, label)
     if conn:
         typer.echo(f"Already connected: {service} ({label})")

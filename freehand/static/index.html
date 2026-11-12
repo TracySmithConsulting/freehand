@@ -1851,8 +1851,11 @@
             });
             var available = data.available_services || [];
             var providers = {
-              'google': { name: 'Google Workspace', icon: 'G', sub: 'Gmail, Calendar, Sheets, Meet' },
-              'microsoft': { name: 'Microsoft 365', icon: 'M', sub: 'Outlook, Teams, Calendar' },
+              'gmail': { name: 'Gmail', icon: 'G', sub: 'Read and send email (via OpenConnector)' },
+              'googlecalendar': { name: 'Google Calendar', icon: 'G', sub: 'Events and meetings (via OpenConnector)' },
+              'googlesheets': { name: 'Google Sheets', icon: 'G', sub: 'Read spreadsheets (via OpenConnector)' },
+              'outlook': { name: 'Outlook', icon: 'M', sub: 'Read and send email (via OpenConnector)' },
+              'outlook_calendar': { name: 'Outlook Calendar', icon: 'M', sub: 'Events and meetings (via OpenConnector)' },
               'zoom': { name: 'Zoom', icon: 'Z', sub: 'Meetings, Recordings, Chat' },
               'facebook': { name: 'Facebook', icon: 'f', sub: 'Pages, Posts, Messages' },
               'instagram': { name: 'Instagram', icon: 'I', sub: 'Posts, Stories, DMs' },
@@ -1921,7 +1924,7 @@
                 });
 
                 // Add account button (for multi-account services)
-                if (['google', 'microsoft', 'zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
+                if (['zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
                   var addBtn = document.createElement('button');
                   addBtn.className = 'add-account-btn';
                   addBtn.textContent = '+ Add Account';

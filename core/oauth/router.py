@@ -39,6 +39,13 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 # and this list updates automatically.
 ALLOWED_SERVICES = list(CONNECTORS.keys())
 
+# OpenConnector apps that FreeHand's built-in email, calendar and Sheets
+# tools use (core/tools/integrations.py OC_APPS). Connect sends people to
+# OpenConnector's own sign-in page for each.
+OC_FEATURED_SERVICES = (
+    "gmail", "googlecalendar", "googlesheets", "outlook", "outlook_calendar",
+)
+
 
 def _load_oauth_settings() -> dict:
     """Delegate to agent_config so there is ONE patchable settings path
@@ -354,13 +361,18 @@ async def list_integrations(request: Request):
     _composio = importlib.import_module("core.oauth.composio")
     return {
         "connections": list(services.values()),
-        "available_services": ALLOWED_SERVICES,
+        # Google and Microsoft apps connect through OpenConnector; list the
+        # ones FreeHand's own tools use first, so they are easy to find.
+        "available_services": ALLOWED_SERVICES + list(OC_FEATURED_SERVICES),
         "composio_services": _composio.configured_services(),
         # Round 15.6: OpenConnector catalogue services that the static
         # allowlist does NOT already cover, so the Connections panel can
         # offer them as connect targets (they 302 into OC's consent
         # screen). [] when OC is unreachable — the panel hides the group.
-        "oc_services": [s for s in _oc_catalogue() if s not in ALLOWED_SERVICES],
+        "oc_services": [
+            s for s in _oc_catalogue()
+            if s not in ALLOWED_SERVICES and s not in OC_FEATURED_SERVICES
+        ],
     }
 
 
@@ -442,6 +454,11 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
                 oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
                 console_url = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/")
                 target = f"{console_url or oc_base}/providers/{service}"
+                if label:
+                    # OC names a new connection with a random id unless told;
+                    # FreeHand finds accounts by this name (its label).
+                    import urllib.parse as _up
+                    target += "?" + _up.urlencode({"connectionName": label})
                 return RedirectResponse(target, status_code=302)
             else:
                 # Neither tier-1b nor tier-5 has it. Round 8 honest-option-A

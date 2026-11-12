@@ -9,8 +9,6 @@ from .manager import (
 )
 from .connector import BaseConnector
 from .router import router
-from .providers.google import GoogleConnector
-from .providers.microsoft import MicrosoftConnector
 from .providers.zoom import ZoomConnector
 from .providers.facebook import FacebookConnector
 from .providers.instagram import InstagramConnector
@@ -26,8 +24,6 @@ __all__ = [
     "refresh_token",
     "BaseConnector",
     "router",
-    "GoogleConnector",
-    "MicrosoftConnector",
     "ZoomConnector",
     "FacebookConnector",
     "InstagramConnector",

@@ -339,7 +339,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "service": {"type": "string", "enum": ["google", "microsoft", "email"]},
-                "label": {"type": "string", "description": "Connection label, default 'default'"},
+                "label": {"type": "string", "description": "Account: the OpenConnector connection name for Google/Microsoft (default 'default')"},
                 "filter": {"type": "string", "description": "Optional filter query"},
             },
             "required": ["service"],
@@ -351,7 +351,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "service": {"type": "string", "enum": ["google", "microsoft"]},
-                "label": {"type": "string"},
+                "label": {"type": "string", "description": "Account: the OpenConnector connection name for Google/Microsoft (default 'default')"},
                 "from": {"type": "string", "description": "Start datetime ISO format"},
                 "to": {"type": "string", "description": "End datetime ISO format"},
             },
@@ -363,7 +363,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "label": {"type": "string"},
+                "label": {"type": "string", "description": "Account: the OpenConnector connection name for Google/Microsoft (default 'default')"},
                 "spreadsheet_id": {"type": "string"},
             },
             "required": ["spreadsheet_id"],
@@ -374,7 +374,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "label": {"type": "string"},
+                "label": {"type": "string", "description": "Account: the OpenConnector connection name for Google/Microsoft (default 'default')"},
                 "spreadsheet_id": {"type": "string"},
                 "range": {"type": "string", "description": "A1 notation range, e.g. 'Sheet1!A1:D10'"},
             },

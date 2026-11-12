@@ -136,17 +136,17 @@ class TestAuthoriseRegression:
     def test_allowlisted_service_with_broker_finds_creds_still_returns_json(
         self, tmp_path, monkeypatch
     ):
-        """Existing Google path: tier-1..4 finds creds, returns JSON with
+        """Existing broker path (zoom): tier-1..4 finds creds, returns JSON with
         authorize_url. Round 7 must not change this."""
         from core import agent_config
         vault = tmp_path / "vault"
         vault.mkdir(exist_ok=True)
         monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
-        # Tier-5 stub: irrelevant to this test (Google is allowlisted), but
+        # Tier-5 stub: irrelevant to this test (zoom is allowlisted), but
         # be explicit anyway.
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: False)
         client = _isolated_app()
-        r = client.get("/api/integrations/google/authorize?label=work")
+        r = client.get("/api/integrations/zoom/authorize?label=work")
         # This will only pass if the existing test fixtures (broker_config
         # etc.) make tier-1..4 resolve. In the plain isolated app, no
         # broker_config exists — so the response is whatever the existing

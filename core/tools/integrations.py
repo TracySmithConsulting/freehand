@@ -84,42 +84,126 @@ def _check_write_permission(action: str, service: str, label: str) -> dict:
     return intercept_action("oauth_access", desc, {"service": service, "label": label})
 
 
+# ── Google and Microsoft run through OpenConnector ─────────────────────
+#
+# FreeHand used to call Gmail, Google Calendar/Sheets, Outlook and
+# Microsoft Graph itself, with tokens from its own OAuth broker. Those
+# accounts now live in OpenConnector (OC), which holds the tokens, renews
+# them, and runs the calls. FreeHand keeps its tool names and the
+# `service` ("google" / "microsoft") and `label` arguments; the label is the
+# connection name chosen in OpenConnector ("default" unless renamed).
+
+OC_APPS = {
+    ("google", "email"): "gmail",
+    ("google", "calendar"): "googlecalendar",
+    ("google", "sheets"): "googlesheets",
+    ("microsoft", "email"): "outlook",
+    ("microsoft", "calendar"): "outlook_calendar",
+}
+OC_APP_NAMES = {
+    "gmail": "Gmail",
+    "googlecalendar": "Google Calendar",
+    "googlesheets": "Google Sheets",
+    "outlook": "Outlook",
+    "outlook_calendar": "Outlook Calendar",
+}
+OC_SERVICES = frozenset(service for service, _ in OC_APPS)
+
+
+def _oc_console_url() -> str:
+    import os
+    return os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").strip().rstrip("/") or "http://localhost:3001"
+
+
+async def _oc_run(service: str, kind: str, action: str, inputs: dict, label: str):
+    """Run one OpenConnector action. Returns (data, None) or (None, error dict)."""
+    import asyncio
+    from core.oauth import open_connector
+
+    app = OC_APPS.get((service, kind))
+    if not app:
+        return None, {"error": f"{kind.capitalize()} is not supported for: {service}"}
+    name = OC_APP_NAMES[app]
+    label = label or "default"
+    inputs = {k: v for k, v in inputs.items() if v not in (None, "", [])}
+    result = await asyncio.to_thread(
+        open_connector.execute_action, f"{app}.{action}", inputs, label, 60.0
+    )
+    if result is None:
+        return None, {"error": "OpenConnector isn't reachable. Check that it is running."}
+    if not result.get("ok"):
+        err = result.get("error") or {}
+        if err.get("code") == "connection_not_found":
+            url = f"{_oc_console_url()}/providers/{app}"
+            return None, {
+                "error": (
+                    f"No {name} account called '{label}' is connected yet. Connect it in "
+                    f"OpenConnector at {url} and name the connection '{label}'."
+                ),
+                "connect_url": url,
+            }
+        return None, {"error": f"{name}: {err.get('message') or err.get('code') or 'request failed'}"}
+    return result.get("data") or {}, None
+
+
+def _recipients(value) -> list:
+    if isinstance(value, (list, tuple)):
+        items = value
+    else:
+        items = str(value or "").replace(";", ",").split(",")
+    return [str(x).strip() for x in items if str(x).strip()]
+
+
+def _iso(dt) -> str:
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _default_window(from_dt: str, to_dt: str) -> tuple:
+    """Default calendar window: now to seven days ahead (was all of 2026)."""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    return from_dt or _iso(now), to_dt or _iso(now + timedelta(days=7))
+
+
+def _utc_naive(value: str) -> str:
+    """'2026-11-13T10:00:00+02:00' -> '2026-11-13T08:00:00' (UTC, no offset).
+
+    Outlook wants a local time plus a time-zone name; FreeHand sends UTC.
+    A value without an offset is taken as UTC already.
+    """
+    from datetime import datetime, timezone
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _google_time(value: str) -> dict:
+    """Google needs an offset or a time zone; a bare time is taken as UTC."""
+    from datetime import datetime
+    try:
+        has_tz = datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+    except ValueError:
+        has_tz = True
+    return {"dateTime": value} if has_tz else {"dateTime": value, "timeZone": "UTC"}
+
+
 async def read_email(service: str = "google", label: str = "default", filter_query: str = "") -> dict:
-    check = _check_write_permission("read_email", service, label)
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-
     if service == "google":
-        url = "https://gmail.googleapis.com/gmail/v1/users/me/messages"
-        params = {"maxResults": 20}
-        if filter_query:
-            params["q"] = filter_query
-        result = await _call_api(token_data, "GET", url + "?" + "&".join(f"{k}={v}" for k, v in params.items()))
-        if "error" in result:
-            return result
-        msg_ids = [m["id"] for m in result.get("messages", [])]
-        threads = []
-        for msg_id in msg_ids[:5]:
-            msg_url = f"https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}"
-            msg = await _call_api(token_data, "GET", msg_url)
-            if "error" not in msg:
-                headers_resp = msg.get("payload", {}).get("headers", [])
-                subject = next((h["value"] for h in headers_resp if h["name"] == "Subject"), "")
-                from_addr = next((h["value"] for h in headers_resp if h["name"] == "From"), "")
-                threads.append({"subject": subject, "from": from_addr, "id": msg_id})
-        return {"threads": threads, "total": len(msg_ids)}
-
-    elif service == "microsoft":
-        url = "https://graph.microsoft.com/v1.0/me/messages?$top=10"
-        if filter_query:
-            url += f"&$filter={filter_query}"
-        return await _call_api(token_data, "GET", url)
-
-    elif service == "email":
+        data, err = await _oc_run(service, "email", "fetch_emails", {
+            "query": filter_query, "maxResults": 10, "detail": "summary",
+        }, label)
+        return err or data
+    if service == "microsoft":
+        data, err = await _oc_run(service, "email", "list_messages", {
+            "top": 10, "filter": filter_query,
+        }, label)
+        return err or data
+    if service == "email":
         return {"error": "Use IMAP directly for custom email providers"}
-
     return {"error": f"Email not supported for: {service}"}
 
 
@@ -127,52 +211,36 @@ async def send_email(service: str = "google", label: str = "default", to: str = 
     check = _check_write_permission("send_email", service, label)
     if not check.get("allowed"):
         return {"error": "Approval required to send email", "approval": check}
-    if not to or not subject or not body:
+    recipients = _recipients(to)
+    if not recipients or not subject or not body:
         return {"error": "to, subject, and body are required"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-
     if service == "google":
-        import base64
-        raw = f"From: sender@example.com\nTo: {to}\nSubject: {subject}\n\n{body}"
-        encoded = base64.urlsafe_b64encode(raw.encode()).decode()
-        payload = {"raw": encoded}
-        url = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
-        return await _call_api(token_data, "POST", url, body=payload)
-
-    elif service == "microsoft":
-        payload = {
-            "message": {
-                "subject": subject,
-                "body": {"contentType": "Text", "content": body},
-                "toRecipients": [{"emailAddress": {"address": to}}],
-            }
-        }
-        url = "https://graph.microsoft.com/v1.0/me/mailFolders/outbox/messages"
-        return await _call_api(token_data, "POST", url, body=payload)
-
+        data, err = await _oc_run(service, "email", "send_email", {
+            "to": recipients[0], "extraRecipients": recipients[1:], "subject": subject, "body": body,
+        }, label)
+        return err or {"sent": True, **data}
+    if service == "microsoft":
+        # The old code saved Outlook mail to the Outbox folder, which never sends it.
+        data, err = await _oc_run(service, "email", "send_email", {
+            "toRecipients": recipients, "subject": subject, "body": body,
+        }, label)
+        return err or {"sent": True, **data}
     return {"error": f"Send email not supported for: {service}"}
 
 
 async def list_calendar_events(service: str = "google", label: str = "default", from_dt: str = "", to_dt: str = "") -> dict:
-    _check_write_permission("list_calendar_events", service, label)
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-
+    start, end = _default_window(from_dt, to_dt)
     if service == "google":
-        start = from_dt or "2026-01-01T00:00:00Z"
-        end = to_dt or "2026-12-31T23:59:59Z"
-        url = f"https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin={start}&timeMax={end}&maxResults=20"
-        return await _call_api(token_data, "GET", url)
-
-    elif service == "microsoft":
-        url = f"https://graph.microsoft.com/v1.0/me/calendarview?startdatetime={from_dt or '2026-01-01'}&enddatetime={to_dt or '2026-12-31'}&$select=subject,start,end,location"
-        return await _call_api(token_data, "GET", url)
-
+        data, err = await _oc_run(service, "calendar", "list_events", {
+            "calendarId": "primary", "timeMin": start, "timeMax": end,
+            "singleEvents": True, "orderBy": "startTime", "maxResults": 20,
+        }, label)
+        return err or data
+    if service == "microsoft":
+        data, err = await _oc_run(service, "calendar", "list_calendar_view", {
+            "startDateTime": start, "endDateTime": end, "top": 20,
+        }, label)
+        return err or data
     return {"error": f"Calendar not supported for: {service}"}
 
 
@@ -180,33 +248,30 @@ async def create_meeting(service: str = "google", label: str = "default", title:
     check = _check_write_permission("create_meeting", service, label)
     if not check.get("allowed"):
         return {"error": "Approval required to create meeting", "approval": check}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-
+    if not title or not start or not end:
+        return {"error": "title, start, and end are required"}
+    people = _recipients(attendees or [])
     if service == "google":
-        attendees_list = [{"email": a} for a in (attendees or [])]
-        payload = {
-            "summary": title,
-            "start": {"dateTime": start},
-            "end": {"dateTime": end},
-            "attendees": attendees_list,
-        }
-        url = "https://www.googleapis.com/calendar/v3/calendars/primary/events"
-        return await _call_api(token_data, "POST", url, body=payload)
-
-    elif service == "microsoft":
-        attendees_list = [{"emailAddress": {"address": a}} for a in (attendees or [])]
-        payload = {
-            "subject": title,
-            "start": {"dateTime": start, "timeZone": "UTC"},
-            "end": {"dateTime": end, "timeZone": "UTC"},
-            "attendees": attendees_list,
-        }
-        url = "https://graph.microsoft.com/v1.0/me/calendar/events"
-        return await _call_api(token_data, "POST", url, body=payload)
-
+        data, err = await _oc_run(service, "calendar", "create_event", {
+            "calendarId": "primary",
+            "event": {
+                "summary": title,
+                "start": _google_time(start),
+                "end": _google_time(end),
+                "attendees": [{"email": a} for a in people],
+            },
+        }, label)
+        return err or data
+    if service == "microsoft":
+        data, err = await _oc_run(service, "calendar", "create_event", {
+            "event": {
+                "subject": title,
+                "start": {"dateTime": _utc_naive(start), "timeZone": "UTC"},
+                "end": {"dateTime": _utc_naive(end), "timeZone": "UTC"},
+                "attendees": [{"emailAddress": {"address": a}, "type": "required"} for a in people],
+            },
+        }, label)
+        return err or data
     return {"error": f"Meeting creation not supported for: {service}"}
 
 
@@ -310,8 +375,16 @@ async def schedule_zoom_meeting(service: str = "zoom", label: str = "default", t
 
 
 def get_connections_summary() -> List[Dict]:
-    results = []
-    for svc in ["google", "microsoft", "zoom", "facebook", "instagram", "github", "email"]:
+    results = [{
+        "service": family,
+        "via": "OpenConnector",
+        "apps": [OC_APP_NAMES[app] for (svc, _), app in OC_APPS.items() if svc == family],
+        "note": (
+            "Connected in OpenConnector. Use the connection name chosen there as the "
+            f"label ('default' unless renamed). Manage accounts at {_oc_console_url()}."
+        ),
+    } for family in ("google", "microsoft")]
+    for svc in ["zoom", "facebook", "instagram", "github", "email"]:
         conns = list_connections(svc)
         for c in conns:
             results.append({
@@ -325,32 +398,28 @@ def get_connections_summary() -> List[Dict]:
 
 
 async def read_sheets(service: str = "google", label: str = "default", spreadsheet_id: str = "") -> dict:
-    _check_write_permission("read_sheets", service, label)
     if not spreadsheet_id:
         return {"error": "spreadsheet_id is required"}
-    conn, err = await _ensure_token(service, label)
+    if service != "google":
+        return {"error": f"Sheets not supported for: {service}"}
+    data, err = await _oc_run(service, "sheets", "get_spreadsheet_info", {"spreadsheetId": spreadsheet_id}, label)
     if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}"
-    result = await _call_api(token_data, "GET", url)
-    if "error" in result:
-        return result
-    sheets = result.get("sheets", [])
-    ranges = [s.get("properties", {}).get("title", "Sheet") for s in sheets]
-    return {"spreadsheet_id": spreadsheet_id, "title": result.get("properties", {}).get("title", ""), "sheets": ranges}
+        return err
+    sheets = data.get("sheets", [])
+    return {
+        "spreadsheet_id": spreadsheet_id,
+        "title": data.get("properties", {}).get("title", ""),
+        "sheets": [sh.get("properties", {}).get("title", "Sheet") for sh in sheets],
+    }
 
 
 async def read_sheet_range(service: str = "google", label: str = "default", spreadsheet_id: str = "", range_str: str = "") -> dict:
-    _check_write_permission("read_sheet_range", service, label)
     if not spreadsheet_id or not range_str:
         return {"error": "spreadsheet_id and range_str (e.g. Sheet1!A1:D10) are required"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{range_str}"
-    return await _call_api(token_data, "GET", url)
+    if service != "google":
+        return {"error": f"Sheets not supported for: {service}"}
+    data, err = await _oc_run(service, "sheets", "values_get", {"spreadsheetId": spreadsheet_id, "range": range_str}, label)
+    return err or data
 
 
 async def list_zoom_recordings(service: str = "zoom", label: str = "default") -> dict:

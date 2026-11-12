@@ -289,8 +289,8 @@ def broker_status() -> dict:
         "broker_config_path": "/path/to/broker_config.json",
         "broker_config_exists": true,
         "services": {
-          "google": {"configured": true, "source": "broker"},
-          "microsoft": {"configured": false, "source": "none"},
+          "zoom": {"configured": true, "source": "broker"},
+          "facebook": {"configured": false, "source": "none"},
           ...
         },
       }
@@ -302,8 +302,9 @@ def broker_status() -> dict:
         "services": {},
     }
     # Round 14: github left this loop - it connects via OpenConnector
-    # (api_key), not the FreeHand OAuth broker.
-    for service in ("google", "microsoft", "zoom", "facebook", "instagram", "email"):
+    # (api_key), not the FreeHand OAuth broker. Nov 2026: so do Google
+    # and Microsoft (Gmail, Calendar, Sheets, Outlook ...).
+    for service in ("zoom", "facebook", "instagram", "email"):
         cid, sec, source = get_client_credentials(service)
         out["services"][service] = {
             "configured": cid is not None and sec is not None,

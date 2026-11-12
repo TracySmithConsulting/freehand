@@ -52,6 +52,12 @@ services:
       - "127.0.0.1:3001:3001"
     environment:
       - PORT=3001
+      # The exact address people open the OC console at. OC builds its
+      # OAuth callback (<origin>/oauth/callback) from it, and refuses
+      # sign-ins from any other origin (localhost and 127.0.0.1 differ).
+      # Unset, OC assumed http://localhost:<PORT> while FreeHand linked to
+      # http://127.0.0.1:3001, so sign-ins could not complete.
+      - OOMOL_CONNECT_ORIGIN=${OOMOL_CONNECT_CONSOLE_URL:-http://localhost:3001}
       # No defaults: the old built-in test values were public. Compose
       # stops with a message if .env doesn't set these.
       - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:?OC_ADMIN_TOKEN is not set - run python scripts/setup_env.py}
@@ -116,7 +122,7 @@ services:
       # user's browser; the internal service name above is not.
       # Override this for a hosted deployment, e.g.
       # https://connect.example.com.
-      - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://127.0.0.1:3001}
+      - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://localhost:3001}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
       # Optional: Composio-managed Meta authentication. These stay unset
       # unless Facebook/Instagram should use the Composio adapter.
