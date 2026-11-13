@@ -128,6 +128,9 @@ async def limit_request_body(request: Request, call_next):
         return await call_next(request)
 
     cap = _get_max_body_bytes()
+    if request.url.path == "/api/voice/transcribe":
+        # Recordings from the console's Speak button (key-protected).
+        cap = max(cap, 25 * 1024 * 1024)
     cl = request.headers.get("content-length")
     if cl is not None:
         try:
@@ -310,6 +313,29 @@ async def llm_proxy_chat(request: Request):
         # Streams can't switch models halfway, so they use the main model.
         return StreamingResponse(relay(), status_code=upstream.status,
                                  media_type=upstream.headers.get("Content-Type", "text/event-stream"))
+
+
+# ── Voice (core/voice.py): speech to text on this computer ────────────
+
+@app.get("/api/voice/status", dependencies=[Depends(require_api_key)])
+async def voice_status():
+    from core import voice
+    return {"available": voice.available()}
+
+
+@app.post("/api/voice/transcribe", dependencies=[Depends(require_api_key)])
+async def voice_transcribe(request: Request):
+    """The console's Speak button sends its recording here (raw audio body,
+    e.g. audio/webm from the browser) and gets the words back."""
+    from core import voice
+    data = await request.body()
+    ctype = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    suffix = {"audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".mp4",
+              "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav"}.get(ctype, ".webm")
+    result = await asyncio.to_thread(voice.transcribe, data, suffix)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
 
 
 # ── Easier AI model setup (core/llm_providers.py) ─────────────────────
@@ -614,6 +640,9 @@ app.include_router(
 )
 
 
+_telegram_poll_task = None
+
+
 @app.on_event("startup")
 async def startup_event():
     # Round 10 (PR 1): one-time migration of legacy agent.db from the
@@ -631,6 +660,13 @@ async def startup_event():
     from core.scheduler import backfill_next_run
     backfill_next_run()
     get_scheduler()
+    # Telegram without a public address: poll for messages (it idles until
+    # a bot token is saved). FREEHAND_TELEGRAM_POLLING=0 turns it off.
+    import os as _os
+    if _os.environ.get("FREEHAND_TELEGRAM_POLLING", "1") != "0":
+        from core import telegram_poll
+        global _telegram_poll_task
+        _telegram_poll_task = asyncio.get_running_loop().create_task(telegram_poll.run_forever())
     # Round 10 (PR 2): one-time migration of legacy connections.db rows
     # into vault/credential_store.json. Idempotent — no-op after the
     # first run (sentinel "_migrated": true is set in storage).
@@ -857,6 +893,8 @@ SETTINGS_ALLOWED_KEYS = frozenset({
     "sweep_interval", "allowed_browser_domains", "user",
     "max_request_body_bytes", "max_screenshot_size_mb",
     "memory",  # long-term memory: hindsight_url, bank_id, enabled
+    "voice",  # speech to text: model, language
+    "telegram_mode",  # "polling" (default) or "webhook"
 })
 
 

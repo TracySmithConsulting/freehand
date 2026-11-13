@@ -197,7 +197,12 @@ Full API reference: [API Documentation](https://github.com/TracySmithConsulting/
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+FreeHand is free and open source under the MIT licence. See [LICENSE](LICENSE)
+for the legal text and [Using, sharing and changing FreeHand](docs/LICENSING.md)
+for a plain-language guide.
+
+You're welcome to fork FreeHand. If you share your own version, please give it
+its own name. See [The FreeHand name](TRADEMARKS.md).
 
 ## Contributing
 

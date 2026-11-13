@@ -53,6 +53,11 @@ dev = [
 browser = [
     "playwright>=1.40",
 ]
+# Speech to text on this computer: voice notes and the console's Speak
+# button (core/voice.py). Included in the Docker image.
+voice = [
+    "faster-whisper>=1.2,<2",
+]
 
 [project.scripts]
 freehand = "cli:app"

@@ -181,6 +181,8 @@ services:
       # running, FreeHand still works, without long-term memory.
       - FREEHAND_HINDSIGHT_URL=${FREEHAND_HINDSIGHT_URL:-http://hindsight:8888}
       - FREEHAND_MEMORY_BANK=${FREEHAND_MEMORY_BANK:-freehand}
+      # Speech model for voice notes, downloaded once into its own volume.
+      - FREEHAND_VOICE_MODEL_DIR=/models
       # Shared with hindsight: lets it use FreeHand's AI model.
       - FREEHAND_LLM_PROXY_TOKEN=${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set - run python scripts/setup_env.py}
     extra_hosts:
@@ -190,6 +192,7 @@ services:
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=1
     volumes:
+      - voice-models:/models
       # Mount the host's vault directory so encryption.key, connections.db,
       # broker_config.json, credential_store.json, AND agent.db all
       # persist across container restarts. agent.db now lives at
@@ -259,6 +262,9 @@ volumes:
     name: freehand-caddy-data
   caddy-config:
     name: freehand-caddy-config
+  voice-models:
+    # The speech-to-text model (core/voice.py), downloaded on first use.
+    name: freehand-voice-models
   hindsight-data:
     # Hindsight's database: everything FreeHand remembers. Named
     # "hindsight-data" so an existing Hindsight install's memories carry
