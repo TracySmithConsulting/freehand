@@ -32,11 +32,15 @@ def sync_vault_to_sqlite() -> int:
     cursor = conn.cursor()
 
     md_files: List[Path] = []
-    # R10 fix: skip the scratchpad and other known-noise files. These
-    # are either actively transient (00_Scribble.md is constantly edited
-    # by the agent loop) or not knowledge to surface in memory search.
-    SKIP_FILENAMES = {"00_Scribble.md", ".sweep_state.json"}
+    # Nov 2026: the scribble pad (00_Scribble.md) IS indexed now - it used
+    # to be skipped, so "what did I jot down about ...?" missed anything
+    # not yet swept into Threads/Journal. Skills are instructions, not
+    # notes, so they stay out (they have their own page).
+    SKIP_FILENAMES = {".sweep_state.json"}
+    skills_dir = (Path(VAULT_DIR) / "skills").resolve()
     for root, _dirs, files in os.walk(VAULT_DIR):
+        if Path(root).resolve().is_relative_to(skills_dir):
+            continue
         for fname in files:
             if not fname.endswith(".md"):
                 continue
@@ -56,6 +60,8 @@ def sync_vault_to_sqlite() -> int:
         title_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
         if title_match:
             title = title_match.group(1).strip()
+        if md_path.name == "00_Scribble.md":
+            title = "Scribble pad"
 
         updated_at = md_path.stat().st_mtime
         import datetime
@@ -79,50 +85,91 @@ def sync_vault_to_sqlite() -> int:
             )
         synced += 1
 
+    # Forget files that are gone (a deleted note shouldn't keep turning up).
+    # Agent command records (path '/agent/command') aren't files; keep them.
+    present = {str(p.relative_to(PROJECT_ROOT)) for p in md_files}
+    for (row_path,) in cursor.execute("SELECT path FROM memories WHERE path != '/agent/command'").fetchall():
+        if row_path not in present:
+            cursor.execute("DELETE FROM memories WHERE path = ?", (row_path,))
+
     conn.commit()
     conn.close()
     return synced
 
 
-def search_memory(query: str, limit: int = 3) -> List[Dict]:
-    """Search the FTS5 memories index for `query` and return the top
-    `limit` most relevant markdown file records as dicts.
+_STOPWORDS = frozenset(
+    "a an and are about at be but by did do does for from had has have i if in into is it its "
+    "jot jotted me my of on or our so that the their them then there these they this to "
+    "up was we were what when where which who why will with wrote write written you your "
+    "note notes noted scribble scribbled scribbles down".split()
+)
 
-    R5 fix: FTS5 MATCH operator is injection-sensitive. Untrusted input
-    containing tokens like `*`, `"`, `OR`, `NOT`, `:`, `^` is interpreted
-    as FTS5 syntax and can return every row, fail with a parse error, or
-    crash the query. We sanitise by quoting the entire input as a phrase
-    after escaping internal double-quotes.
+
+def _fts_terms(query: str) -> List[str]:
+    """Words worth searching for, each as a safe FTS5 prefix term.
+
+    Every word is quoted (so FTS5 operators in the input are just text)
+    and gets a trailing * so 'plumber' also finds 'plumbers'."""
+    words = re.findall(r"[^\W_]+", query.lower())
+    keep = [w for w in words if w not in _STOPWORDS and len(w) > 1] or [w for w in words if len(w) > 1]
+    seen, terms = set(), []
+    for w in keep:
+        if w not in seen:
+            seen.add(w)
+            terms.append('"' + w.replace('"', '""') + '"*')
+    return terms[:12]
+
+
+def search_memory(query: str, limit: int = 3, sync: bool = False) -> List[Dict]:
+    """Search the user's scribbles and notes (scribble pad, Journal, topic
+    Threads, imported notes) and return the best `limit` matches.
+
+    Nov 2026: by words, not exact phrase. "What did I jot down about the
+    plumber?" used to need a note containing that exact phrase; now every
+    meaningful word is matched in any order, word starts included. If no
+    note has all the words, notes with any of them are returned. Each
+    result has a short ``snippet`` around the match.
+
+    R5 (still holds): user text is never FTS5 syntax - each word is quoted
+    (see _fts_terms), so `*`, `"`, `OR`, `NOT`, `:`, `^` are just text.
+
+    sync=True re-reads the vault first, so a scribble written a moment ago
+    is found.
     """
-    conn = _get_conn()
-    cursor = conn.cursor()
-
     if not query.strip():
-        conn.close()
+        return []
+    if sync:
+        try:
+            sync_vault_to_sqlite()
+        except (OSError, sqlite3.Error):
+            pass
+    terms = _fts_terms(query)
+    if not terms:
         return []
 
-    # R5: wrap query in double quotes (phrase query) and escape any
-    # internal double-quotes by doubling them. FTS5 phrase query is
-    # interpreted literally — no operators, no wildcards.
-    safe_query = '"' + query.replace('"', '""') + '"'
-
+    conn = _get_conn()
+    cursor = conn.cursor()
+    results: List[Dict] = []
     try:
-        cursor.execute(
-            """
-            SELECT m.id, m.path, m.title, m.updated_at,
-                   memories_fts.rank AS relevance
-            FROM memories_fts
-            JOIN memories m ON m.id = memories_fts.rowid
-            WHERE memories_fts MATCH ?
-            ORDER BY memories_fts.rank
-            LIMIT ?
-            """,
-            (safe_query, limit),
-        )
-        results = [dict(row) for row in cursor.fetchall()]
+        for joiner in (" AND ", " OR "):
+            cursor.execute(
+                """
+                SELECT m.id, m.path, m.title, m.updated_at,
+                       snippet(memories_fts, 1, '', '', ' ... ', 24) AS snippet,
+                       memories_fts.rank AS relevance
+                FROM memories_fts
+                JOIN memories m ON m.id = memories_fts.rowid
+                WHERE memories_fts MATCH ? AND m.path != '/agent/command'
+                ORDER BY memories_fts.rank
+                LIMIT ?
+                """,
+                (joiner.join(terms), limit),
+            )
+            results = [dict(row) for row in cursor.fetchall()]
+            if results or len(terms) == 1:
+                break
     except sqlite3.OperationalError:
-        # FTS5 parse error (shouldn't happen with phrase query, but
-        # defensive). Return empty rather than crash the agent loop.
+        # Defensive: a malformed MATCH must never crash the agent loop.
         results = []
     finally:
         conn.close()

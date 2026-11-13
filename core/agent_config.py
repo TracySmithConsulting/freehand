@@ -489,7 +489,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     # ── Memory ─────────────────────────────────────────────────────
     "search_memory": {
-        "description": "Search the user's vault notes (Journal, threads, notes) for an exact phrase",
+        "description": (
+            "Search the user's scribbles and notes: the scribble pad, Journal, topic threads and "
+            "imported notes. Use it when they ask what they jotted, wrote or noted down. "
+            "Matches words in any order and returns a snippet of each match."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -638,7 +642,9 @@ You have access to the following tool categories:
   the user" when there are any. Never say your memory is full.
 - remember(fact) — Save something the user wants you to remember
 - forget_memory(description) — Forget something the user asks you to forget
-- search_memory(query, limit) — Search the user's vault notes
+- search_memory(query, limit) — Search the user's scribbles and notes
+  (scribble pad, Journal, topic threads). Use it for "what did I jot down
+  about ...?"
 
 ### Skills
 Skills are saved instructions for tasks. When a task matches one below,

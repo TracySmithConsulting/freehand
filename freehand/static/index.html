@@ -1076,11 +1076,11 @@
       </div>
       <ul id="facts-list" class="facts-list" aria-labelledby="facts-heading"></ul>
 
-      <h3 id="notes-heading" class="stack-top">Search your notes</h3>
-      <p class="hint">Searches archived Journal entries, topic threads, and vault notes.</p>
+      <h3 id="notes-heading" class="stack-top">Search your scribbles and notes</h3>
+      <p class="hint">Searches your scribble pad, Journal, topic threads and notes. Type a few words in any order, like "plumber quote".</p>
       <form id="memory-form" novalidate>
         <div class="form-group">
-          <label for="memory-input">Search Memory</label>
+          <label for="memory-input">Search scribbles and notes</label>
           <input
             type="text"
             id="memory-input"
@@ -2606,16 +2606,19 @@
       function renderMemoryResults(results) {
         var el = document.getElementById('memory-results');
         if (!results.length) {
-          el.innerHTML = '<p class="empty-state">No matches. Files are indexed from your vault — try Re-sync first.</p>';
+          el.innerHTML = '<p class="empty-state">Nothing found in your scribbles or notes. Try fewer or different words.</p>';
           return;
         }
-        el.innerHTML = '<h3>' + results.length + ' match(es)</h3>';
+        el.innerHTML = '<h3>' + results.length + (results.length === 1 ? ' match' : ' matches') + '</h3>';
         results.forEach(function(r) {
           var div = document.createElement('div');
           div.className = 'connection-card';
+          // The snippet is the part of the note that matched, so people
+          // often get their answer without opening the file.
           div.innerHTML =
             '<div class="task-info">' +
               '<span class="task-title">' + escapeHtml(r.title) + '</span>' +
+              (r.snippet ? '<div>' + escapeHtml(r.snippet) + '</div>' : '') +
               '<div class="task-meta">' + escapeHtml(r.path) + ' — updated ' + escapeHtml(r.updated_at) + '</div>' +
             '</div>';
           var btn = document.createElement('button');

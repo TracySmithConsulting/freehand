@@ -184,3 +184,47 @@ def test_forget_in_chat_retires_every_copy(hs):
     assert out["forgotten"] and out["text"] == "The user has 3 guide dogs."
     retired = [c[1].rsplit("/", 1)[-1] for c in calls if c[0] == "PATCH"]
     assert retired == ["a", "b"]
+
+
+def test_an_answer_comes_even_when_every_turn_used_a_tool(monkeypatch):
+    """FreeHand searched 5 times and never replied (empty message). It now
+    asks the model once more, without tools, for an answer."""
+    from core import agent
+    calls = []
+
+    async def fake_llm(messages, tools=None, config=None):
+        calls.append(tools)
+        if tools:
+            return {"role": "assistant", "content": "", "tool_calls": [
+                {"id": f"t{len(calls)}", "type": "function",
+                 "function": {"name": "search_memory", "arguments": f'{{"query": "q{len(calls)}"}}'}}]}
+        return {"role": "assistant", "content": "Your notes say the build passed."}
+
+    monkeypatch.setattr(agent, "call_llm", fake_llm)
+    monkeypatch.setattr(long_memory, "recall", lambda q: [])
+    monkeypatch.setattr(long_memory, "retain", lambda *a, **k: None)
+    out = asyncio.run(agent.run_agent("What did I write about the build?", max_turns=3, source="selftest"))
+    assert out["text"] == "Your notes say the build passed."
+    assert calls[-1] is None  # the last call offered no tools
+
+
+def test_only_the_tool_call_that_ran_is_kept_in_the_history(monkeypatch):
+    """MiniMax asked for two searches at once; FreeHand ran one, and the
+    unanswered second made MiniMax reject the next request."""
+    from core import agent
+    seen = []
+
+    async def fake_llm(messages, tools=None, config=None):
+        seen.append([dict(m) for m in messages])
+        if len(seen) == 1:
+            return {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "a", "type": "function", "function": {"name": "search_memory", "arguments": '{"query": "x"}'}},
+                {"id": "b", "type": "function", "function": {"name": "search_memory", "arguments": '{"query": "y"}'}}]}
+        return {"role": "assistant", "content": "done"}
+
+    monkeypatch.setattr(agent, "call_llm", fake_llm)
+    monkeypatch.setattr(long_memory, "recall", lambda q: [])
+    asyncio.run(agent.run_agent("search", source="selftest"))
+    assistant = [m for m in seen[1] if m.get("role") == "assistant" and m.get("tool_calls")][0]
+    assert [c["id"] for c in assistant["tool_calls"]] == ["a"]
+    assert [m["tool_call_id"] for m in seen[1] if m.get("role") == "tool"] == ["a"]

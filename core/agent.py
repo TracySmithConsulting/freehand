@@ -222,7 +222,8 @@ async def execute_tool(name: str, args: dict) -> dict:
             result = get_connections_summary()
             return {"content": json.dumps(result, default=str)}
         elif name == "search_memory":
-            results = search_memory(args.get("query", ""), limit=args.get("limit", 5))
+            results = await asyncio.to_thread(
+                search_memory, args.get("query", ""), args.get("limit", 5), True)
             return {"content": json.dumps(results, default=str)}
         elif name == "remember":
             result = await asyncio.to_thread(long_memory.retain, args.get("fact", ""), "Told to remember", True)
@@ -394,6 +395,14 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
             final_response["text"] = strip_reasoning(llm_resp.get("content", "") or "")
             break
 
+        # The model may ask for several tools at once, but FreeHand runs one
+        # per turn. Keep only that one in the history: a request without a
+        # matching result is rejected by stricter providers (MiniMax: "tool
+        # call and result not match"). The model can ask again next turn.
+        calls = llm_resp.get("tool_calls") or []
+        if len(calls) > 1:
+            llm_resp = {**llm_resp, "tool_calls": [c for c in calls if c.get("id") == tool_call["id"]][:1] or calls[:1]}
+
         # Execute the tool
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
@@ -526,6 +535,20 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
             "args": tool_args,
             "result": tool_result.get("content", "")[:200],
         })
+
+    if not final_response["text"] and not final_response["error"] and final_response["tools_used"]:
+        # Every turn went on tool calls (for example several searches), so
+        # there was no reply - people got an empty message. Ask once more,
+        # without tools, for an answer from what was found.
+        messages.append({
+            "role": "user",
+            "content": "Stop using tools now and answer my question from what you found so far.",
+        })
+        last = await call_llm(messages)
+        if "error" in last:
+            final_response["error"] = last["error"]
+        else:
+            final_response["text"] = strip_reasoning(last.get("content", "") or "")
 
     if final_response["text"] and not final_response["error"]:
         _remember_turn(conv_key, command, final_response["text"], source)
