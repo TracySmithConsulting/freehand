@@ -387,6 +387,66 @@ def start_oauth_connection(service: str, connection_name: str) -> tuple[Optional
     return url, None
 
 
+def _admin_request(method: str, path: str, body: Optional[dict] = None, timeout: float = 10.0):
+    """Call an OC admin endpoint. Returns (status, parsed JSON or None)."""
+    token = _load_admin_token()
+    if not token:
+        return None, None
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(f"{_BASE_URL}{path}", data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", "replace")
+            return resp.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode("utf-8", "replace"))
+        except (json.JSONDecodeError, OSError):
+            return e.code, None
+    except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
+        log.debug("open-connector %s %s failed: %s", method, path, e)
+        return None, None
+
+
+def list_accounts() -> list:
+    """Accounts people connected in OpenConnector, for the Connections panel.
+
+    Each item: ``{"service", "label", "display", "scopes", "id"}``, where
+    ``label`` is OC's connection name (FreeHand's account name). Skips OC's
+    built-in public apps (``virtual``). Returns [] when OC is unreachable or
+    FreeHand has no admin token, so the panel still loads.
+    """
+    status, data = _admin_request("GET", "/api/connections")
+    if status != 200 or not isinstance(data, list):
+        return []
+    out = []
+    for c in data:
+        if not isinstance(c, dict) or c.get("virtual") or not c.get("configured", True):
+            continue
+        profile = c.get("profile") or {}
+        out.append({
+            "service": str(c.get("service") or ""),
+            "label": str(c.get("connectionName") or "default"),
+            "display": str(profile.get("displayName") or profile.get("accountId") or ""),
+            "scopes": [s for s in (profile.get("grantedScopes") or []) if isinstance(s, str)],
+            "id": str(c.get("id") or ""),
+        })
+    return [a for a in out if a["service"]]
+
+
+def disconnect_account(service: str, connection_name: str) -> bool:
+    """Remove one OpenConnector account. True when OC removed it."""
+    import urllib.parse
+    status, _ = _admin_request(
+        "DELETE", f"/api/connections/{urllib.parse.quote(service, safe='')}",
+        {"connectionName": connection_name},
+    )
+    return status is not None and 200 <= status < 300
+
+
 def get_service_actions(service_id: str) -> list:
     """Fetch a service's runtime action catalog from OpenConnector.
 

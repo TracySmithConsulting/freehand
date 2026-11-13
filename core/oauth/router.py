@@ -358,6 +358,22 @@ async def list_integrations(request: Request):
         # A missing/broken optional backend must not break the core panel.
         pass
 
+    # Accounts connected in OpenConnector (Gmail, Outlook, Zoom, ...). Without
+    # these the panel never showed them as connected, even when they worked.
+    from core.oauth import open_connector as _oc
+    for account in _oc.list_accounts():
+        svc = account["service"]
+        services.setdefault(svc, {"service": svc, "connections": []})
+        services[svc]["connections"].append({
+            "label": account["label"],
+            "email": account["display"],
+            "connected_at": "",
+            "expires_at": "",
+            "scopes": account["scopes"],
+            "status": "active",
+            "backend": "open_connector",
+        })
+
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
     return {
@@ -747,10 +763,23 @@ async def handle_callback(
     )
 
 
+def _find_oc_account(service: str, label: str):
+    from core.oauth import open_connector as _oc
+    for account in _oc.list_accounts():
+        if account["service"] == service and account["label"] == label:
+            return account
+    return None
+
+
 @router.post("/{service}/disconnect")
 async def disconnect(service: str, label: str = "default"):
     if service not in ALLOWED_SERVICES:
-        raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+        # OpenConnector accounts (Gmail, Outlook, Zoom, ...).
+        from core.oauth import open_connector as _oc
+        if _find_oc_account(service, label) and _oc.disconnect_account(service, label):
+            return {"status": "disconnected", "service": service, "label": label,
+                    "backend": "open_connector"}
+        raise HTTPException(status_code=404, detail=f"No connection found: {service} ({label})")
 
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
@@ -772,7 +801,11 @@ async def disconnect(service: str, label: str = "default"):
 @router.post("/{service}/test")
 async def test_connection(service: str, label: str = "default"):
     if service not in ALLOWED_SERVICES:
-        raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+        # OpenConnector checks an account when it is connected and renews
+        # its sign-in itself; here we confirm OC still has it.
+        if _find_oc_account(service, label):
+            return {"service": service, "label": label, "valid": True, "backend": "open_connector"}
+        raise HTTPException(status_code=404, detail=f"Not connected: {service} ({label})")
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
     composio_account = _composio.get_account(service, label)

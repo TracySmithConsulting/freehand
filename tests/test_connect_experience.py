@@ -241,3 +241,43 @@ class TestListIntegrationsOcServices:
             body = client.get("/api/integrations").json()
         assert set(body["available_services"]) == set(ALLOWED_SERVICES) | set(router_mod.OC_FEATURED_SERVICES)
         assert body["oc_services"] == ["github"]
+
+
+class TestOpenConnectorAccountsInPanel:
+    """Nov 2026: accounts connected in OpenConnector show as connected in
+    Connections, and Test/Disconnect work on them."""
+
+    ACCOUNTS = [{"service": "gmail", "label": "Personal", "display": "me@gmail.com",
+                 "scopes": ["gmail.modify"], "id": "abc"}]
+
+    def test_list_includes_open_connector_accounts(self, client):
+        with (
+            patch.object(oc_mod, "list_accounts", lambda: self.ACCOUNTS),
+            patch.object(router_mod, "list_connections", lambda: []),
+        ):
+            body = client.get("/api/integrations").json()
+        gmail = [g for g in body["connections"] if g["service"] == "gmail"]
+        assert gmail, body["connections"]
+        acc = gmail[0]["connections"][0]
+        assert acc["label"] == "Personal" and acc["email"] == "me@gmail.com"
+        assert acc["status"] == "active" and acc["backend"] == "open_connector"
+
+    def test_test_and_disconnect_use_the_named_account(self, client):
+        removed = []
+        with (
+            patch.object(oc_mod, "list_accounts", lambda: self.ACCOUNTS),
+            patch.object(oc_mod, "disconnect_account", lambda s, n: removed.append((s, n)) or True),
+        ):
+            assert client.post("/api/integrations/gmail/test?label=Personal").json()["valid"] is True
+            assert client.post("/api/integrations/gmail/test?label=Work").status_code == 404
+            r = client.post("/api/integrations/gmail/disconnect?label=Personal")
+        assert r.status_code == 200
+        assert removed == [("gmail", "Personal")]
+
+    def test_open_connector_down_keeps_the_panel_working(self, client):
+        with (
+            patch.object(oc_mod, "list_accounts", lambda: []),
+            patch.object(router_mod, "list_connections", lambda: []),
+        ):
+            r = client.get("/api/integrations")
+        assert r.status_code == 200
