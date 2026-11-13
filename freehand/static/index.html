@@ -983,6 +983,22 @@
         </div>
         <button type="submit">Send Command</button>
       </form>
+      <div class="voice-controls stack-top" role="group" aria-labelledby="voice-heading">
+        <h3 id="voice-heading">Voice</h3>
+        <button type="button" id="voice-speak-btn" aria-pressed="false">Speak</button>
+        <div class="form-group">
+          <label><input type="checkbox" id="voice-read-aloud"> Read replies aloud</label>
+        </div>
+        <div class="form-group">
+          <label><input type="checkbox" id="voice-conversation"> Voice conversation: talk, hear the answer, then talk again</label>
+        </div>
+        <p id="voice-status" role="status" aria-live="polite"></p>
+        <p class="hint">
+          Press Speak, talk, then press it again to put your words in the box. Your voice is turned into text
+          on this computer, not sent anywhere. If you use a screen reader, reading aloud may talk over it;
+          leave it off and your screen reader reads replies as usual.
+        </p>
+      </div>
       <div id="command-response" aria-live="polite" class="hint" style="margin-top: 0.5rem;"></div>
       <div id="agent-response" aria-live="polite" style="margin-top:0.5rem;"></div>
     </section>
@@ -1356,6 +1372,13 @@
 
         <fieldset>
           <legend>Telegram</legend>
+          <ol class="hint">
+            <li>In Telegram, message @BotFather, send /newbot, and follow its questions. It gives you a bot token.</li>
+            <li>Paste the token below and save.</li>
+            <li>Send your bot any message. It replies with your chat ID.</li>
+            <li>Add that chat ID below and save again. Now you can chat with FreeHand, by text or voice note.</li>
+          </ol>
+          <p class="hint">This works from this computer as it is; FreeHand fetches your messages from Telegram itself.</p>
           <div class="form-group">
             <label for="tg-token">Bot Token</label>
             <input type="password" id="tg-token" placeholder="123456:ABC-DEF..." autocomplete="current-password">
@@ -1634,12 +1657,157 @@
           }
           showStatus('Agent responded.', 'success');
           input.value = '';
+          if (data.text) voiceAfterReply(data.text);
         })
         .catch(function(err) {
           responseEl.textContent = 'Error: ' + err.message;
           showStatus('Command failed: ' + err.message, 'error');
         });
       });
+
+      // ---- Voice ----
+      // Speak: record with the microphone, turn it into text on this
+      // computer (/api/voice/transcribe), put it in the box. Read aloud:
+      // the browser's own voice. Conversation: after each spoken reply,
+      // listen again, and send automatically after a pause.
+      var voice = { recorder: null, stream: null, chunks: [], ctx: null, timer: null, busy: false };
+      var voiceEl = function(id) { return document.getElementById(id); };
+
+      function voiceStatus(text) { voiceEl('voice-status').textContent = text; }
+
+      function voicePref(id) {
+        var box = voiceEl(id);
+        try { box.checked = localStorage.getItem('freehand_' + id) === '1'; } catch (e) {}
+        box.addEventListener('change', function() {
+          try { localStorage.setItem('freehand_' + id, box.checked ? '1' : '0'); } catch (e) {}
+          if (id === 'voice-conversation' && box.checked) {
+            voiceEl('voice-read-aloud').checked = true;
+            voiceStatus('Voice conversation is on. Press Speak to start talking.');
+          }
+          if (id === 'voice-conversation' && !box.checked && window.speechSynthesis) window.speechSynthesis.cancel();
+        });
+      }
+      voicePref('voice-read-aloud');
+      voicePref('voice-conversation');
+
+      function setSpeakButton(recording) {
+        var b = voiceEl('voice-speak-btn');
+        b.textContent = recording ? 'Stop and use what I said' : 'Speak';
+        b.setAttribute('aria-pressed', recording ? 'true' : 'false');
+      }
+
+      function stopListeningAids() {
+        clearInterval(voice.timer); voice.timer = null;
+        if (voice.ctx) { try { voice.ctx.close(); } catch (e) {} voice.ctx = null; }
+      }
+
+      // In conversation mode, stop by itself after about 1.5 seconds of quiet.
+      function watchForPause(stream) {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        voice.ctx = new AC();
+        var analyser = voice.ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        voice.ctx.createMediaStreamSource(stream).connect(analyser);
+        var buf = new Uint8Array(analyser.fftSize);
+        var heard = false, quietSince = 0, started = Date.now();
+        voice.timer = setInterval(function() {
+          analyser.getByteTimeDomainData(buf);
+          var sum = 0;
+          for (var i = 0; i < buf.length; i++) { var v = (buf[i] - 128) / 128; sum += v * v; }
+          var loud = Math.sqrt(sum / buf.length) > 0.03;
+          var now = Date.now();
+          if (loud) { heard = true; quietSince = 0; }
+          else if (heard && !quietSince) quietSince = now;
+          if ((heard && quietSince && now - quietSince > 1500) || now - started > 60000) stopRecording();
+        }, 150);
+      }
+
+      function startRecording() {
+        if (voice.recorder || voice.busy) return;
+        if (!navigator.mediaDevices || !window.MediaRecorder) {
+          voiceStatus('This browser can\'t record sound. Try Chrome, Edge or Firefox.');
+          return;
+        }
+        if (window.speechSynthesis) window.speechSynthesis.cancel();
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+          voice.stream = stream;
+          voice.chunks = [];
+          var type = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
+          voice.recorder = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
+          voice.recorder.ondataavailable = function(e) { if (e.data && e.data.size) voice.chunks.push(e.data); };
+          voice.recorder.onstop = sendRecording;
+          voice.recorder.start();
+          setSpeakButton(true);
+          voiceStatus(voiceEl('voice-conversation').checked
+            ? 'Listening. Talk, then pause and I\'ll send it.'
+            : 'Listening. Press the button again when you\'ve finished.');
+          if (voiceEl('voice-conversation').checked) watchForPause(stream);
+        }).catch(function() {
+          voiceStatus('FreeHand couldn\'t use the microphone. Allow microphone access for this page in the browser, then try again.');
+        });
+      }
+
+      function stopRecording() {
+        stopListeningAids();
+        if (voice.recorder && voice.recorder.state !== 'inactive') voice.recorder.stop();
+        if (voice.stream) voice.stream.getTracks().forEach(function(t) { t.stop(); });
+        setSpeakButton(false);
+      }
+
+      function sendRecording() {
+        var type = (voice.recorder && voice.recorder.mimeType || 'audio/webm').split(';')[0];
+        var blob = new Blob(voice.chunks, { type: type });
+        voice.recorder = null; voice.stream = null;
+        if (!blob.size) { voiceStatus('I didn\'t catch anything. Press Speak to try again.'); return; }
+        voice.busy = true;
+        voiceStatus('Turning your words into text...');
+        apiFetch('/api/voice/transcribe', { method: 'POST', headers: { 'Content-Type': type }, body: blob })
+          .then(function(res) {
+            return res.json().then(function(d) { if (!res.ok) throw new Error(d.detail || 'Could not understand the recording.'); return d; });
+          })
+          .then(function(d) {
+            var input = document.getElementById('command-input');
+            input.value = d.text;
+            if (voiceEl('voice-conversation').checked) {
+              voiceStatus('You said: ' + d.text + '. Sending.');
+              commandForm.requestSubmit ? commandForm.requestSubmit() : commandForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            } else {
+              voiceStatus('You said: ' + d.text + '. Check it, then press Send Command.');
+              input.focus();
+            }
+          })
+          .catch(function(err) { voiceStatus(err.message + ' Press Speak to try again.'); })
+          .then(function() { voice.busy = false; });
+      }
+
+      function voiceAfterReply(text) {
+        var conversation = voiceEl('voice-conversation').checked;
+        if (!(voiceEl('voice-read-aloud').checked || conversation) || !window.speechSynthesis) {
+          if (conversation) startRecording();
+          return;
+        }
+        var u = new SpeechSynthesisUtterance(text);
+        u.onend = function() { if (voiceEl('voice-conversation').checked) startRecording(); };
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.speak(u);
+      }
+
+      voiceEl('voice-speak-btn').addEventListener('click', function() {
+        if (voice.recorder) stopRecording(); else startRecording();
+      });
+
+      function loadVoiceStatus() {
+        return apiFetch('/api/voice/status')
+          .then(function(r) { return r.ok ? r.json() : { available: false }; })
+          .then(function(d) {
+            if (!d.available) {
+              voiceEl('voice-speak-btn').disabled = true;
+              voiceStatus('Speech recognition isn\'t installed in this FreeHand, so Speak is unavailable. Reading replies aloud still works.');
+            }
+          })
+          .catch(function() {});
+      }
 
       // ---- Scribble Form ----
       var scribbleForm = document.getElementById('scribble-form');
@@ -1907,6 +2075,7 @@
       // Pick a service (or paste a key and FreeHand recognises it), choose a
       // model from the list, test, save. Or sign in with OpenRouter.
       var llmProviders = [];
+      var llmSaved = { key: '', baseUrl: '' };  // the main model's own key and address
       var llmEl = function(id) { return document.getElementById(id); };
 
       function llmProvider(id) {
@@ -2008,6 +2177,7 @@
           llmEl('llm-api-key').value = llm.api_key || '';
           llmEl('llm-model').value = llm.model || '';
           llmEl('llm-base-url').value = llm.base_url || '';
+          llmSaved = { key: llm.api_key || '', baseUrl: llm.base_url || '' };
           renderProviderHelp();
           describeCurrent(select.value, llm.model, !!llm.api_key);
           fillModelList([], llm.model || '');
@@ -2017,6 +2187,12 @@
       }
 
       llmEl('llm-provider').addEventListener('change', function() {
+        // A different service needs its own key and address. Leaving the main
+        // model's in place sent requests to the old service (and its key to
+        // the new one), so clear whatever still belongs to the main model.
+        var keyBox = llmEl('llm-api-key'), urlBox = llmEl('llm-base-url');
+        if (keyBox.value.trim() && keyBox.value.trim() === llmSaved.key) keyBox.value = '';
+        if (urlBox.value.trim() === llmSaved.baseUrl || !(llmProvider(this.value) || {}).needs_base_url) urlBox.value = '';
         renderProviderHelp();
         llmEl('llm-model').value = '';
         llmEl('llm-test-result').textContent = '';
@@ -2226,6 +2402,11 @@
           api_key: document.getElementById('llm-api-key').value.trim(),
           base_url: document.getElementById('llm-base-url').value.trim(),
         };
+        if (!llmConfig.api_key && !(llmProvider(llmConfig.provider) || {}).no_key) {
+          llmEl('llm-test-result').textContent = 'Paste the key for this service first. Nothing was changed.';
+          llmEl('llm-api-key').focus();
+          return;
+        }
         apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -3355,6 +3536,7 @@
         loadFacts();
         loadSkills();
         loadLlm();
+        loadVoiceStatus();
       });
     })();
   </script>

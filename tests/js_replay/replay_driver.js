@@ -124,6 +124,7 @@ async function main() {
     </section>
     <div id="status-region" role="status" aria-live="polite"></div>
     <section id="skills"><h2 id="skills-heading">Skills</h2><p id="skills-status"></p><ul id="skills-active"></ul><ul id="skills-draft"></ul><ul id="skills-archived"></ul><div id="skill-viewer"></div></section>
+    <button type="button" id="voice-speak-btn">Speak</button><input type="checkbox" id="voice-read-aloud"><input type="checkbox" id="voice-conversation"><p id="voice-status"></p>
     <div id="signin-banner" role="alert" hidden><button type="button" id="signin-banner-settings">Go to Settings</button></div>
     <div id="approvals-list" aria-live="polite"></div>
   </main>

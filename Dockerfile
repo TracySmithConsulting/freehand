@@ -47,7 +47,8 @@ COPY pyproject.toml ./
 # Install runtime deps + the package itself. `--no-cache-dir` keeps
 # the layer small. The package isn't installed editable — the image
 # IS the deploy artifact.
-RUN pip install --no-cache-dir .
+# [voice]: local speech to text (faster-whisper) for voice notes.
+RUN pip install --no-cache-dir ".[voice]"
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime

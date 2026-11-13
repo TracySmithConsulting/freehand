@@ -457,27 +457,103 @@ async def _reply_in_background(source: str, caller_id: str, text: str, send) -> 
     await send(caller_id, response)
 
 
-async def handle_telegram_webhook(update: dict) -> dict:
-    """Accept an incoming Telegram update and answer it in the background.
+def _telegram_voice(message: dict) -> Optional[dict]:
+    """The audio in a Telegram message, if any: a voice note, an audio
+    file or a round video note. Returns {"file_id", "suffix"}."""
+    for kind, suffix in (("voice", ".ogg"), ("audio", ".mp3"), ("video_note", ".mp4")):
+        item = message.get(kind)
+        if isinstance(item, dict) and item.get("file_id"):
+            return {"file_id": item["file_id"], "suffix": suffix}
+    return None
 
-    The caller (server.py) has already checked the webhook secret token.
-    """
+
+async def _telegram_download(file_id: str) -> Optional[bytes]:
+    """Fetch a file a person sent the bot (Bot API getFile, then download)."""
+    token = _load_settings().get("telegram_bot_token", "").strip()
+    if not token:
+        return None
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=60)) as session:
+            async with session.get(f"https://api.telegram.org/bot{token}/getFile",
+                                   params={"file_id": file_id}) as resp:
+                info = await resp.json(content_type=None)
+            path = (info.get("result") or {}).get("file_path") if isinstance(info, dict) else None
+            if not path:
+                return None
+            async with session.get(f"https://api.telegram.org/file/bot{token}/{path}") as resp:
+                if resp.status != 200:
+                    return None
+                return await resp.read()
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        return None
+
+
+async def _reply_to_voice_in_background(source: str, caller_id: str, audio: dict, download, send) -> None:
+    """A voice note: turn it into text on this computer (core/voice.py),
+    answer it, and start the reply with what was heard, so people can tell
+    if FreeHand misheard."""
+    from core import voice
+    data = await download(audio["file_id"])
+    if not data:
+        await send(caller_id, "Sorry, I couldn't fetch that voice note. Please try again.")
+        return
+    heard = await asyncio.to_thread(voice.transcribe, data, audio.get("suffix", ".ogg"))
+    if heard.get("error"):
+        await send(caller_id, f"Sorry, I couldn't understand that voice note: {heard['error']} You can also type your message.")
+        return
+    text = heard["text"]
+    try:
+        response = await _route_to_agent(text, source=source, caller_id=caller_id)
+    except Exception as e:  # never leave the person without an answer
+        log.exception("%s voice message failed", source)
+        response = f"Error: {str(e)[:200]}"
+    await send(caller_id, f"You said: “{text}”\n\n{response}")
+
+
+_told_unknown_chats: set = set()
+
+
+async def handle_telegram_update(update: dict, *, from_polling: bool = False) -> dict:
+    """Handle one Telegram update (text or voice note), from the webhook or
+    from polling (core/telegram_poll.py), and answer in the background."""
     message = update.get("message", {})
     chat_id = str(message.get("chat", {}).get("id", ""))
     text = (message.get("text") or "").strip()
-    if not text:
+    audio = _telegram_voice(message)
+    if not text and not audio:
         return {"ok": True}
 
     # N12a: allow_from check (second layer after the secret token)
     if not _check_allow_from("telegram", chat_id):
-        return {"ok": True}  # Silently drop — don't leak bot existence
+        settings = _load_settings()
+        nobody_allowed = not (settings.get("telegram_allow_from") or settings.get("telegram_chat_whitelist"))
+        if from_polling and nobody_allowed and chat_id and chat_id not in _told_unknown_chats:
+            # First-time setup on this computer: nobody is allowed yet, so
+            # people need their chat ID. Polling means the owner is setting
+            # FreeHand up locally; a public webhook stays silent.
+            _told_unknown_chats.add(chat_id)
+            await _telegram_send_message(chat_id, (
+                "Hello! This FreeHand doesn't answer anyone on Telegram yet. To let it answer you, "
+                f"open FreeHand's Settings, find Telegram, and add this chat ID under Allowed Chat IDs: {chat_id}"))
+        return {"ok": True}  # Otherwise silently drop — don't leak bot existence
 
     update_id = update.get("update_id")
     if update_id is not None and not _first_delivery(f"telegram:{update_id}"):
         return {"ok": True, "duplicate": True}
 
-    _spawn(_reply_in_background("telegram", chat_id, text, _telegram_send_message))
+    if audio:
+        _spawn(_reply_to_voice_in_background("telegram", chat_id, audio, _telegram_download, _telegram_send_message))
+    else:
+        _spawn(_reply_in_background("telegram", chat_id, text, _telegram_send_message))
     return {"ok": True, "queued": True}
+
+
+async def handle_telegram_webhook(update: dict) -> dict:
+    """Accept an incoming Telegram update via the webhook.
+
+    The caller (server.py) has already checked the webhook secret token.
+    """
+    return await handle_telegram_update(update)
 
 
 async def handle_slack_webhook(body: str, headers: dict) -> dict:

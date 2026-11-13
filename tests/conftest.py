@@ -74,6 +74,8 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     # accounts. Port 9 (discard) refuses connections at once. Tests that
     # exercise these clients patch them directly.
     monkeypatch.setenv("FREEHAND_HINDSIGHT_URL", "http://127.0.0.1:9")
+    # Never poll a real Telegram bot from a test.
+    monkeypatch.setenv("FREEHAND_TELEGRAM_POLLING", "0")
     import core.oauth.open_connector as open_connector
     monkeypatch.setattr(open_connector, "_load_admin_token", lambda: None)
 
