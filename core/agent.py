@@ -67,6 +67,10 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    from core import llm_providers
+    if llm_providers.omit_temperature(config.get("provider", ""), config.get("base_url", "")):
+        # Newer Claude models reject temperatures below 1 here.
+        payload.pop("temperature")
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"

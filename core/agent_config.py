@@ -59,17 +59,14 @@ def resolve_llm_endpoint(config: Optional[dict] = None) -> tuple:
     (/internal/llm/v1), so both reach the model the same way."""
     if config is None:
         config = get_llm_config()
+    from core import llm_providers
     provider = config.get("provider", "openai")
     api_key = config.get("api_key", "")
-    base_url = config.get("base_url", "")
-    if provider == "openai" and not base_url:
-        base_url = "https://api.openai.com/v1"
-    elif provider == "google":
-        if not base_url:
-            base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-        if api_key:
-            base_url = base_url.replace("{API_KEY}", api_key)
-            api_key = ""
+    # The preset's address when none is saved (core/llm_providers.py).
+    base_url = llm_providers.base_url_for(provider, config.get("base_url", ""))
+    if provider == "google" and api_key and "{API_KEY}" in base_url:
+        base_url = base_url.replace("{API_KEY}", api_key)
+        api_key = ""
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"

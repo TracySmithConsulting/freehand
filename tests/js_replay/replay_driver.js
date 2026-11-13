@@ -87,11 +87,17 @@ async function main() {
       <input id="api-key">
       <form id="settings-form"><input id="omniroute"><input id="api-key"><button type="submit">Save Settings</button></form>
       <form id="llm-form">
+        <p id="llm-current"></p>
+        <button type="button" id="llm-openrouter-btn">Sign in with OpenRouter</button>
         <select id="llm-provider"><option selected>openai</option></select>
+        <div id="llm-provider-help"></div>
+        <input id="llm-api-key"><p id="llm-key-hint"></p>
+        <button type="button" id="llm-key-show">Show key</button><p id="llm-detect-status"></p>
+        <select id="llm-model-pick"></select><p id="llm-model-hint"></p>
         <input id="llm-model" value="gpt-4o-mini">
-        <input id="llm-api-key">
-        <input id="llm-base-url">
-        <button type="button" id="llm-save-btn">Save LLM Settings</button>
+        <details><input id="llm-base-url"></details>
+        <button type="button" id="llm-test-btn">Test it</button>
+        <button type="button" id="llm-save-btn">Save LLM Settings</button><p id="llm-test-result"></p>
       </form>
       <button type="button" id="oauth-save-btn">Save OAuth Credentials</button>
       <input id="google-client-id"><input id="google-client-secret">

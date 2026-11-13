@@ -295,6 +295,131 @@ async def llm_proxy_chat(request: Request):
             raise HTTPException(status_code=502, detail=f"Couldn't reach the AI model: {str(exc)[:200]}")
 
 
+# ── Easier AI model setup (core/llm_providers.py) ─────────────────────
+
+@app.get("/api/llm/providers", dependencies=[Depends(require_api_key)])
+async def llm_providers_list():
+    from core import llm_providers
+    from core.agent_config import get_llm_config
+    cfg = get_llm_config()
+    return {
+        "providers": llm_providers.public_list(),
+        "current": llm_providers.identify(cfg.get("provider", ""), cfg.get("base_url", "")),
+    }
+
+
+@app.post("/api/llm/detect", dependencies=[Depends(require_api_key)])
+async def llm_detect(request: Request):
+    """Which service is this key for, and which models does it offer?"""
+    from core import llm_providers
+    body = await request.json() or {}
+    return await asyncio.to_thread(
+        llm_providers.detect, str(body.get("api_key", "")), str(body.get("provider", "")))
+
+
+@app.post("/api/llm/models", dependencies=[Depends(require_api_key)])
+async def llm_models(request: Request):
+    from core import llm_providers
+    from core.agent_config import get_llm_config
+    body = await request.json() or {}
+    key = str(body.get("api_key", ""))
+    if not key:  # the page doesn't have to resend a saved key
+        key = get_llm_config().get("api_key", "")
+    models, problem = await asyncio.to_thread(
+        llm_providers.list_models, str(body.get("provider", "")), key, str(body.get("base_url", "")))
+    return {"models": models or [], "error": problem}
+
+
+@app.post("/api/llm/test", dependencies=[Depends(require_api_key)])
+async def llm_test(request: Request):
+    """Try these settings with one tiny message, before saving them."""
+    from core import llm_providers
+    body = await request.json() or {}
+    return await asyncio.to_thread(
+        llm_providers.test, str(body.get("provider", "")), str(body.get("model", "")).strip(),
+        str(body.get("api_key", "")).strip(), str(body.get("base_url", "")).strip())
+
+
+# OpenRouter sign-in (OAuth with PKCE, https://openrouter.ai/docs/use-cases/oauth-pkce):
+# the console asks for a sign-in link (key-protected, so only the owner can
+# start one), opens it, OpenRouter returns to the callback with a one-time
+# code, and FreeHand swaps it for a key and saves it. The callback only
+# accepts a state FreeHand handed out in the last 10 minutes, so another
+# site can't plant its own key here.
+_OPENROUTER_PENDING: dict = {}
+
+
+@app.post("/api/llm/openrouter/start", dependencies=[Depends(require_api_key)])
+async def openrouter_start(request: Request):
+    import base64
+    import hashlib
+    import time
+    import urllib.parse
+    now = time.time()
+    for s, v in list(_OPENROUTER_PENDING.items()):
+        if now - v["at"] > 600:
+            _OPENROUTER_PENDING.pop(s, None)
+    verifier = _secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = _secrets.token_urlsafe(24)
+    _OPENROUTER_PENDING[state] = {"verifier": verifier, "at": now}
+    # OpenRouter allows localhost callbacks on any port.
+    port = request.url.port or 8000
+    callback = f"http://localhost:{port}/api/llm/openrouter/callback"
+    url = "https://openrouter.ai/auth?" + urllib.parse.urlencode({
+        "callback_url": callback, "code_challenge": challenge,
+        "code_challenge_method": "S256", "state": state, "key_label": "FreeHand",
+    })
+    return {"url": url}
+
+
+def _signin_page(title: str, message: str, ok: bool) -> "HTMLResponse":
+    import html as _html
+    from fastapi.responses import HTMLResponse
+    close = "<script>setTimeout(function(){window.close();},4000);</script>" if ok else ""
+    return HTMLResponse(
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        f"<title>{_html.escape(title)}</title></head>"
+        "<body style='font-family:system-ui;padding:2rem;max-width:40rem'>"
+        f"<h1>{_html.escape(title)}</h1><p role='status'>{_html.escape(message)}</p>"
+        "<p><button type='button' onclick='window.close()'>Close this window</button></p>"
+        f"{close}</body></html>",
+        status_code=200 if ok else 400,
+    )
+
+
+@app.get("/api/llm/openrouter/callback")
+async def openrouter_callback(code: str = "", state: str = "", error: str = ""):
+    import aiohttp
+    from core import llm_providers
+    from core.agent_config import get_llm_config, set_llm_config
+    pending = _OPENROUTER_PENDING.pop(state, None) if state else None
+    if error or not code:
+        return _signin_page("Sign-in cancelled", "OpenRouter didn't sign you in. Close this window and try again.", False)
+    if not pending:
+        return _signin_page("Sign-in expired", "This sign-in link is old or wasn't started from FreeHand. Close this window and start again from Settings.", False)
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
+            async with session.post("https://openrouter.ai/api/v1/auth/keys", json={
+                "code": code, "code_verifier": pending["verifier"], "code_challenge_method": "S256",
+            }) as resp:
+                data = await resp.json(content_type=None) if resp.status == 200 else None
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+        data = None
+    key = (data or {}).get("key") if isinstance(data, dict) else None
+    if not key:
+        return _signin_page("Sign-in didn't finish", "FreeHand couldn't get a key from OpenRouter. Close this window and try again.", False)
+    current = get_llm_config()
+    keep_model = current.get("model") if llm_providers.identify(current.get("provider", ""), current.get("base_url", "")) == "openrouter" else ""
+    set_llm_config({"provider": "openrouter", "api_key": key, "base_url": "",
+                    "model": keep_model or llm_providers.get("openrouter")["default_model"]})
+    # Like saving a key in Settings: wake the task runner now.
+    from core.scheduler import run_due_tasks
+    asyncio.get_running_loop().create_task(asyncio.to_thread(run_due_tasks))
+    return _signin_page("Signed in with OpenRouter",
+                        "FreeHand can now use OpenRouter. Close this window and choose a model in Settings.", True)
+
+
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 
