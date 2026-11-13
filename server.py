@@ -252,12 +252,13 @@ async def llm_proxy_models(request: Request):
 async def llm_proxy_chat(request: Request):
     import aiohttp
     from fastapi.responses import Response, StreamingResponse
-    from core.agent_config import get_llm_config, resolve_llm_endpoint
+    from core import llm_providers
+    from core.agent_config import get_llm_chain, resolve_llm_endpoint
 
     if not _llm_proxy_allowed(request):
         raise HTTPException(status_code=401, detail="Invalid or missing token")
-    config = get_llm_config()
-    if not config.get("api_key") and not config.get("base_url"):
+    chain = get_llm_chain()
+    if not chain:
         raise HTTPException(status_code=503, detail="No AI model is set up in FreeHand yet (Settings, AI model).")
     try:
         body = await request.json()
@@ -265,10 +266,34 @@ async def llm_proxy_chat(request: Request):
         raise HTTPException(status_code=400, detail="Body must be JSON")
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    config = chain[0]
     body["model"] = config.get("model") or body.get("model", "")
     base_url, headers = resolve_llm_endpoint(config)
     url = f"{base_url}/chat/completions"
     timeout = aiohttp.ClientTimeout(total=300)
+
+    if not body.get("stream"):
+        # The main model, then the backups, like FreeHand's own replies.
+        last_status, last_content, last_type = 502, b'{"error": "No AI model answered"}', "application/json"
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=120)) as session:
+            for cfg in chain:
+                attempt = {**body, "model": cfg.get("model") or body.get("model", "")}
+                if llm_providers.omit_temperature(cfg.get("provider", ""), cfg.get("base_url", "")):
+                    attempt.pop("temperature", None)
+                cfg_base, cfg_headers = resolve_llm_endpoint(cfg)
+                try:
+                    async with session.post(f"{cfg_base}/chat/completions", json=attempt, headers=cfg_headers) as upstream:
+                        last_status = upstream.status
+                        last_content = await upstream.read()
+                        last_type = upstream.headers.get("Content-Type", "application/json")
+                except (aiohttp.ClientError, asyncio.TimeoutError):
+                    last_status, last_content = 502, b'{"error": "Couldn\'t reach the AI model"}'
+                    continue
+                if last_status == 200:
+                    break
+                if 400 <= last_status < 500 and last_status not in (401, 402, 403, 404, 408, 429):
+                    break  # the request itself was refused; another model won't help
+        return Response(content=last_content, status_code=last_status, media_type=last_type)
 
     if body.get("stream"):
         session = aiohttp.ClientSession(timeout=timeout)
@@ -282,17 +307,9 @@ async def llm_proxy_chat(request: Request):
                 upstream.release()
                 await session.close()
 
+        # Streams can't switch models halfway, so they use the main model.
         return StreamingResponse(relay(), status_code=upstream.status,
                                  media_type=upstream.headers.get("Content-Type", "text/event-stream"))
-
-    async with aiohttp.ClientSession(timeout=timeout) as session:
-        try:
-            async with session.post(url, json=body, headers=headers) as upstream:
-                content = await upstream.read()
-                return Response(content=content, status_code=upstream.status,
-                                media_type=upstream.headers.get("Content-Type", "application/json"))
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            raise HTTPException(status_code=502, detail=f"Couldn't reach the AI model: {str(exc)[:200]}")
 
 
 # ── Easier AI model setup (core/llm_providers.py) ─────────────────────
@@ -338,6 +355,74 @@ async def llm_test(request: Request):
     return await asyncio.to_thread(
         llm_providers.test, str(body.get("provider", "")), str(body.get("model", "")).strip(),
         str(body.get("api_key", "")).strip(), str(body.get("base_url", "")).strip())
+
+
+# Backup models: tried in order when the main model fails (core/agent.py
+# call_llm). Keys are never sent back to the page; it sees the last four
+# characters only.
+
+def _backup_view(backups: list) -> list:
+    from core import llm_providers
+    out = []
+    for i, b in enumerate(backups):
+        p = llm_providers.get(llm_providers.identify(b.get("provider", ""), b.get("base_url", "")))
+        key = b.get("api_key", "")
+        out.append({
+            "index": i,
+            "service": p["name"] if p else b.get("provider", ""),
+            "provider": b.get("provider", ""),
+            "model": b.get("model", ""),
+            "base_url": b.get("base_url", ""),
+            "key_hint": ("ending " + key[-4:]) if len(key) >= 8 else ("set" if key else "none"),
+        })
+    return out
+
+
+@app.get("/api/llm/backups", dependencies=[Depends(require_api_key)])
+async def llm_backups_list():
+    from core import agent
+    from core.agent_config import get_llm_backups
+    return {"backups": _backup_view(get_llm_backups()), "last_switch": dict(agent.LAST_SWITCH)}
+
+
+@app.post("/api/llm/backups", dependencies=[Depends(require_api_key)])
+async def llm_backups_add(request: Request):
+    from core.agent_config import add_llm_backup
+    body = await request.json() or {}
+    if not str(body.get("model", "")).strip():
+        raise HTTPException(status_code=400, detail="Choose a model for the backup first.")
+    return {"backups": _backup_view(add_llm_backup(body))}
+
+
+@app.delete("/api/llm/backups/{index}", dependencies=[Depends(require_api_key)])
+async def llm_backups_remove(index: int):
+    from core.agent_config import remove_llm_backup
+    return {"backups": _backup_view(remove_llm_backup(index))}
+
+
+@app.post("/api/llm/backups/{index}/move", dependencies=[Depends(require_api_key)])
+async def llm_backups_move(index: int, request: Request):
+    from core.agent_config import move_llm_backup
+    body = await request.json() or {}
+    delta = -1 if str(body.get("direction", "")) == "up" else 1
+    return {"backups": _backup_view(move_llm_backup(index, delta))}
+
+
+@app.post("/api/llm/backups/{index}/promote", dependencies=[Depends(require_api_key)])
+async def llm_backups_promote(index: int):
+    from core.agent_config import promote_llm_backup
+    return {"backups": _backup_view(promote_llm_backup(index))}
+
+
+@app.post("/api/llm/backups/{index}/test", dependencies=[Depends(require_api_key)])
+async def llm_backups_test(index: int):
+    from core import llm_providers
+    from core.agent_config import get_llm_backups
+    backups = get_llm_backups()
+    if not 0 <= index < len(backups):
+        raise HTTPException(status_code=404, detail="No such backup.")
+    b = backups[index]
+    return await asyncio.to_thread(llm_providers.test, b["provider"], b["model"], b["api_key"], b["base_url"])
 
 
 # OpenRouter sign-in (OAuth with PKCE, https://openrouter.ai/docs/use-cases/oauth-pkce):
@@ -409,8 +494,14 @@ async def openrouter_callback(code: str = "", state: str = "", error: str = ""):
     key = (data or {}).get("key") if isinstance(data, dict) else None
     if not key:
         return _signin_page("Sign-in didn't finish", "FreeHand couldn't get a key from OpenRouter. Close this window and try again.", False)
+    from core.agent_config import get_llm_backups, llm_is_configured, _save_llm_backups
     current = get_llm_config()
-    keep_model = current.get("model") if llm_providers.identify(current.get("provider", ""), current.get("base_url", "")) == "openrouter" else ""
+    was_openrouter = llm_providers.identify(current.get("provider", ""), current.get("base_url", "")) == "openrouter"
+    keep_model = current.get("model") if was_openrouter else ""
+    if not was_openrouter and llm_is_configured(current):
+        # Don't throw away the model people had: it becomes the first backup.
+        _save_llm_backups([{k: current.get(k, "") for k in ("provider", "model", "api_key", "base_url")},
+                           *get_llm_backups()])
     set_llm_config({"provider": "openrouter", "api_key": key, "base_url": "",
                     "model": keep_model or llm_providers.get("openrouter")["default_model"]})
     # Like saving a key in Settings: wake the task runner now.
@@ -849,11 +940,13 @@ async def runner_status():
     configured? Mirrors exactly the check run_due_tasks() uses, so the UI
     notices 'runner idle — no LLM configured' the moment it matters.
     """
-    from core.agent_config import get_llm_config
-    cfg = get_llm_config()
-    configured = bool(
-        str(cfg.get("api_key", "")).strip() or str(cfg.get("base_url", "")).strip()
-    )
+    from core import agent_config as _ac
+    cfg = _ac.get_llm_config()
+    if not _ac.llm_is_configured(cfg):
+        # No main model, but a backup still keeps the runner going.
+        backups = _ac.get_llm_backups()
+        cfg = backups[0] if backups else None
+    configured = cfg is not None
     return {
         "llm_configured": configured,
         "provider": cfg.get("provider") if configured else None,

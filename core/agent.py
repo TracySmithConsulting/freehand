@@ -43,17 +43,95 @@ def strip_reasoning(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
+# The last time FreeHand had to use a backup model, for the Settings page.
+LAST_SWITCH: Dict[str, Any] = {}
+# When each failing main model was last mentioned to the user.
+_SWITCH_NOTICED: Dict[str, float] = {}
+SWITCH_NOTICE_EVERY_SECONDS = 3600
+
+
+def _switch_note(switched: dict) -> str:
+    """One plain sentence about the switch, at most once an hour per model,
+    so people learn their main account needs attention without every
+    reply repeating it."""
+    import time
+    key = switched.get("from", "")
+    now = time.time()
+    if now - _SWITCH_NOTICED.get(key, 0) < SWITCH_NOTICE_EVERY_SECONDS:
+        return ""
+    _SWITCH_NOTICED[key] = now
+    return (f"(Note: your main AI model, {switched['from']}, didn't answer because {switched['reason']}, "
+            f"so I used your backup, {switched['to']}. Check your main model in Settings.)")
+
+
+def _model_name(config: dict) -> str:
+    from core import llm_providers
+    p = llm_providers.get(llm_providers.identify(config.get("provider", ""), config.get("base_url", "")))
+    service = p["name"] if p and p["id"] != "custom" else (config.get("base_url") or "your custom service")
+    return f"{service} ({config.get('model', '')})"
+
+
+def _failure_reason(status: Optional[int], timed_out: bool = False) -> str:
+    if timed_out:
+        return "it didn't respond in time"
+    if status is None:
+        return "FreeHand couldn't reach it"
+    if status in (401, 403):
+        return "its key wasn't accepted"
+    if status == 402:
+        return "it has no credit left"
+    if status == 429:
+        return "it hit a usage limit or ran out of credit"
+    if status == 404:
+        return "it didn't recognise the model name"
+    if status >= 500:
+        return "it had a problem on its side"
+    return f"it refused the request (error {status})"
+
+
 async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict = None) -> dict:
-    """Call an OpenAI-compatible API and return the response.
+    """Call the AI model, switching to backup models if it fails.
 
-    H1 fix: 3-attempt retry with exponential backoff (2s, 4s, 8s) on
-    transient errors (HTTP 429/5xx, timeouts, connection errors). Auth
-    errors (401/403) and client errors (400) are NOT retried — they
-    indicate the request itself is wrong.
+    With an explicit ``config`` only that model is tried. Otherwise the
+    main model is tried first, then each backup in order (Settings, AI
+    model), until one answers. A reply from a backup carries ``_switched``
+    ({"from", "to", "reason"}) so the user can be told.
     """
-    if config is None:
-        config = get_llm_config()
+    if config is not None:
+        msg, _status, _timed_out = await _call_one(messages, tools, config, last=True)
+        return msg
 
+    from core.agent_config import get_llm_chain
+    chain = get_llm_chain() or [get_llm_config()]
+    first_failure = None
+    for i, cfg in enumerate(chain):
+        last = i == len(chain) - 1
+        msg, status, timed_out = await _call_one(messages, tools, cfg, last=last)
+        if "error" not in msg:
+            if i > 0 and first_failure:
+                switched = {"from": _model_name(chain[0]), "to": _model_name(cfg), "reason": first_failure}
+                msg = {**msg, "_switched": switched}
+                LAST_SWITCH.clear()
+                LAST_SWITCH.update({**switched, "at": datetime.now().isoformat(timespec="minutes")})
+            return msg
+        if first_failure is None:
+            first_failure = _failure_reason(status, timed_out)
+            first_error = msg["error"]
+    if len(chain) > 1:
+        return {"error": f"{first_error} (your backup models didn't answer either)"}
+    return {"error": first_error}
+
+
+async def _call_one(messages: List[Dict], tools: Optional[List[Dict]], config: dict, last: bool) -> tuple:
+    """One model. Returns (message or {"error"}, HTTP status or None, timed out?).
+
+    H1 fix: retries with backoff on transient errors (HTTP 429/5xx,
+    timeouts, connection errors). Auth errors (401/403) and client errors
+    (400) are NOT retried — they indicate the request itself is wrong.
+    When a backup model is waiting (``last`` is False), FreeHand gives up
+    sooner - one retry, a 60-second limit, no retry after a timeout - so
+    a stuck service doesn't keep people waiting minutes.
+    """
     from core.agent_config import resolve_llm_endpoint
     model = config.get("model", "gpt-4o-mini")
     temperature = config.get("temperature", 0.7)
@@ -75,22 +153,26 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
 
-    timeout = aiohttp.ClientTimeout(total=120)
+    seconds = 120 if last else 60
+    timeout = aiohttp.ClientTimeout(total=seconds)
 
     # H1: retry configuration
-    RETRY_BACKOFFS = [0, 2, 4]  # seconds; first attempt has 0s delay
+    RETRY_BACKOFFS = [0, 2, 4] if last else [0, 2]  # seconds; first attempt has 0s delay
     RETRYABLE_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
     last_error = None
+    status = None
+    timed_out = False
     for attempt, delay in enumerate(RETRY_BACKOFFS):
         if delay:
             await asyncio.sleep(delay)
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, headers=headers, timeout=timeout) as resp:
+                    status = resp.status
                     if resp.status == 200:
                         data = await resp.json()
-                        return data.get("choices", [{}])[0].get("message", {})
+                        return data.get("choices", [{}])[0].get("message", {}), 200, False
                     # Read error body for context
                     try:
                         body_text = (await resp.text())[:200]
@@ -99,18 +181,22 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
                     last_error = f"LLM API error {resp.status}: {body_text}"
                     # Only retry on retryable status codes
                     if resp.status not in RETRYABLE_STATUS:
-                        return {"error": last_error}
+                        return {"error": last_error}, status, False
                     # Otherwise, fall through to next retry
         except asyncio.TimeoutError:
-            last_error = "LLM request timed out (120s)"
+            last_error = f"LLM request timed out ({seconds}s)"
+            timed_out, status = True, None
+            if not last:
+                break  # a backup is waiting: don't sit through another timeout
         except aiohttp.ClientError as e:
             last_error = f"LLM connection error: {str(e)[:200]}"
+            status = None
         except Exception as e:
             # Non-retryable exception (programmer error, not network)
-            return {"error": f"LLM request failed: {str(e)[:200]}"}
+            return {"error": f"LLM request failed: {str(e)[:200]}"}, None, False
 
     # All retries exhausted
-    return {"error": last_error or "LLM request failed after retries"}
+    return {"error": last_error or "LLM request failed after retries"}, status, timed_out
 
 
 def parse_tool_call(message: dict) -> Optional[dict]:
@@ -364,6 +450,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     ]
 
     final_response = {"text": "", "tools_used": [], "error": None}
+    switched = None  # set when a backup model answered instead of the main one
 
     # ── Loop-safety: track recent tool calls to detect infinite retries ──
     # If the LLM keeps calling the same tool with the same args, break early.
@@ -388,6 +475,9 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
 
     for turn in range(max_turns):
         llm_resp = await call_llm(messages, tools=tools)
+        if "_switched" in llm_resp:
+            # Keep FreeHand's marker out of what goes back to the model.
+            switched = llm_resp.pop("_switched")
 
         if "error" in llm_resp:
             final_response["error"] = llm_resp["error"]
@@ -549,6 +639,8 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
             "content": "Stop using tools now and answer my question from what you found so far.",
         })
         last = await call_llm(messages)
+        if "_switched" in last:
+            switched = last.pop("_switched")
         if "error" in last:
             final_response["error"] = last["error"]
         else:
@@ -556,6 +648,13 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
 
     if final_response["text"] and not final_response["error"]:
         _remember_turn(conv_key, command, final_response["text"], source)
+
+    # Shown, not remembered: the note is added after the turn is saved.
+    if switched and final_response["text"]:
+        final_response["model_switch"] = switched
+        note = _switch_note(switched)
+        if note:
+            final_response["text"] += "\n\n" + note
     return final_response
 
 
