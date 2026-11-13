@@ -216,7 +216,12 @@ def update_fact(memory_id: str, text: str) -> dict:
 
 
 def forget_fact(memory_id: str, reason: str = "Forgotten at the user's request") -> dict:
-    code, data = _call("PATCH", _bank_path(f"/memories/{urllib.parse.quote(memory_id, safe='')}"),
+    mid = urllib.parse.quote(memory_id, safe="")
+    # Hindsight also builds summary "observations" from facts. Retiring a
+    # fact left those in place, so a forgotten fact could still be recalled
+    # through its summary. Clear them first.
+    _call("DELETE", _bank_path(f"/memories/{mid}/observations"), timeout=30.0)
+    code, data = _call("PATCH", _bank_path(f"/memories/{mid}"),
                        {"state": "invalidated", "reason": reason[:200]}, timeout=30.0)
     if code == 200:
         return {"forgotten": True}
