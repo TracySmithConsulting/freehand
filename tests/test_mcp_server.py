@@ -4,7 +4,7 @@ freehand-mcp-broker design).
 Covers:
 - /mcp endpoint accepts JSON-RPC 2.0 requests
 - initialize handshake returns protocolVersion + capabilities
-- tools/list returns all 30 tools in MCP format
+- tools/list returns all 32 tools in MCP format
 - tools/call dispatches to execute_tool() with permission check
 - resources/list + resources/read serve vault files
 - Auth: X-API-Key required (same as /api/*)
@@ -69,9 +69,9 @@ class TestJsonRpcDispatch:
 # ── tools/list ────────────────────────────────────────────────────────
 
 class TestMcpToolsList:
-    def test_returns_all_30_tools(self):
+    def test_returns_all_32_tools(self):
         tools = mcp_server._mcp_tools()
-        assert len(tools) == 30
+        assert len(tools) == 32
 
     def test_tool_shape_matches_mcp_spec(self):
         """Each tool must have name, description, inputSchema."""
@@ -286,7 +286,7 @@ class TestMcpHttpEndpoint:
         body = r.json()
         assert "result" in body
         assert "tools" in body["result"]
-        assert len(body["result"]["tools"]) == 30
+        assert len(body["result"]["tools"]) == 32
 
     def test_mcp_batch_request(self):
         """JSON-RPC supports batch requests; we must return a batch."""

@@ -140,6 +140,10 @@ TOOL_REGISTRY: Dict[str, str] = {
     "list_connections":       "read",
     # Memory
     "search_memory":          "read",
+    # Long-term memory (Hindsight). Local to this FreeHand and reversible
+    # (forgetting is a soft retire), so no approval step.
+    "remember":               "read",
+    "forget_memory":          "read",
 }
 
 
@@ -457,7 +461,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     # ── Memory ─────────────────────────────────────────────────────
     "search_memory": {
-        "description": "Search the agent's memory (vault notes and scribbles)",
+        "description": "Search the user's vault notes (Journal, threads, notes) for an exact phrase",
         "parameters": {
             "type": "object",
             "properties": {
@@ -465,6 +469,30 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "limit": {"type": "integer", "default": 5},
             },
             "required": ["query"],
+        },
+    },
+    "remember": {
+        "description": (
+            "Save a fact to long-term memory when the user asks you to remember something, "
+            "or tells you something lasting about themselves (a preference, a name, a date). "
+            "Conversations are also remembered automatically; use this when it matters."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string", "description": "One clear sentence, e.g. 'The user's sister Anna lives in Durban.'"},
+            },
+            "required": ["fact"],
+        },
+    },
+    "forget_memory": {
+        "description": "Forget a remembered fact when the user asks you to forget or says it is wrong. Tell the user what was forgotten.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "What to forget, e.g. 'where my sister lives'"},
+            },
+            "required": ["description"],
         },
     },
 }
@@ -488,6 +516,14 @@ def build_system_prompt() -> str:
         conns = list_connections()
         for c in conns:
             connected.append(f"- {c['service']} ({c['label']})")
+    except Exception:
+        pass
+
+    try:
+        # Accounts connected in OpenConnector (Gmail, Outlook, Zoom, ...).
+        from core.oauth import open_connector
+        for a in open_connector.list_accounts():
+            connected.append(f"- {a['service']} ({a['label']})")
     except Exception:
         pass
 
@@ -528,7 +564,12 @@ You have access to the following tool categories:
 - list_zoom_meetings(label, page_size) — List Zoom meetings
 
 ### Memory
-- search_memory(query, limit) — Search your notes and scribbles
+- Long-term memory is automatic: you remember past conversations, and the
+  facts relevant to each message are listed under "What you remember about
+  the user" when there are any. Never say your memory is full.
+- remember(fact) — Save something the user wants you to remember
+- forget_memory(description) — Forget something the user asks you to forget
+- search_memory(query, limit) — Search the user's vault notes
 
 ### Connections
 - list_connections() — See which services are connected

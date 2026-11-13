@@ -1,5 +1,6 @@
 import json
 import asyncio
+import re
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -26,6 +27,20 @@ from core.tools.integrations import (
     post_to_instagram, get_connections_summary,
 )
 from core.memory import search_memory
+from core import conversation, long_memory
+
+# Background memory saves; kept referenced so they aren't garbage-collected.
+_background_tasks: set = set()
+
+_THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.DOTALL | re.IGNORECASE)
+
+
+def strip_reasoning(text: str) -> str:
+    """Remove a model's private reasoning from its reply.
+
+    Some models (MiniMax, DeepSeek, Qwen) put their thinking in the answer
+    as <think>...</think>; people on WhatsApp or the console saw it."""
+    return _THINK_RE.sub("", text).strip()
 
 
 async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict = None) -> dict:
@@ -225,6 +240,12 @@ async def execute_tool(name: str, args: dict) -> dict:
         elif name == "search_memory":
             results = search_memory(args.get("query", ""), limit=args.get("limit", 5))
             return {"content": json.dumps(results, default=str)}
+        elif name == "remember":
+            result = await asyncio.to_thread(long_memory.retain, args.get("fact", ""), "Told to remember", True)
+            return {"content": json.dumps(result, default=str)}
+        elif name == "forget_memory":
+            result = await asyncio.to_thread(long_memory.forget_matching, args.get("description", ""))
+            return {"content": json.dumps(result, default=str)}
 
         # ── Browser v2 tools ───────────────────────────────────────────
         elif name == "navigate":
@@ -322,8 +343,23 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     system_prompt = build_system_prompt()
     tools = list_available_tools()
 
+    # Memory (Nov 2026). Long-term: the few facts that matter for this
+    # message, from Hindsight. Short-term: the last few exchanges in this
+    # conversation, so follow-ups like "and tomorrow?" make sense. Either
+    # one being unavailable just means less context, never a failed chat.
+    conv_key = conversation.conversation_key(source, caller_id)
+    remembered = await asyncio.to_thread(long_memory.recall, command)
+    if remembered:
+        system_prompt += (
+            "\n## What you remember about the user\n"
+            "Use these when they help; don't recite them unprompted.\n"
+            + "\n".join(f"- {line}" for line in remembered[:15])
+            + "\n"
+        )
+
     messages = [
         {"role": "system", "content": system_prompt},
+        *conversation.history(conv_key),
         {"role": "user", "content": command},
     ]
 
@@ -360,7 +396,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         tool_call = parse_tool_call(llm_resp)
         if not tool_call:
             # No tool call — this is the final response
-            final_response["text"] = llm_resp.get("content", "")
+            final_response["text"] = strip_reasoning(llm_resp.get("content", "") or "")
             break
 
         # Execute the tool
@@ -496,7 +532,26 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
             "result": tool_result.get("content", "")[:200],
         })
 
+    if final_response["text"] and not final_response["error"]:
+        _remember_turn(conv_key, command, final_response["text"], source)
     return final_response
+
+
+def _remember_turn(conv_key: str, command: str, reply: str, source: str) -> None:
+    """Keep this exchange: in the conversation history now, and in long-term
+    memory in the background (Hindsight extracts the facts worth keeping)."""
+    conversation.add_turn(conv_key, command, reply)
+    if long_memory.looks_secret(command) or long_memory.looks_secret(reply):
+        return
+    text = f"User: {command}\nFreeHand: {reply}"
+    try:
+        task = asyncio.get_running_loop().create_task(
+            asyncio.to_thread(long_memory.retain, text, f"chat via {source or 'web'}")
+        )
+    except RuntimeError:
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 def _record_command(command: str) -> None:

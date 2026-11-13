@@ -141,6 +141,10 @@ services:
       # The WhatsApp bridge runs on the host (npm start in freehand/bridge).
       # Inside this container 127.0.0.1 is the container, so reach the host.
       - FREEHAND_BRIDGE_URL=${FREEHAND_BRIDGE_URL:-http://host.docker.internal:8765}
+      # Long-term memory: Hindsight running on this computer (port 8888).
+      # When it isn't running, FreeHand still works, without long-term memory.
+      - FREEHAND_HINDSIGHT_URL=${FREEHAND_HINDSIGHT_URL:-http://host.docker.internal:8888}
+      - FREEHAND_MEMORY_BANK=${FREEHAND_MEMORY_BANK:-freehand}
     extra_hosts:
       # Docker Desktop provides host.docker.internal; Linux needs this line.
       - "host.docker.internal:host-gateway"

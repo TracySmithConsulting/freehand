@@ -633,6 +633,17 @@
       color: var(--ink-strong);
     }
 
+    .facts-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.75rem 0 0;
+    }
+
+    .fact-text {
+      flex: 1;
+      min-width: 0;
+    }
+
     .connection-meta {
       font-size: 0.78rem;
       color: var(--ink-soft);
@@ -1018,6 +1029,30 @@
     <!-- Memory Panel -->
     <section id="memory" aria-labelledby="mem-heading">
       <h2 id="mem-heading">Memory</h2>
+
+      <h3 id="facts-heading">What FreeHand remembers about you</h3>
+      <p class="hint">
+        FreeHand remembers things from your conversations, so you don't have to repeat yourself.
+        There is no limit, and nothing is forgotten to make room. You can correct or forget anything here.
+      </p>
+      <p id="facts-status" class="hint" role="status" aria-live="polite"></p>
+      <form id="fact-add-form" novalidate>
+        <div class="form-group">
+          <label for="fact-add-input">Tell FreeHand something to remember</label>
+          <input type="text" id="fact-add-input" autocomplete="off"
+                 placeholder="e.g. My sister Anna's birthday is 4 March"
+                 aria-describedby="fact-add-error">
+          <p class="error" id="fact-add-error" role="alert"></p>
+        </div>
+        <button type="submit" id="fact-add-btn">Remember this</button>
+      </form>
+      <div class="form-group stack-top">
+        <label for="fact-filter">Find a memory</label>
+        <input type="search" id="fact-filter" autocomplete="off" placeholder="e.g. Anna">
+      </div>
+      <ul id="facts-list" class="facts-list" aria-labelledby="facts-heading"></ul>
+
+      <h3 id="notes-heading" class="stack-top">Search your notes</h3>
       <p class="hint">Searches archived Journal entries, topic threads, and vault notes.</p>
       <form id="memory-form" novalidate>
         <div class="form-group">
@@ -2582,6 +2617,154 @@
         });
       });
 
+      // ---- What FreeHand remembers (long-term memory, Hindsight) ----
+      var factsStatus = document.getElementById('facts-status');
+      var factsList = document.getElementById('facts-list');
+      var factFilter = document.getElementById('fact-filter');
+      var factFilterTimer = null;
+
+      function readError(res, fallback) {
+        return res.json().then(function(d) { return (d && d.detail) || fallback; }, function() { return fallback; });
+      }
+
+      function loadFacts() {
+        var q = factFilter.value.trim();
+        apiFetch('/api/memory/facts?limit=100' + (q ? '&q=' + encodeURIComponent(q) : ''))
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          factsList.innerHTML = '';
+          if (data.error) {
+            factsStatus.textContent = data.error + ' FreeHand still works, but it can\'t learn or recall anything until its memory is back.';
+            return;
+          }
+          var items = data.items || [];
+          if (!items.length) {
+            factsStatus.textContent = q
+              ? 'No memories match "' + q + '".'
+              : 'FreeHand doesn\'t remember anything yet. It learns as you talk to it, or you can tell it something above.';
+            return;
+          }
+          factsStatus.textContent = q
+            ? items.length + ' matching memories.'
+            : 'FreeHand remembers ' + data.total + (data.total === 1 ? ' thing.' : ' things.') +
+              (items.length < data.total ? ' Showing the newest ' + items.length + '.' : '');
+          items.forEach(renderFact);
+        })
+        .catch(function() {
+          factsStatus.textContent = 'Could not load what FreeHand remembers.';
+        });
+      }
+
+      function renderFact(fact) {
+        var li = document.createElement('li');
+        li.className = 'connection-card';
+        var text = document.createElement('span');
+        text.className = 'fact-text';
+        text.textContent = fact.text;
+        li.appendChild(text);
+        var actions = document.createElement('div');
+        actions.className = 'connection-actions';
+        var edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'secondary';
+        edit.textContent = 'Correct';
+        edit.setAttribute('aria-label', 'Correct: ' + fact.text);
+        edit.addEventListener('click', function() { editFact(li, fact); });
+        var forget = document.createElement('button');
+        forget.type = 'button';
+        forget.className = 'danger';
+        forget.textContent = 'Forget';
+        forget.setAttribute('aria-label', 'Forget: ' + fact.text);
+        forget.addEventListener('click', function() { forgetFact(fact); });
+        actions.appendChild(edit);
+        actions.appendChild(forget);
+        li.appendChild(actions);
+        factsList.appendChild(li);
+      }
+
+      function editFact(li, fact) {
+        li.innerHTML = '';
+        var id = 'fact-edit-' + fact.id;
+        var label = document.createElement('label');
+        label.setAttribute('for', id);
+        label.textContent = 'Correct this memory';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.id = id;
+        input.value = fact.text;
+        var save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = 'Save';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'secondary';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', loadFacts);
+        save.addEventListener('click', function() {
+          var text = input.value.trim();
+          if (!text) { showStatus('A memory can\'t be empty. Use Forget to remove it.', 'error'); return; }
+          save.disabled = true;
+          factsStatus.textContent = 'Saving your correction...';
+          apiFetch('/api/memory/facts/' + encodeURIComponent(fact.id), {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+          })
+          .then(function(res) {
+            if (!res.ok) return readError(res, 'Could not save the correction.').then(function(m) { throw new Error(m); });
+            showStatus('Corrected.', 'success');
+            loadFacts();
+          })
+          .catch(function(err) { save.disabled = false; factsStatus.textContent = err.message; });
+        });
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); save.click(); }
+          if (e.key === 'Escape') { e.preventDefault(); loadFacts(); }
+        });
+        li.appendChild(label);
+        li.appendChild(input);
+        li.appendChild(save);
+        li.appendChild(cancel);
+        input.focus();
+      }
+
+      function forgetFact(fact) {
+        if (!confirm('Forget this? "' + fact.text + '"')) return;
+        apiFetch('/api/memory/facts/' + encodeURIComponent(fact.id), { method: 'DELETE' })
+        .then(function(res) {
+          if (!res.ok) return readError(res, 'Could not forget that.').then(function(m) { throw new Error(m); });
+          showStatus('Forgotten.', 'success');
+          loadFacts();
+          factFilter.focus();
+        })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
+      document.getElementById('fact-add-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('fact-add-error');
+        var input = document.getElementById('fact-add-input');
+        var btn = document.getElementById('fact-add-btn');
+        var text = input.value.trim();
+        if (!text) { showError('fact-add-error', 'Type something for FreeHand to remember.'); return; }
+        btn.disabled = true;
+        factsStatus.textContent = 'Remembering... this takes a few seconds.';
+        apiFetch('/api/memory/facts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+        })
+        .then(function(res) {
+          if (!res.ok) return readError(res, 'Could not remember that.').then(function(m) { throw new Error(m); });
+          input.value = '';
+          showStatus('Remembered.', 'success');
+          loadFacts();
+        })
+        .catch(function(err) { showError('fact-add-error', err.message); factsStatus.textContent = ''; })
+        .then(function() { btn.disabled = false; });
+      });
+
+      factFilter.addEventListener('input', function() {
+        clearTimeout(factFilterTimer);
+        factFilterTimer = setTimeout(loadFacts, 400);
+      });
+
       document.getElementById('memory-sync-btn').addEventListener('click', function() {
         showStatus('Syncing vault files...');
         apiFetch('/api/memory/sync', { method: 'POST' })
@@ -2623,6 +2806,7 @@
       loadAgents();
       startApprovalsPolling();
       loadMemoryFiles();
+      loadFacts();
     })();
   </script>
 </body>

@@ -518,6 +518,7 @@ SETTINGS_ALLOWED_KEYS = frozenset({
     "bridge_secret", "whatsapp_allow_from", "whatsapp_allow_self", "public_base_url",
     "sweep_interval", "allowed_browser_domains", "user",
     "max_request_body_bytes", "max_screenshot_size_mb",
+    "memory",  # long-term memory: hindsight_url, bank_id, enabled
 })
 
 
@@ -624,6 +625,54 @@ async def agent_command(body: dict):
     # Records a truncated copy (N3) and runs the agent loop.
     from core.agent import run_command
     result = await run_command(command, source=source, caller_id=caller_id)
+    return result
+
+
+# ── Long-term memory (Hindsight): what FreeHand remembers ──────────────
+# The Memory page lists the facts FreeHand has learned, in plain sentences,
+# and lets people correct, forget or add them (core/long_memory.py).
+
+@app.get("/api/memory/status", dependencies=[Depends(require_api_key)])
+async def memory_status():
+    from core import long_memory
+    return await asyncio.to_thread(long_memory.status)
+
+
+@app.get("/api/memory/facts", dependencies=[Depends(require_api_key)])
+async def memory_facts(q: str = "", offset: int = 0, limit: int = 50):
+    from core import long_memory
+    return await asyncio.to_thread(
+        long_memory.list_facts, max(1, min(limit, 200)), max(0, offset), q.strip()[:200])
+
+
+@app.post("/api/memory/facts", dependencies=[Depends(require_api_key)])
+async def memory_add_fact(request: Request):
+    from core import long_memory
+    body = await request.json()
+    text = str((body or {}).get("text", "")).strip()[:2000]
+    # Wait for Hindsight, so the new memory is listed when the page reloads.
+    result = await asyncio.to_thread(long_memory.retain, text, "Added on the Memory page", True)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.put("/api/memory/facts/{memory_id}", dependencies=[Depends(require_api_key)])
+async def memory_update_fact(memory_id: str, request: Request):
+    from core import long_memory
+    body = await request.json()
+    result = await asyncio.to_thread(long_memory.update_fact, memory_id, str((body or {}).get("text", "")))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.delete("/api/memory/facts/{memory_id}", dependencies=[Depends(require_api_key)])
+async def memory_forget_fact(memory_id: str):
+    from core import long_memory
+    result = await asyncio.to_thread(long_memory.forget_fact, memory_id)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
     return result
 
 

@@ -62,6 +62,9 @@ async function main() {
       </form>
     </section>
     <section id="memory">
+      <p id="facts-status" role="status"></p>
+      <form id="fact-add-form"><input id="fact-add-input"><p class="error" id="fact-add-error" role="alert"></p><button type="submit" id="fact-add-btn">Remember this</button></form>
+      <input type="search" id="fact-filter"><ul id="facts-list"></ul>
       <form id="memory-form"><input id="memory-input"><p class="error" id="memory-error" role="alert"></p><button type="submit">Search</button><button type="button" id="memory-sync-btn">Re-sync Vault Files</button></form>
       <button type="button" id="memory-sync-btn">Re-sync Vault Files</button>
       <div id="memory-results" aria-live="polite"></div>
