@@ -170,7 +170,8 @@ def test_replaces_the_test_key_when_oc_is_empty(env_paths, monkeypatch):
 
 
 def test_leaves_real_values_alone(env_paths, monkeypatch, capsys):
-    env_paths.write_text("OC_ADMIN_TOKEN=mine\nOC_RUNTIME_TOKEN=also-mine\nOC_ENCRYPTION_KEY=k\n", encoding="utf-8")
+    env_paths.write_text("OC_ADMIN_TOKEN=mine\nOC_RUNTIME_TOKEN=also-mine\nOC_ENCRYPTION_KEY=k\n"
+                         "FREEHAND_LLM_PROXY_TOKEN=ours\n", encoding="utf-8")
     before = env_paths.read_bytes()
     monkeypatch.setattr(setup_env, "oc_has_data", lambda: True)
     setup_env.main([])
@@ -185,3 +186,15 @@ def test_never_prints_a_secret(env_paths, monkeypatch, capsys):
     for value in _values(env_paths).values():
         if len(value) > 8:
             assert value not in out
+
+
+def test_adds_the_memory_token_to_an_older_env(env_paths, monkeypatch):
+    """An .env from before Nov 2026 has no FREEHAND_LLM_PROXY_TOKEN; compose
+    needs it, so the script adds one and keeps everything else."""
+    env_paths.write_bytes(b"OC_ADMIN_TOKEN=mine\nOC_RUNTIME_TOKEN=also-mine\nOC_ENCRYPTION_KEY=k\n")
+    monkeypatch.setattr(setup_env, "oc_has_data", lambda: True)
+    setup_env.main([])
+    text = env_paths.read_text(encoding="utf-8")
+    assert "OC_ADMIN_TOKEN=mine" in text and "OC_ENCRYPTION_KEY=k" in text
+    token = [line for line in text.splitlines() if line.startswith("FREEHAND_LLM_PROXY_TOKEN=")][0].split("=", 1)[1]
+    assert len(token) >= 32

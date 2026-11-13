@@ -38,6 +38,9 @@ TEST_VALUES = {
     "OC_ADMIN_TOKEN": {"admintest123"},
     "OC_RUNTIME_TOKEN": {"runttest123"},
     "OC_ENCRYPTION_KEY": {"this-is-a-thirty-two-byte-test-key"},
+    # Lets FreeHand's memory service (Hindsight) use FreeHand's AI model
+    # through FreeHand, so people set their model up once.
+    "FREEHAND_LLM_PROXY_TOKEN": set(),
 }
 
 

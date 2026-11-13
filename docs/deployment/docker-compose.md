@@ -6,14 +6,15 @@ This document covers the local-dev / single-host deployment. Production deployme
 
 ## What you get
 
-A single `docker compose up` brings up two services:
+A single `docker compose up` brings up three services:
 
 | Service | Image | Port | Purpose |
 |---|---|---|---|
 | `open-connector` | `ghcr.io/oomol-lab/open-connector` (pinned by digest) | 3001 | Node runtime that hosts 1500+ provider OAuth configs (Round 7 tier-5 fallback) |
 | `freehand` | Local Dockerfile build | 8000 | Python FastAPI app |
+| `hindsight` | `ghcr.io/vectorize-io/hindsight` (pinned by digest) | 8888, 9999 | Long-term memory (Nov 2026): API on 8888, Hindsight's own console on 9999 |
 
-Both bind to `127.0.0.1` only — no LAN exposure. To expose on a tailnet or VPS, change the `ports:` lines in `compose.yml` from `127.0.0.1:PORT:PORT` to `PORT:PORT`.
+All three bind to `127.0.0.1` only — no LAN exposure. To expose on a tailnet or VPS, change the `ports:` lines in `compose.yml` from `127.0.0.1:PORT:PORT` to `PORT:PORT`.
 
 ## Quick start
 
@@ -49,6 +50,7 @@ After step 5 you should see:
 NAME                     STATUS                    PORTS
 freehand-app              Up (healthy)              127.0.0.1:8000->8000/tcp
 freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
+freehand-hindsight        Up (healthy)              127.0.0.1:8888->8888/tcp, 127.0.0.1:9999->9999/tcp
 ```
 
 ## Service map
@@ -82,10 +84,39 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 |---|---|---|---|
 | `./vault` | `/app/vault` | `freehand:freehand` | FreeHand's encrypted vault — encryption.key, connection tokens, broker config, credential store, AND agent.db (Round 10 PR 1 consolidated these into one directory) |
 | `freehand-oc-data` | `/app/data` (in OC) | OC's runtime user | OC's own SQLite store (`connect.sqlite`) |
+| `hindsight-data` | `/home/hindsight/.pg0` (in Hindsight) | Hindsight's user | Everything FreeHand remembers. `down -v` deletes it |
 
 **`./vault` is bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/app/data` is the named Docker volume `freehand-oc-data`, which survives `down` and rebuilds but is removed by `down -v`. (Before Nov 2026 the volume was mounted at `/data`, which OC never uses, so OC's data lived in an unnamed volume and was left behind on each rebuild.)
 
 > **Round 10 PR 1 note**: Round 9 had two separate bind-mounts (`./vault` and `./agent.db`) which forced the Windows-only `FREEHAND_USER=0:0` workaround because Docker Desktop on Windows uses gRPC-FUSE and doesn't propagate host UID mappings cleanly across two mounts. Round 10 puts agent.db inside `./vault` — one mount covers everything, no Windows workaround needed for that reason alone.
+
+## Memory (Hindsight)
+
+FreeHand's long-term memory runs in the `hindsight` service. FreeHand
+recalls the memories that matter for each message, saves each conversation
+in the background, and shows what it remembers on the Memory page.
+
+- **One model setup.** Hindsight needs an AI model to pick facts out of
+  conversations. It uses FreeHand's: it calls FreeHand at
+  `/internal/llm/v1`, and FreeHand passes the request to the model set up
+  in Settings, with the token `FREEHAND_LLM_PROXY_TOKEN` from `.env`
+  (`setup_env.py` creates it). To give memory its own model, set
+  `HINDSIGHT_LLM_BASE_URL`, `HINDSIGHT_LLM_API_KEY` and
+  `HINDSIGHT_LLM_MODEL` in `.env`.
+- **First start is slow.** Hindsight downloads its search models the first
+  time, which can take a few minutes. FreeHand works meanwhile, without
+  memory.
+- **This computer only.** Ports 8888 and 9999 have no password, so they
+  are bound to `127.0.0.1`. Other programs on this computer, such as
+  Hermes, can share the same memory at `http://127.0.0.1:8888`.
+- **Already running Hindsight by hand?** Its memories are in the
+  `hindsight-data` volume, which this service reuses. Stop and remove the
+  old container (`docker rm -f hindsight`), then `docker compose up -d`.
+  Compose warns that the volume "was not created by Docker Compose"; that
+  is expected.
+- **Which memory bank.** FreeHand uses the bank `freehand` unless
+  `memory.bank_id` in `vault/settings.json` (or `FREEHAND_MEMORY_BANK`)
+  says otherwise.
 
 ## Environment variables
 

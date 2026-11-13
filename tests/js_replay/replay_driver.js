@@ -62,6 +62,9 @@ async function main() {
       </form>
     </section>
     <section id="memory">
+      <p id="facts-status" role="status"></p>
+      <form id="fact-add-form"><input id="fact-add-input"><p class="error" id="fact-add-error" role="alert"></p><button type="submit" id="fact-add-btn">Remember this</button></form>
+      <input type="search" id="fact-filter"><ul id="facts-list"></ul>
       <form id="memory-form"><input id="memory-input"><p class="error" id="memory-error" role="alert"></p><button type="submit">Search</button><button type="button" id="memory-sync-btn">Re-sync Vault Files</button></form>
       <button type="button" id="memory-sync-btn">Re-sync Vault Files</button>
       <div id="memory-results" aria-live="polite"></div>
@@ -84,11 +87,17 @@ async function main() {
       <input id="api-key">
       <form id="settings-form"><input id="omniroute"><input id="api-key"><button type="submit">Save Settings</button></form>
       <form id="llm-form">
+        <p id="llm-current"></p>
+        <button type="button" id="llm-openrouter-btn">Sign in with OpenRouter</button>
         <select id="llm-provider"><option selected>openai</option></select>
+        <div id="llm-provider-help"></div>
+        <input id="llm-api-key"><p id="llm-key-hint"></p>
+        <button type="button" id="llm-key-show">Show key</button><p id="llm-detect-status"></p>
+        <select id="llm-model-pick"></select><p id="llm-model-hint"></p>
         <input id="llm-model" value="gpt-4o-mini">
-        <input id="llm-api-key">
-        <input id="llm-base-url">
-        <button type="button" id="llm-save-btn">Save LLM Settings</button>
+        <details><input id="llm-base-url"></details>
+        <button type="button" id="llm-test-btn">Test it</button>
+        <button type="button" id="llm-save-btn">Save LLM Settings</button><p id="llm-test-result"></p>
       </form>
       <button type="button" id="oauth-save-btn">Save OAuth Credentials</button>
       <input id="google-client-id"><input id="google-client-secret">
@@ -112,6 +121,8 @@ async function main() {
       </form>
     </section>
     <div id="status-region" role="status" aria-live="polite"></div>
+    <section id="skills"><h2 id="skills-heading">Skills</h2><p id="skills-status"></p><ul id="skills-active"></ul><ul id="skills-draft"></ul><ul id="skills-archived"></ul><div id="skill-viewer"></div></section>
+    <div id="signin-banner" role="alert" hidden><button type="button" id="signin-banner-settings">Go to Settings</button></div>
     <div id="approvals-list" aria-live="polite"></div>
   </main>
 </body></html>`;

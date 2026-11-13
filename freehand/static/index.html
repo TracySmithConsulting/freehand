@@ -633,6 +633,30 @@
       color: var(--ink-strong);
     }
 
+    .skill-body {
+      white-space: pre-wrap;
+      max-height: 30rem;
+      overflow: auto;
+    }
+
+    .signin-banner {
+      border: 2px solid var(--red-text);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .facts-list {
+      list-style: none;
+      padding: 0;
+      margin: 0.75rem 0 0;
+    }
+
+    .fact-text {
+      flex: 1;
+      min-width: 0;
+    }
+
     .connection-meta {
       font-size: 0.78rem;
       color: var(--ink-soft);
@@ -919,6 +943,7 @@
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Tasks</a></li>
           <li><a href="#memory">Memory</a></li>
+        <li><a href="#skills">Skills</a></li>
           <li><a href="#connections">Connections</a></li>
           <li><a href="#agents">Agents</a></li>
           <li><a href="#settings">Settings</a></li>
@@ -927,6 +952,16 @@
   </nav>
 
   <main>
+    <!-- Shown when this browser can't use FreeHand yet (no or wrong API key). -->
+    <div id="signin-banner" class="signin-banner" role="alert" hidden>
+      <p><strong>This browser isn't signed in to FreeHand yet.</strong>
+        FreeHand can't save anything or answer until it is.</p>
+      <p>On the computer FreeHand runs on, reload this page and it signs in by itself.
+        Elsewhere, enter FreeHand's API key under Settings, then choose
+        "Remember key in this browser".</p>
+      <button type="button" id="signin-banner-settings">Go to Settings</button>
+    </div>
+
     <!-- Command Box -->
     <section id="command" aria-labelledby="cmd-heading">
       <h2 id="cmd-heading">
@@ -1018,10 +1053,34 @@
     <!-- Memory Panel -->
     <section id="memory" aria-labelledby="mem-heading">
       <h2 id="mem-heading">Memory</h2>
-      <p class="hint">Searches archived Journal entries, topic threads, and vault notes.</p>
+
+      <h3 id="facts-heading">What FreeHand remembers about you</h3>
+      <p class="hint">
+        FreeHand remembers things from your conversations, so you don't have to repeat yourself.
+        There is no limit, and nothing is forgotten to make room. You can correct or forget anything here.
+      </p>
+      <p id="facts-status" class="hint" role="status" aria-live="polite"></p>
+      <form id="fact-add-form" novalidate>
+        <div class="form-group">
+          <label for="fact-add-input">Tell FreeHand something to remember</label>
+          <input type="text" id="fact-add-input" autocomplete="off"
+                 placeholder="e.g. My sister Anna's birthday is 4 March"
+                 aria-describedby="fact-add-error">
+          <p class="error" id="fact-add-error" role="alert"></p>
+        </div>
+        <button type="submit" id="fact-add-btn">Remember this</button>
+      </form>
+      <div class="form-group stack-top">
+        <label for="fact-filter">Find a memory</label>
+        <input type="search" id="fact-filter" autocomplete="off" placeholder="e.g. Anna">
+      </div>
+      <ul id="facts-list" class="facts-list" aria-labelledby="facts-heading"></ul>
+
+      <h3 id="notes-heading" class="stack-top">Search your scribbles and notes</h3>
+      <p class="hint">Searches your scribble pad, Journal, topic threads and notes. Type a few words in any order, like "plumber quote".</p>
       <form id="memory-form" novalidate>
         <div class="form-group">
-          <label for="memory-input">Search Memory</label>
+          <label for="memory-input">Search scribbles and notes</label>
           <input
             type="text"
             id="memory-input"
@@ -1042,6 +1101,25 @@
         <p class="empty-state">Loading vault files...</p>
       </div>
       <div id="memory-viewer" style="margin-top: 1rem;" aria-live="polite"></div>
+    </section>
+
+    <!-- Skills: saved instructions that have to earn their place -->
+    <section id="skills" aria-labelledby="skills-heading">
+      <h2 id="skills-heading" tabindex="-1">Skills</h2>
+      <p class="hint">
+        Skills are instructions FreeHand saves for tasks you do more than once.
+        New skills start as drafts. A draft becomes permanent after it has worked
+        3 times, or when you approve it. Skills that keep failing, and drafts
+        nobody uses for 30 days, are archived, so the list stays tidy.
+      </p>
+      <p id="skills-status" class="hint" role="status" aria-live="polite"></p>
+      <h3 id="skills-active-heading">Active</h3>
+      <ul id="skills-active" class="facts-list" aria-labelledby="skills-active-heading"></ul>
+      <h3 id="skills-draft-heading">Drafts</h3>
+      <ul id="skills-draft" class="facts-list" aria-labelledby="skills-draft-heading"></ul>
+      <h3 id="skills-archived-heading">Archived</h3>
+      <ul id="skills-archived" class="facts-list" aria-labelledby="skills-archived-heading"></ul>
+      <div id="skill-viewer" class="stack-top" aria-live="polite"></div>
     </section>
 
     <!-- Connections Panel -->
@@ -1199,33 +1277,55 @@
       </fieldset>
 
       <!-- LLM Settings -->
-      <fieldset>
-        <legend>LLM Configuration</legend>
-        <p class="hint" style="margin-bottom:1rem;">Configure the AI model FreeHand uses. Supports OpenAI, Google Gemini, and any OpenAI-compatible API.</p>
-        <div class="credential-row">
-          <div class="form-group">
-            <label for="llm-provider">Provider</label>
-            <select id="llm-provider">
-              <option value="openai">OpenAI</option>
-              <option value="google">Google Gemini</option>
-              <option value="openai_compatible">OpenAI Compatible (custom)</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="llm-model">Model</label>
-            <input type="text" id="llm-model" placeholder="gpt-4o-mini">
-          </div>
+      <fieldset id="llm-setup">
+        <legend>AI model</legend>
+        <p class="hint">
+          FreeHand needs an AI model to think with. Models come from online services that
+          charge a little per message (some have a free allowance), or can run free on this computer.
+        </p>
+        <p id="llm-current" role="status" aria-live="polite"></p>
+
+        <h3 id="llm-easy-heading">Easiest: sign in with OpenRouter</h3>
+        <p class="hint">
+          One account gives FreeHand models from many companies, including Claude, GPT, Gemini and MiniMax.
+          You sign in and approve FreeHand; there's no key to copy. You add credit on OpenRouter's site.
+        </p>
+        <button type="button" id="llm-openrouter-btn">Sign in with OpenRouter</button>
+
+        <h3 id="llm-key-heading" class="stack-top">Or use a key from a service</h3>
+        <div class="form-group">
+          <label for="llm-provider">Service</label>
+          <select id="llm-provider" aria-describedby="llm-provider-help"></select>
+        </div>
+        <div id="llm-provider-help" class="hint"></div>
+        <div class="form-group">
+          <label for="llm-api-key">Key</label>
+          <input type="password" id="llm-api-key" autocomplete="off" aria-describedby="llm-key-hint llm-detect-status">
+          <p id="llm-key-hint" class="hint">Paste the key here. FreeHand recognises most keys; otherwise choose the service above first.</p>
+          <button type="button" id="llm-key-show" class="secondary" aria-pressed="false">Show key</button>
+          <p id="llm-detect-status" role="status" aria-live="polite"></p>
         </div>
         <div class="form-group">
-          <label for="llm-api-key">API Key</label>
-          <input type="password" id="llm-api-key" placeholder="sk-... or AIza...">
+          <label for="llm-model-pick">Model</label>
+          <select id="llm-model-pick" aria-describedby="llm-model-hint"></select>
+          <p id="llm-model-hint" class="hint">The list fills in once FreeHand can reach the service with your key.</p>
         </div>
         <div class="form-group">
-          <label for="llm-base-url">Base URL (optional)</label>
-          <input type="url" id="llm-base-url" placeholder="https://api.openai.com/v1">
-          <p class="hint">Leave empty for default. Use for custom endpoints or proxies.</p>
+          <label for="llm-model">Model name</label>
+          <input type="text" id="llm-model" autocomplete="off">
+          <p class="hint">Filled in when you choose from the list. You can also type a model name yourself.</p>
         </div>
-        <button type="button" id="llm-save-btn">Save LLM Settings</button>
+        <details>
+          <summary>Advanced</summary>
+          <div class="form-group">
+            <label for="llm-base-url">Service address (API base URL)</label>
+            <input type="url" id="llm-base-url" placeholder="https://api.example.com/v1">
+            <p class="hint">Leave empty to use the service's usual address. Needed for "Other" services and custom setups.</p>
+          </div>
+        </details>
+        <button type="button" id="llm-test-btn" class="secondary">Test it</button>
+        <button type="button" id="llm-save-btn">Save</button>
+        <p id="llm-test-result" role="status" aria-live="polite"></p>
       </fieldset>
 
       <!-- Remote Gateways -->
@@ -1369,8 +1469,31 @@
       var last401WarnAt = 0;
       var lastRefusedSaveAt = 0;
       var REFUSED_SAVE_MSG =
-        'Not saved: FreeHand needs its API key first. Enter it under ' +
-        'API Keys & OmniRoute and press Remember, then save again.';
+        'Not saved: this browser isn\'t signed in to FreeHand yet. ' +
+        'See the message at the top of the page.';
+
+      function showSignedOut(signedOut) {
+        var banner = document.getElementById('signin-banner');
+        if (banner) banner.hidden = !signedOut;
+      }
+
+      // The console on this computer signs itself in: the server hands the
+      // key only to its own page opened at 127.0.0.1/localhost (see
+      // /api/console-key). Elsewhere, or when that's switched off, people
+      // enter the key under Settings as before.
+      function ensureConsoleKey() {
+        return fetch('/api/console-key', { cache: 'no-store' })
+          .then(function(res) { return res.ok ? res.json() : null; })
+          .then(function(data) {
+            if (data && data.key) {
+              if (data.key !== storedApiKey()) storeApiKey(data.key);
+              showSignedOut(false);
+            } else if (!storedApiKey()) {
+              showSignedOut(true);
+            }
+          })
+          .catch(function() { if (!storedApiKey()) showSignedOut(true); });
+      }
 
       function apiFetch(url, options) {
         options = options || {};
@@ -1380,6 +1503,7 @@
         options.headers = headers;
         var method = (options.method || 'GET').toUpperCase();
         return fetch(url, options).then(function(res) {
+          if (res.status === 401) showSignedOut(true);
           if (res.status === 401 && method !== 'GET') {
             // A refused save must never look like success: the save
             // handlers used to say "saved" whatever the server answered.
@@ -1769,17 +1893,204 @@
         });
       });
 
-      // ---- LLM Settings ----
-      apiFetch('/api/settings')
+      // ---- AI model setup ----
+      // Pick a service (or paste a key and FreeHand recognises it), choose a
+      // model from the list, test, save. Or sign in with OpenRouter.
+      var llmProviders = [];
+      var llmEl = function(id) { return document.getElementById(id); };
+
+      function llmProvider(id) {
+        for (var i = 0; i < llmProviders.length; i++) if (llmProviders[i].id === id) return llmProviders[i];
+        return null;
+      }
+
+      function renderProviderHelp() {
+        var p = llmProvider(llmEl('llm-provider').value);
+        var box = llmEl('llm-provider-help');
+        box.innerHTML = '';
+        if (!p) return;
+        var blurb = document.createElement('p');
+        blurb.textContent = p.blurb || '';
+        box.appendChild(blurb);
+        if (p.steps && p.steps.length) {
+          var ol = document.createElement('ol');
+          p.steps.forEach(function(step) { var li = document.createElement('li'); li.textContent = step; ol.appendChild(li); });
+          box.appendChild(ol);
+        }
+        if (p.key_url) {
+          var a = document.createElement('a');
+          a.href = p.key_url;
+          a.target = '_blank';
+          a.rel = 'noopener noreferrer';
+          a.textContent = (p.no_key ? 'Get ' : 'Get a key from ') + p.name + ' (opens in a new tab)';
+          box.appendChild(a);
+        }
+        var key = llmEl('llm-api-key');
+        key.disabled = !!p.no_key;
+        llmEl('llm-key-hint').textContent = p.no_key
+          ? 'No key is needed for this service.'
+          : 'Paste the key here. FreeHand recognises most keys; otherwise choose the service above first.';
+        var advanced = llmEl('llm-base-url').closest && llmEl('llm-base-url').closest('details');
+        if (p.needs_base_url && advanced) advanced.open = true;
+      }
+
+      function fillModelList(models, current) {
+        var pick = llmEl('llm-model-pick');
+        pick.innerHTML = '';
+        var list = (models || []).slice();
+        if (current && list.indexOf(current) < 0) list.unshift(current);
+        list.forEach(function(m) {
+          var o = document.createElement('option');
+          o.value = m; o.textContent = m;
+          pick.appendChild(o);
+        });
+        var other = document.createElement('option');
+        other.value = '__other';
+        other.textContent = 'Another model (type its name below)';
+        pick.appendChild(other);
+        pick.value = current && list.indexOf(current) >= 0 ? current : (list[0] || '__other');
+        if (pick.value !== '__other') llmEl('llm-model').value = pick.value;
+      }
+
+      function loadModels() {
+        var p = llmEl('llm-provider').value;
+        var hint = llmEl('llm-model-hint');
+        hint.textContent = 'Getting the list of models...';
+        return apiFetch('/api/llm/models', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ provider: p, api_key: llmEl('llm-api-key').value.trim(), base_url: llmEl('llm-base-url').value.trim() })
+        })
+        .then(function(res) { return res.ok ? res.json() : { models: [], error: 'Could not get the list of models.' }; })
+        .then(function(data) {
+          var current = llmEl('llm-model').value.trim();
+          var prov = llmProvider(p);
+          if (!current && prov) current = prov.default_model || '';
+          fillModelList(data.models, current);
+          hint.textContent = data.error
+            ? data.error + ' You can still type a model name below.'
+            : (data.models.length + ' models available. Choose one.');
+        })
+        .catch(function() { hint.textContent = 'Could not get the list of models.'; });
+      }
+
+      function describeCurrent(provId, model, hasKey) {
+        var p = llmProvider(provId);
+        llmEl('llm-current').textContent = (hasKey || (p && p.no_key))
+          ? 'FreeHand is set up to use ' + (p ? p.name : provId) + (model ? ', model ' + model : '') + '.'
+          : 'No AI model is set up yet. Choose one below.';
+      }
+
+      function loadLlm() {
+        return Promise.all([
+          apiFetch('/api/llm/providers').then(function(r) { return r.ok ? r.json() : { providers: [], current: '' }; }),
+          apiFetch('/api/settings').then(function(r) { return r.ok ? r.json() : {}; })
+        ]).then(function(results) {
+          llmProviders = results[0].providers || [];
+          var llm = results[1].llm || {};
+          var select = llmEl('llm-provider');
+          select.innerHTML = '';
+          llmProviders.forEach(function(p) {
+            var o = document.createElement('option');
+            o.value = p.id; o.textContent = p.name;
+            select.appendChild(o);
+          });
+          select.value = results[0].current || llm.provider || 'openrouter';
+          llmEl('llm-api-key').value = llm.api_key || '';
+          llmEl('llm-model').value = llm.model || '';
+          llmEl('llm-base-url').value = llm.base_url || '';
+          renderProviderHelp();
+          describeCurrent(select.value, llm.model, !!llm.api_key);
+          fillModelList([], llm.model || '');
+          if (llm.api_key || (llmProvider(select.value) || {}).no_key) loadModels();
+        }).catch(function() {});
+      }
+
+      llmEl('llm-provider').addEventListener('change', function() {
+        renderProviderHelp();
+        llmEl('llm-model').value = '';
+        llmEl('llm-test-result').textContent = '';
+        if (llmEl('llm-api-key').value.trim() || (llmProvider(this.value) || {}).no_key) loadModels();
+        else fillModelList([], (llmProvider(this.value) || {}).default_model || '');
+      });
+
+      function detectKey() {
+        var key = llmEl('llm-api-key').value.trim();
+        var status = llmEl('llm-detect-status');
+        if (!key) { status.textContent = ''; return; }
+        status.textContent = 'Checking the key...';
+        // The key goes to one service only: the one its start names, or
+        // else the one chosen in the list (never tried at several).
+        apiFetch('/api/llm/detect', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ api_key: key, provider: llmEl('llm-provider').value })
+        })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-          var llm = data.llm || {};
-          document.getElementById('llm-provider').value = llm.provider || 'openai';
-          document.getElementById('llm-model').value = llm.model || 'gpt-4o-mini';
-          document.getElementById('llm-api-key').value = llm.api_key || '';
-          document.getElementById('llm-base-url').value = llm.base_url || '';
+          if (data.provider) {
+            llmEl('llm-provider').value = data.provider;
+            renderProviderHelp();
+          }
+          if (data.provider && !data.error) {
+            status.textContent = (data.by_prefix ? 'This is a ' + data.name + ' key.' : data.name + ' accepted the key.') +
+              ' Choose a model, then Test it.';
+            llmEl('llm-model').value = '';
+            var prov = llmProvider(data.provider);
+            fillModelList(data.models, prov && data.models.indexOf(prov.default_model) >= 0 ? prov.default_model : '');
+            llmEl('llm-model-hint').textContent = data.models.length + ' models available. Choose one.';
+          } else {
+            status.textContent = data.error || 'Could not check the key.';
+          }
         })
-        .catch(function() {});
+        .catch(function() { status.textContent = 'Could not check the key.'; });
+      }
+      llmEl('llm-api-key').addEventListener('change', detectKey);
+      llmEl('llm-api-key').addEventListener('paste', function() { setTimeout(detectKey, 0); });
+
+      llmEl('llm-key-show').addEventListener('click', function() {
+        var key = llmEl('llm-api-key');
+        var show = key.type === 'password';
+        key.type = show ? 'text' : 'password';
+        this.textContent = show ? 'Hide key' : 'Show key';
+        this.setAttribute('aria-pressed', show ? 'true' : 'false');
+      });
+
+      llmEl('llm-model-pick').addEventListener('change', function() {
+        if (this.value === '__other') { llmEl('llm-model').value = ''; llmEl('llm-model').focus(); }
+        else llmEl('llm-model').value = this.value;
+      });
+
+      llmEl('llm-test-btn').addEventListener('click', function() {
+        var out = llmEl('llm-test-result');
+        out.textContent = 'Testing... this takes a few seconds.';
+        apiFetch('/api/llm/test', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: llmEl('llm-provider').value, model: llmEl('llm-model').value.trim(),
+            api_key: llmEl('llm-api-key').value.trim(), base_url: llmEl('llm-base-url').value.trim()
+          })
+        })
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          out.textContent = data.ok ? 'Working: the model answered. Press Save to use it.' : 'Not working yet: ' + data.message;
+        })
+        .catch(function() { out.textContent = 'Could not run the test.'; });
+      });
+
+      llmEl('llm-openrouter-btn').addEventListener('click', function() {
+        apiFetch('/api/llm/openrouter/start', { method: 'POST' })
+        .then(function(res) { if (!res.ok) throw new Error(); return res.json(); })
+        .then(function(data) {
+          var win = window.open(data.url, '_blank', 'width=600,height=750');
+          if (!win) { showStatus('Your browser blocked the sign-in window. Allow pop-ups for FreeHand, then try again.', 'error'); return; }
+          showStatus('Sign in to OpenRouter in the new window. When you finish, come back here.', 'success');
+          var timer = setInterval(function() {
+            if (!win.closed) return;
+            clearInterval(timer);
+            loadLlm().then(checkRunnerStatus);
+          }, 1000);
+        })
+        .catch(function() { showStatus('Could not start the OpenRouter sign-in.', 'error'); });
+      });
 
       // R17-P5: mirror the task runner's own health check (R17-P3 surfaces
       // side in the Tasks tab; saving an LLM key re-checks immediately).
@@ -1822,6 +2133,7 @@
               ? 'LLM settings saved. Task runner activating — scheduled tasks fire shortly.'
               : 'LLM settings saved.',
             'success');
+          describeCurrent(llmConfig.provider, llmConfig.model, !!llmConfig.api_key);
           checkRunnerStatus();
         })
         .catch(function() {
@@ -2504,16 +2816,19 @@
       function renderMemoryResults(results) {
         var el = document.getElementById('memory-results');
         if (!results.length) {
-          el.innerHTML = '<p class="empty-state">No matches. Files are indexed from your vault — try Re-sync first.</p>';
+          el.innerHTML = '<p class="empty-state">Nothing found in your scribbles or notes. Try fewer or different words.</p>';
           return;
         }
-        el.innerHTML = '<h3>' + results.length + ' match(es)</h3>';
+        el.innerHTML = '<h3>' + results.length + (results.length === 1 ? ' match' : ' matches') + '</h3>';
         results.forEach(function(r) {
           var div = document.createElement('div');
           div.className = 'connection-card';
+          // The snippet is the part of the note that matched, so people
+          // often get their answer without opening the file.
           div.innerHTML =
             '<div class="task-info">' +
               '<span class="task-title">' + escapeHtml(r.title) + '</span>' +
+              (r.snippet ? '<div>' + escapeHtml(r.snippet) + '</div>' : '') +
               '<div class="task-meta">' + escapeHtml(r.path) + ' — updated ' + escapeHtml(r.updated_at) + '</div>' +
             '</div>';
           var btn = document.createElement('button');
@@ -2582,6 +2897,302 @@
         });
       });
 
+      // ---- What FreeHand remembers (long-term memory, Hindsight) ----
+      var factsStatus = document.getElementById('facts-status');
+      var factsList = document.getElementById('facts-list');
+      var factFilter = document.getElementById('fact-filter');
+      var factFilterTimer = null;
+
+      function readError(res, fallback) {
+        return res.json().then(function(d) { return (d && d.detail) || fallback; }, function() { return fallback; });
+      }
+
+      function loadFacts() {
+        var q = factFilter.value.trim();
+        apiFetch('/api/memory/facts?limit=100' + (q ? '&q=' + encodeURIComponent(q) : ''))
+        .then(function(res) {
+          if (res.status === 401) return { error: 'This browser isn\'t signed in to FreeHand, so it can\'t show what FreeHand remembers.' };
+          if (!res.ok) return { error: 'Could not load what FreeHand remembers.' };
+          return res.json();
+        })
+        .then(function(data) {
+          factsList.innerHTML = '';
+          if (data.error) {
+            factsStatus.textContent = data.error + ' FreeHand still works, but it can\'t learn or recall anything until its memory is back.';
+            return;
+          }
+          var items = data.items || [];
+          if (!items.length) {
+            factsStatus.textContent = q
+              ? 'No memories match "' + q + '".'
+              : 'FreeHand doesn\'t remember anything yet. It learns as you talk to it, or you can tell it something above.';
+            return;
+          }
+          factsStatus.textContent = q
+            ? items.length + ' matching memories.'
+            : 'FreeHand remembers ' + data.total + (data.total === 1 ? ' thing.' : ' things.') +
+              (items.length < data.total ? ' Showing the newest ' + items.length + '.' : '');
+          items.forEach(renderFact);
+        })
+        .catch(function() {
+          factsStatus.textContent = 'Could not load what FreeHand remembers.';
+        });
+      }
+
+      function renderFact(fact) {
+        var li = document.createElement('li');
+        li.className = 'connection-card';
+        var text = document.createElement('span');
+        text.className = 'fact-text';
+        text.textContent = fact.text;
+        li.appendChild(text);
+        var actions = document.createElement('div');
+        actions.className = 'connection-actions';
+        var edit = document.createElement('button');
+        edit.type = 'button';
+        edit.className = 'secondary';
+        edit.textContent = 'Correct';
+        edit.setAttribute('aria-label', 'Correct: ' + fact.text);
+        edit.addEventListener('click', function() { editFact(li, fact); });
+        var forget = document.createElement('button');
+        forget.type = 'button';
+        forget.className = 'danger';
+        forget.textContent = 'Forget';
+        forget.setAttribute('aria-label', 'Forget: ' + fact.text);
+        forget.addEventListener('click', function() { forgetFact(fact); });
+        actions.appendChild(edit);
+        actions.appendChild(forget);
+        li.appendChild(actions);
+        factsList.appendChild(li);
+      }
+
+      function editFact(li, fact) {
+        li.innerHTML = '';
+        var id = 'fact-edit-' + fact.id;
+        var label = document.createElement('label');
+        label.setAttribute('for', id);
+        label.textContent = 'Correct this memory';
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.id = id;
+        input.value = fact.text;
+        var save = document.createElement('button');
+        save.type = 'button';
+        save.textContent = 'Save';
+        var cancel = document.createElement('button');
+        cancel.type = 'button';
+        cancel.className = 'secondary';
+        cancel.textContent = 'Cancel';
+        cancel.addEventListener('click', loadFacts);
+        save.addEventListener('click', function() {
+          var text = input.value.trim();
+          if (!text) { showStatus('A memory can\'t be empty. Use Forget to remove it.', 'error'); return; }
+          save.disabled = true;
+          factsStatus.textContent = 'Saving your correction...';
+          apiFetch('/api/memory/facts/' + encodeURIComponent(fact.id), {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+          })
+          .then(function(res) {
+            if (!res.ok) return readError(res, 'Could not save the correction.').then(function(m) { throw new Error(m); });
+            // Other copies of the old fact would bring it back: retire them.
+            return deleteFactIds((fact.ids || []).slice(1));
+          })
+          .then(function() {
+            showStatus('Corrected.', 'success');
+            loadFacts();
+          })
+          .catch(function(err) { save.disabled = false; factsStatus.textContent = err.message; });
+        });
+        input.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter') { e.preventDefault(); save.click(); }
+          if (e.key === 'Escape') { e.preventDefault(); loadFacts(); }
+        });
+        li.appendChild(label);
+        li.appendChild(input);
+        li.appendChild(save);
+        li.appendChild(cancel);
+        input.focus();
+      }
+
+      // A fact can be saved more than once; fact.ids lists every copy.
+      function deleteFactIds(ids) {
+        return ids.reduce(function(chain, id) {
+          return chain.then(function() {
+            return apiFetch('/api/memory/facts/' + encodeURIComponent(id), { method: 'DELETE' })
+              .then(function(res) {
+                if (!res.ok) return readError(res, 'Could not forget that.').then(function(m) { throw new Error(m); });
+              });
+          });
+        }, Promise.resolve());
+      }
+
+      function forgetFact(fact) {
+        if (!confirm('Forget this? "' + fact.text + '"')) return;
+        deleteFactIds(fact.ids && fact.ids.length ? fact.ids : [fact.id])
+        .then(function() {
+          showStatus('Forgotten.', 'success');
+          loadFacts();
+          factFilter.focus();
+        })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
+      document.getElementById('fact-add-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError('fact-add-error');
+        var input = document.getElementById('fact-add-input');
+        var btn = document.getElementById('fact-add-btn');
+        var text = input.value.trim();
+        if (!text) { showError('fact-add-error', 'Type something for FreeHand to remember.'); return; }
+        btn.disabled = true;
+        factsStatus.textContent = 'Remembering... this takes a few seconds.';
+        apiFetch('/api/memory/facts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+        })
+        .then(function(res) {
+          if (!res.ok) return readError(res, 'Could not remember that.').then(function(m) { throw new Error(m); });
+          input.value = '';
+          showStatus('Remembered.', 'success');
+          loadFacts();
+        })
+        .catch(function(err) { showError('fact-add-error', err.message); factsStatus.textContent = ''; })
+        .then(function() { btn.disabled = false; });
+      });
+
+      factFilter.addEventListener('input', function() {
+        clearTimeout(factFilterTimer);
+        factFilterTimer = setTimeout(loadFacts, 400);
+      });
+
+      // ---- Skills ----
+      var SKILL_EMPTY = {
+        active: 'No active skills yet. Drafts become active once they have worked 3 times, or when you approve them.',
+        draft: 'No drafts. FreeHand saves a draft when you ask it to, or after a task you are likely to repeat.',
+        archived: 'Nothing archived.'
+      };
+
+      function skillButton(label, aria, cls, onClick) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        if (cls) b.className = cls;
+        b.textContent = label;
+        b.setAttribute('aria-label', aria);
+        b.addEventListener('click', onClick);
+        return b;
+      }
+
+      function skillSummary(s) {
+        var parts = [];
+        if (s.uses) parts.push('used ' + s.uses + (s.uses === 1 ? ' time' : ' times'));
+        if (s.successes || s.failures) parts.push('worked ' + s.successes + ', failed ' + s.failures);
+        if (s.source === 'imported') parts.push('imported');
+        if (s.source === 'learned') parts.push('written by FreeHand');
+        if (s.status_reason) parts.push(s.status_reason);
+        return parts.join(' · ');
+      }
+
+      function loadSkills() {
+        var status = document.getElementById('skills-status');
+        apiFetch('/api/skills')
+        .then(function(res) {
+          if (res.status === 401) throw new Error('This browser isn\'t signed in to FreeHand, so it can\'t show skills.');
+          if (!res.ok) throw new Error('Could not load skills.');
+          return res.json();
+        })
+        .then(function(list) {
+          var groups = { active: [], draft: [], archived: [] };
+          (list || []).forEach(function(s) { (groups[s.status] || groups.draft).push(s); });
+          status.textContent = groups.active.length + ' active, ' + groups.draft.length + ' drafts, ' +
+            groups.archived.length + ' archived.';
+          Object.keys(groups).forEach(function(state) {
+            var ul = document.getElementById('skills-' + state);
+            ul.innerHTML = '';
+            if (!groups[state].length) {
+              var empty = document.createElement('li');
+              empty.className = 'empty-state';
+              empty.textContent = SKILL_EMPTY[state];
+              ul.appendChild(empty);
+              return;
+            }
+            groups[state].forEach(function(s) { ul.appendChild(renderSkill(s)); });
+          });
+        })
+        .catch(function(err) { status.textContent = err.message; });
+      }
+
+      function renderSkill(s) {
+        var li = document.createElement('li');
+        li.className = 'connection-card';
+        var info = document.createElement('div');
+        info.className = 'connection-info';
+        var name = document.createElement('span');
+        name.className = 'connection-label';
+        name.textContent = s.name;
+        var desc = document.createElement('div');
+        desc.textContent = s.description || '(no description)';
+        var meta = document.createElement('div');
+        meta.className = 'connection-meta';
+        meta.textContent = skillSummary(s);
+        info.appendChild(name);
+        info.appendChild(desc);
+        if (meta.textContent) info.appendChild(meta);
+        li.appendChild(info);
+        var actions = document.createElement('div');
+        actions.className = 'connection-actions';
+        actions.appendChild(skillButton('Read', 'Read skill ' + s.name, 'secondary', function() { readSkill(s); }));
+        if (s.status === 'draft') {
+          actions.appendChild(skillButton('Approve', 'Approve skill ' + s.name, '', function() { setSkillStatus(s, 'active', 'Approved: ' + s.name); }));
+        }
+        if (s.status !== 'archived') {
+          actions.appendChild(skillButton('Archive', 'Archive skill ' + s.name, 'secondary', function() { setSkillStatus(s, 'archived', 'Archived: ' + s.name); }));
+        } else {
+          actions.appendChild(skillButton('Restore', 'Restore skill ' + s.name + ' as a draft', 'secondary', function() { setSkillStatus(s, 'draft', 'Restored as a draft: ' + s.name); }));
+          actions.appendChild(skillButton('Delete', 'Delete skill ' + s.name + ' permanently', 'danger', function() { deleteSkill(s); }));
+        }
+        li.appendChild(actions);
+        return li;
+      }
+
+      function readSkill(s) {
+        var viewer = document.getElementById('skill-viewer');
+        apiFetch('/api/skills/' + encodeURIComponent(s.id))
+        .then(function(res) { if (!res.ok) throw new Error('Could not open that skill.'); return res.json(); })
+        .then(function(full) {
+          viewer.innerHTML = '';
+          var h = document.createElement('h3');
+          h.id = 'skill-viewer-heading';
+          h.tabIndex = -1;
+          h.textContent = 'Skill: ' + full.name;
+          var pre = document.createElement('pre');
+          pre.className = 'skill-body';
+          pre.textContent = full.body;
+          var close = skillButton('Close', 'Close skill ' + full.name, 'secondary', function() {
+            viewer.innerHTML = '';
+            document.getElementById('skills-heading').focus();
+          });
+          viewer.appendChild(h);
+          viewer.appendChild(pre);
+          viewer.appendChild(close);
+          h.focus();
+        })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
+      function setSkillStatus(s, status, done) {
+        apiFetch('/api/skills/' + encodeURIComponent(s.id) + '/status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: status })
+        })
+        .then(function(res) { if (!res.ok) throw new Error('Could not change that skill.'); showStatus(done, 'success'); loadSkills(); })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
+      function deleteSkill(s) {
+        if (!confirm('Delete the skill "' + s.name + '" permanently? This removes its file and can\'t be undone.')) return;
+        apiFetch('/api/skills/' + encodeURIComponent(s.id), { method: 'DELETE' })
+        .then(function(res) { if (!res.ok) throw new Error('Could not delete that skill.'); showStatus('Deleted: ' + s.name, 'success'); loadSkills(); })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
       document.getElementById('memory-sync-btn').addEventListener('click', function() {
         showStatus('Syncing vault files...');
         apiFetch('/api/memory/sync', { method: 'POST' })
@@ -2615,14 +3226,28 @@
         });
       });
 
+      document.getElementById('signin-banner-settings').addEventListener('click', function() {
+        var field = document.getElementById('api-key');
+        var section = document.getElementById('settings');
+        if (section && section.scrollIntoView) section.scrollIntoView();
+        if (field) field.focus();
+      });
+
       // ---- Init ----
-      loadTasks();
-      loadTier();
-      loadConnections();
-      loadGatewayStatus();
-      loadAgents();
-      startApprovalsPolling();
-      loadMemoryFiles();
+      // Sign in first (on this computer it's automatic), then load.
+      ensureConsoleKey().then(function() {
+        refreshKeyButtons();
+        loadTasks();
+        loadTier();
+        loadConnections();
+        loadGatewayStatus();
+        loadAgents();
+        startApprovalsPolling();
+        loadMemoryFiles();
+        loadFacts();
+        loadSkills();
+        loadLlm();
+      });
     })();
   </script>
 </body>

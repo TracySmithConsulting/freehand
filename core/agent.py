@@ -1,5 +1,6 @@
 import json
 import asyncio
+import re
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
@@ -26,6 +27,20 @@ from core.tools.integrations import (
     post_to_instagram, get_connections_summary,
 )
 from core.memory import search_memory
+from core import conversation, long_memory, skills
+
+# Background memory saves; kept referenced so they aren't garbage-collected.
+_background_tasks: set = set()
+
+_THINK_RE = re.compile(r"<think>.*?(</think>|$)", re.DOTALL | re.IGNORECASE)
+
+
+def strip_reasoning(text: str) -> str:
+    """Remove a model's private reasoning from its reply.
+
+    Some models (MiniMax, DeepSeek, Qwen) put their thinking in the answer
+    as <think>...</think>; people on WhatsApp or the console saw it."""
+    return _THINK_RE.sub("", text).strip()
 
 
 async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict = None) -> dict:
@@ -39,38 +54,26 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
     if config is None:
         config = get_llm_config()
 
-    provider = config.get("provider", "openai")
+    from core.agent_config import resolve_llm_endpoint
     model = config.get("model", "gpt-4o-mini")
-    api_key = config.get("api_key", "")
-    base_url = config.get("base_url", "")
     temperature = config.get("temperature", 0.7)
     max_tokens = config.get("max_tokens", 4096)
 
-    if provider == "openai" and not base_url:
-        base_url = "https://api.openai.com/v1"
-    elif provider == "google":
-        if not base_url:
-            base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-        if api_key:
-            base_url = base_url.replace("{API_KEY}", api_key)
-            api_key = ""
-
-    url = f"{base_url.rstrip('/')}/chat/completions"
+    base_url, headers = resolve_llm_endpoint(config)
+    url = f"{base_url}/chat/completions"
     payload = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    from core import llm_providers
+    if llm_providers.omit_temperature(config.get("provider", ""), config.get("base_url", "")):
+        # Newer Claude models reject temperatures below 1 here.
+        payload.pop("temperature")
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-
-    headers = {
-        "Content-Type": "application/json",
-    }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
 
     timeout = aiohttp.ClientTimeout(total=120)
 
@@ -223,8 +226,26 @@ async def execute_tool(name: str, args: dict) -> dict:
             result = get_connections_summary()
             return {"content": json.dumps(result, default=str)}
         elif name == "search_memory":
-            results = search_memory(args.get("query", ""), limit=args.get("limit", 5))
+            results = await asyncio.to_thread(
+                search_memory, args.get("query", ""), args.get("limit", 5), True)
             return {"content": json.dumps(results, default=str)}
+        elif name == "remember":
+            result = await asyncio.to_thread(long_memory.retain, args.get("fact", ""), "Told to remember", True)
+            return {"content": json.dumps(result, default=str)}
+        elif name == "forget_memory":
+            result = await asyncio.to_thread(long_memory.forget_matching, args.get("description", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "use_skill":
+            result = await asyncio.to_thread(skills.use, args.get("name", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "skill_outcome":
+            result = await asyncio.to_thread(
+                skills.record_outcome, args.get("name", ""), bool(args.get("worked")), args.get("note", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "save_skill":
+            result = await asyncio.to_thread(
+                skills.save, args.get("name", ""), args.get("description", ""), args.get("instructions", ""))
+            return {"content": json.dumps(result, default=str)}
 
         # ── Browser v2 tools ───────────────────────────────────────────
         elif name == "navigate":
@@ -322,8 +343,23 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     system_prompt = build_system_prompt()
     tools = list_available_tools()
 
+    # Memory (Nov 2026). Long-term: the few facts that matter for this
+    # message, from Hindsight. Short-term: the last few exchanges in this
+    # conversation, so follow-ups like "and tomorrow?" make sense. Either
+    # one being unavailable just means less context, never a failed chat.
+    conv_key = conversation.conversation_key(source, caller_id)
+    remembered = await asyncio.to_thread(long_memory.recall, command)
+    if remembered:
+        system_prompt += (
+            "\n## What you remember about the user\n"
+            "Use these when they help; don't recite them unprompted.\n"
+            + "\n".join(f"- {line}" for line in remembered[:15])
+            + "\n"
+        )
+
     messages = [
         {"role": "system", "content": system_prompt},
+        *conversation.history(conv_key),
         {"role": "user", "content": command},
     ]
 
@@ -360,8 +396,16 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         tool_call = parse_tool_call(llm_resp)
         if not tool_call:
             # No tool call — this is the final response
-            final_response["text"] = llm_resp.get("content", "")
+            final_response["text"] = strip_reasoning(llm_resp.get("content", "") or "")
             break
+
+        # The model may ask for several tools at once, but FreeHand runs one
+        # per turn. Keep only that one in the history: a request without a
+        # matching result is rejected by stricter providers (MiniMax: "tool
+        # call and result not match"). The model can ask again next turn.
+        calls = llm_resp.get("tool_calls") or []
+        if len(calls) > 1:
+            llm_resp = {**llm_resp, "tool_calls": [c for c in calls if c.get("id") == tool_call["id"]][:1] or calls[:1]}
 
         # Execute the tool
         tool_name = tool_call["name"]
@@ -496,7 +540,43 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
             "result": tool_result.get("content", "")[:200],
         })
 
+    if not final_response["text"] and not final_response["error"] and final_response["tools_used"]:
+        # Every turn went on tool calls (for example several searches), so
+        # there was no reply - people got an empty message. Ask once more,
+        # without tools, for an answer from what was found.
+        messages.append({
+            "role": "user",
+            "content": "Stop using tools now and answer my question from what you found so far.",
+        })
+        last = await call_llm(messages)
+        if "error" in last:
+            final_response["error"] = last["error"]
+        else:
+            final_response["text"] = strip_reasoning(last.get("content", "") or "")
+
+    if final_response["text"] and not final_response["error"]:
+        _remember_turn(conv_key, command, final_response["text"], source)
     return final_response
+
+
+def _remember_turn(conv_key: str, command: str, reply: str, source: str) -> None:
+    """Keep this exchange: in the conversation history now, and in long-term
+    memory in the background (Hindsight extracts the facts worth keeping)."""
+    conversation.add_turn(conv_key, command, reply)
+    if long_memory.looks_secret(command) or long_memory.looks_secret(reply):
+        return
+    if source == "selftest":
+        # Live checks of FreeHand itself must not end up in someone's memory.
+        return
+    text = f"User: {command}\nFreeHand: {reply}"
+    try:
+        task = asyncio.get_running_loop().create_task(
+            asyncio.to_thread(long_memory.retain, text, f"chat via {source or 'web'}")
+        )
+    except RuntimeError:
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
 
 
 def _record_command(command: str) -> None:

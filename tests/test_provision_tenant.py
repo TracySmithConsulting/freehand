@@ -639,3 +639,20 @@ class TestComposeResolves:
         assert ("127.0.0.1", "3001") not in published
         assert ("127.0.0.1", "8100") in published
         assert ("127.0.0.1", "8200") in published
+
+
+def test_each_tenant_gets_its_own_locked_down_memory():
+    """Nov 2026: every customer has their own Hindsight and memory volume,
+    with no host ports, using their own FreeHand model through FreeHand."""
+    import yaml
+    from pathlib import Path
+    from scripts import provision_tenant as pt
+    doc = yaml.safe_load(pt.build_compose("acme", 8100, 3100, Path("/repo")))
+    hs = doc["services"]["hindsight"]
+    assert "ports" not in hs
+    assert "hindsight-data:/home/hindsight/.pg0" in hs["volumes"]
+    assert doc["volumes"]["hindsight-data"]["name"].startswith("freehand-hindsight-data-")
+    env = doc["services"]["freehand"]["environment"]
+    assert "FREEHAND_HINDSIGHT_URL=http://hindsight:8888" in env
+    assert "FREEHAND_CONSOLE_AUTO_KEY=0" in env
+    assert any(line.startswith("FREEHAND_LLM_PROXY_TOKEN=") for line in pt.build_env("acme", 3100, "https://c").splitlines())

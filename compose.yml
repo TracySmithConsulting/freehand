@@ -85,6 +85,42 @@ services:
       # boot. start_period gives it room without spamming retries.
       start_period: 30s
 
+  # ── Hindsight: FreeHand's long-term memory ───────────────────────
+  # Stores what FreeHand learns, with no size limit, and recalls what
+  # matters for each message (core/long_memory.py). Its database lives in
+  # the hindsight-data volume. The first start downloads its search models,
+  # which can take a few minutes; FreeHand works meanwhile, without memory.
+  hindsight:
+    # Pinned by digest, like open-connector. To upgrade: docker pull
+    # ghcr.io/vectorize-io/hindsight:latest, test it, copy the new digest.
+    image: ghcr.io/vectorize-io/hindsight@sha256:50311d02b4d5d2b7c5242bd336edf8735df8374eaad496a92f49c83b37d2aa06
+    container_name: freehand-hindsight
+    restart: unless-stopped
+    # This computer only: the API (8888) and Hindsight's own console (9999)
+    # have no password. Other apps on this computer (Hermes) can share it.
+    ports:
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:9999:9999"
+    environment:
+      # Hindsight's AI model is FreeHand's: FreeHand passes these requests
+      # on to the model set up in Settings (server.py /internal/llm/v1), so
+      # people set a model up once. To give memory its own model instead,
+      # set HINDSIGHT_LLM_BASE_URL, HINDSIGHT_LLM_API_KEY and
+      # HINDSIGHT_LLM_MODEL in .env.
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_BASE_URL=${HINDSIGHT_LLM_BASE_URL:-http://freehand:8000/internal/llm/v1}
+      - HINDSIGHT_API_LLM_API_KEY=${HINDSIGHT_LLM_API_KEY:-${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set - run python scripts/setup_env.py}}
+      - HINDSIGHT_API_LLM_MODEL=${HINDSIGHT_LLM_MODEL:-freehand}
+      - HINDSIGHT_API_WORKER_ID=freehand
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
   # ── FreeHand ──────────────────────────────────────────────────────
   freehand:
     build:
@@ -141,6 +177,12 @@ services:
       # The WhatsApp bridge runs on the host (npm start in freehand/bridge).
       # Inside this container 127.0.0.1 is the container, so reach the host.
       - FREEHAND_BRIDGE_URL=${FREEHAND_BRIDGE_URL:-http://host.docker.internal:8765}
+      # Long-term memory: the hindsight service above. When it isn't
+      # running, FreeHand still works, without long-term memory.
+      - FREEHAND_HINDSIGHT_URL=${FREEHAND_HINDSIGHT_URL:-http://hindsight:8888}
+      - FREEHAND_MEMORY_BANK=${FREEHAND_MEMORY_BANK:-freehand}
+      # Shared with hindsight: lets it use FreeHand's AI model.
+      - FREEHAND_LLM_PROXY_TOKEN=${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set - run python scripts/setup_env.py}
     extra_hosts:
       # Docker Desktop provides host.docker.internal; Linux needs this line.
       - "host.docker.internal:host-gateway"
@@ -217,3 +259,8 @@ volumes:
     name: freehand-caddy-data
   caddy-config:
     name: freehand-caddy-config
+  hindsight-data:
+    # Hindsight's database: everything FreeHand remembers. Named
+    # "hindsight-data" so an existing Hindsight install's memories carry
+    # over. `docker compose down -v` deletes it - and the memories.
+    name: hindsight-data

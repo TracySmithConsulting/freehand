@@ -41,17 +41,19 @@ class TestListAvailableTools:
         orphans = sch - reg
         assert not orphans, f"Schemas without registry entries: {orphans}"
 
-    def test_all_30_tools_visible_to_llm(self):
+    def test_all_35_tools_visible_to_llm(self):
         """The LLM should see exactly the tools in TOOL_REGISTRY.
 
         Round 14 dropped the 4 static GitHub tools (35 -> 31); GitHub
         now routes through the oc_github_default_* OC actions. Nov 2026
         dropped list_zoom_recordings (31 -> 30): Zoom runs through
-        OpenConnector, which has no recordings action."""
+        OpenConnector, which has no recordings action. Then remember and
+        forget_memory were added (30 -> 32), then
+        use_skill, skill_outcome and save_skill (32 -> 35)."""
         tools = agent_config.list_available_tools()
         names = {t["function"]["name"] for t in tools}
         assert names == set(agent_config.TOOL_REGISTRY.keys())
-        assert len(tools) == 30
+        assert len(tools) == 35
 
     def test_write_tools_visible(self):
         """The previously-dead write tools (post_to_facebook etc.) are now visible."""
@@ -104,7 +106,9 @@ class TestSyncVaultSkipsScratchpad:
         )
         return vault
 
-    def test_scribble_not_synced_to_memory(self, tmp_path, monkeypatch):
+    def test_scribble_pad_is_synced_but_sweep_state_is_not(self, tmp_path, monkeypatch):
+        """Nov 2026: the scribble pad is indexed (so "what did I jot down
+        about ...?" finds unswept entries); the sweep state still isn't."""
         from core.database import init_db
         vault = self._make_vault(tmp_path)
         db_path = tmp_path / "agent.db"
@@ -116,15 +120,15 @@ class TestSyncVaultSkipsScratchpad:
         init_db()
 
         count = sync_vault_to_sqlite()
-        # Only notes.md should be synced (1 file), not the scribble or sweep state
-        assert count == 1
+        # notes.md and the scribble pad; never .sweep_state.json
+        assert count == 2
 
-        # Verify the scribble is NOT in the memories table
         conn = sqlite3.connect(str(db_path))
         rows = conn.execute(
-            "SELECT path FROM memories WHERE path LIKE '%Scribble%'"
+            "SELECT title FROM memories WHERE path LIKE '%Scribble%'"
         ).fetchall()
-        assert len(rows) == 0, "00_Scribble.md should not be indexed"
+        assert rows == [("Scribble pad",)], "00_Scribble.md should be indexed as the scribble pad"
+        assert not conn.execute("SELECT 1 FROM memories WHERE path LIKE '%sweep_state%'").fetchall()
 
         # And notes.md IS indexed
         rows = conn.execute(

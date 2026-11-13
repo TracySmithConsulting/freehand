@@ -52,6 +52,27 @@ def get_llm_config() -> dict:
     }
 
 
+def resolve_llm_endpoint(config: Optional[dict] = None) -> tuple:
+    """(base_url, headers) for the configured model's OpenAI-compatible API.
+
+    Shared by the agent loop and the memory service's pass-through
+    (/internal/llm/v1), so both reach the model the same way."""
+    if config is None:
+        config = get_llm_config()
+    from core import llm_providers
+    provider = config.get("provider", "openai")
+    api_key = config.get("api_key", "")
+    # The preset's address when none is saved (core/llm_providers.py).
+    base_url = llm_providers.base_url_for(provider, config.get("base_url", ""))
+    if provider == "google" and api_key and "{API_KEY}" in base_url:
+        base_url = base_url.replace("{API_KEY}", api_key)
+        api_key = ""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return base_url.rstrip("/"), headers
+
+
 def set_llm_config(updates: dict) -> dict:
     settings = _load_settings()
     if "llm" not in settings:
@@ -140,6 +161,14 @@ TOOL_REGISTRY: Dict[str, str] = {
     "list_connections":       "read",
     # Memory
     "search_memory":          "read",
+    # Long-term memory (Hindsight). Local to this FreeHand and reversible
+    # (forgetting is a soft retire), so no approval step.
+    "remember":               "read",
+    "forget_memory":          "read",
+    # Skills (core/skills.py). Local files; new ones are always drafts.
+    "use_skill":              "read",
+    "skill_outcome":          "read",
+    "save_skill":             "read",
 }
 
 
@@ -457,7 +486,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     # ── Memory ─────────────────────────────────────────────────────
     "search_memory": {
-        "description": "Search the agent's memory (vault notes and scribbles)",
+        "description": (
+            "Search the user's scribbles and notes: the scribble pad, Journal, topic threads and "
+            "imported notes. Use it when they ask what they jotted, wrote or noted down. "
+            "Matches words in any order and returns a snippet of each match."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -465,6 +498,65 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "limit": {"type": "integer", "default": 5},
             },
             "required": ["query"],
+        },
+    },
+    "remember": {
+        "description": (
+            "Save a fact to long-term memory when the user asks you to remember something, "
+            "or tells you something lasting about themselves (a preference, a name, a date). "
+            "Conversations are also remembered automatically; use this when it matters."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "fact": {"type": "string", "description": "One clear sentence, e.g. 'The user's sister Anna lives in Durban.'"},
+            },
+            "required": ["fact"],
+        },
+    },
+    "forget_memory": {
+        "description": "Forget a remembered fact when the user asks you to forget or says it is wrong. Tell the user what was forgotten.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "description": {"type": "string", "description": "What to forget, e.g. 'where my sister lives'"},
+            },
+            "required": ["description"],
+        },
+    },
+    "use_skill": {
+        "description": "Open a skill from the Skills list to follow its instructions, when a task matches its description.",
+        "parameters": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The skill's name as listed"}},
+            "required": ["name"],
+        },
+    },
+    "skill_outcome": {
+        "description": "After following a skill, report whether it worked. Be honest: this decides whether the skill is kept.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "worked": {"type": "boolean", "description": "True if the task got done by following the skill"},
+                "note": {"type": "string", "description": "Short note on what went wrong or what to improve"},
+            },
+            "required": ["name", "worked"],
+        },
+    },
+    "save_skill": {
+        "description": (
+            "Write a new skill: reusable step-by-step instructions for a task. Only when the user asks, "
+            "or right after you completed a multi-step task they are likely to repeat. It starts as a draft."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short name, e.g. 'weekly-invoice-summary'"},
+                "description": {"type": "string", "description": "One line: when to use this skill"},
+                "instructions": {"type": "string", "description": "The steps, in plain Markdown. No passwords or keys."},
+            },
+            "required": ["name", "description", "instructions"],
         },
     },
 }
@@ -491,7 +583,21 @@ def build_system_prompt() -> str:
     except Exception:
         pass
 
+    try:
+        # Accounts connected in OpenConnector (Gmail, Outlook, Zoom, ...).
+        from core.oauth import open_connector
+        for a in open_connector.list_accounts():
+            connected.append(f"- {a['service']} ({a['label']})")
+    except Exception:
+        pass
+
     connected_str = "\n".join(connected) if connected else "  (none)"
+
+    try:
+        from core import skills
+        skills_str = skills.prompt_index() or "  (no skills yet)"
+    except Exception:
+        skills_str = "  (skills unavailable)"
 
     # Gather imported memories
     imported_lines = []
@@ -528,7 +634,22 @@ You have access to the following tool categories:
 - list_zoom_meetings(label, page_size) — List Zoom meetings
 
 ### Memory
-- search_memory(query, limit) — Search your notes and scribbles
+- Long-term memory is automatic: you remember past conversations, and the
+  facts relevant to each message are listed under "What you remember about
+  the user" when there are any. Never say your memory is full.
+- remember(fact) — Save something the user wants you to remember
+- forget_memory(description) — Forget something the user asks you to forget
+- search_memory(query, limit) — Search the user's scribbles and notes
+  (scribble pad, Journal, topic threads). Use it for "what did I jot down
+  about ...?"
+
+### Skills
+Skills are saved instructions for tasks. When a task matches one below,
+open it with use_skill and follow it, then report with skill_outcome.
+Drafts are untested: check their steps as you go. Write a new skill with
+save_skill only when asked, or after finishing a multi-step task the user
+will likely repeat.
+{skills_str}
 
 ### Connections
 - list_connections() — See which services are connected

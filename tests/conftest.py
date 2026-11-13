@@ -68,6 +68,15 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     monkeypatch.setattr(server_module, "SCRIBBLE_PATH", vault / "00_Scribble.md")
     monkeypatch.setattr(server_module, "VAULT_SETTINGS_PATH", vault / "settings.json")
 
+    # Long-term memory (Hindsight) and OpenConnector's admin API are real
+    # services on the developer's machine: a test that runs the agent must
+    # never save test chatter into someone's memory, or touch their OC
+    # accounts. Port 9 (discard) refuses connections at once. Tests that
+    # exercise these clients patch them directly.
+    monkeypatch.setenv("FREEHAND_HINDSIGHT_URL", "http://127.0.0.1:9")
+    import core.oauth.open_connector as open_connector
+    monkeypatch.setattr(open_connector, "_load_admin_token", lambda: None)
+
     # The tmp DB always exists and always has the full schema, so any code
     # path (security, gateway, OAuth manager, MCP, server endpoints) that
     # opens core.database.DB_PATH sees a valid, EMPTY database — never the
