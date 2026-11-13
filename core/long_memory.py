@@ -182,15 +182,15 @@ def list_facts(limit: int = 50, offset: int = 0, query: str = "") -> dict:
     """Editable facts, newest first, for the Memory page."""
     if not _ensure_bank():
         return {"error": "FreeHand's memory (Hindsight) isn't reachable right now.", "items": []}
-    items, total = [], 0
+    items = []
     for fact_type in EDITABLE_TYPES:
-        params = {"type": fact_type, "state": "valid", "limit": limit + offset}
+        # Fetch generously: duplicates are merged below.
+        params = {"type": fact_type, "state": "valid", "limit": min(1000, (limit + offset) * 2)}
         if query:
             params["q"] = query
         code, data = _call("GET", _bank_path("/memories/list?" + urllib.parse.urlencode(params)))
         if code != 200 or not isinstance(data, dict):
             return {"error": "FreeHand couldn't read its memory right now.", "items": []}
-        total += int(data.get("total") or 0)
         for m in data.get("items") or []:
             items.append({
                 "id": m.get("id"),
@@ -199,7 +199,19 @@ def list_facts(limit: int = 50, offset: int = 0, query: str = "") -> dict:
                 "type": fact_type,
             })
     items.sort(key=lambda m: m["when"] or "", reverse=True)
-    return {"items": items[offset:offset + limit], "total": total}
+    # The same fact is often saved more than once (said on the Memory page,
+    # then again in a chat). Show it once; "ids" holds every copy so
+    # Forget and Correct handle them all.
+    merged: dict = {}
+    for m in items:
+        key = m["text"].lower()
+        if key in merged:
+            if m["id"] not in merged[key]["ids"]:
+                merged[key]["ids"].append(m["id"])
+        else:
+            merged[key] = {**m, "ids": [m["id"]]}
+    unique = list(merged.values())
+    return {"items": unique[offset:offset + limit], "total": len(unique)}
 
 
 def update_fact(memory_id: str, text: str) -> dict:
@@ -240,9 +252,15 @@ def forget_matching(description: str) -> dict:
     if not results:
         return {"error": "FreeHand couldn't find a memory like that."}
     best = results[0]
-    out = forget_fact(best.get("id", ""))
-    if out.get("forgotten"):
-        out["text"] = clean_text(best.get("text", ""))
+    text = clean_text(best.get("text", ""))
+    # Retire every saved copy of the same fact, not just the closest one.
+    ids = [r.get("id", "") for r in results if clean_text(r.get("text", "")).lower() == text.lower()]
+    out = {}
+    for mid in ids or [best.get("id", "")]:
+        out = forget_fact(mid)
+        if out.get("error"):
+            return out
+    out["text"] = text
     return out
 
 

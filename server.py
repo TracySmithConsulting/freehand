@@ -223,6 +223,56 @@ async def require_api_key(request: Request) -> None:
     if not provided or not _secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
+_LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
+def _console_auto_key_allowed(request: Request) -> bool:
+    """Should this request get the API key without typing it?
+
+    Yes only for FreeHand's own console opened on this computer:
+    - FREEHAND_CONSOLE_AUTO_KEY isn't "0" (hosted tenants set it to 0);
+    - the address the browser used is this computer (Host 127.0.0.1,
+      localhost or [::1]). A web page on another site can't pretend
+      otherwise: a DNS-rebinding page keeps its own host name;
+    - the browser says the request comes from the same page origin
+      (Sec-Fetch-Site / Origin), so another site can't ask for it.
+      Browsers also stop other sites reading the answer (no CORS).
+    FreeHand's port is bound to 127.0.0.1 in compose, so other machines
+    can't reach it at all. Expose it further and set
+    FREEHAND_CONSOLE_AUTO_KEY=0.
+    """
+    import os as _os
+    if _os.environ.get("FREEHAND_CONSOLE_AUTO_KEY", "1").strip().lower() in ("0", "false", "no", "off"):
+        return False
+    host = request.headers.get("host", "").strip().lower()
+    if host.startswith("["):
+        hostname = host[1:].split("]", 1)[0]
+    else:
+        hostname = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+    if hostname not in _LOCAL_HOSTS:
+        return False
+    site = request.headers.get("sec-fetch-site", "").strip().lower()
+    if site and site != "same-origin":
+        return False
+    origin = request.headers.get("origin", "").strip().lower()
+    if origin and origin not in (f"http://{host}", f"https://{host}"):
+        return False
+    return True
+
+
+@app.get("/api/console-key")
+async def console_key(request: Request):
+    """The console on this computer gets the key automatically, so nobody
+    has to find and paste it (granny test). See _console_auto_key_allowed."""
+    from fastapi.responses import JSONResponse
+    if not _console_auto_key_allowed(request):
+        return JSONResponse(
+            {"detail": "Enter FreeHand's API key under Settings to use this console."},
+            status_code=403, headers={"Cache-Control": "no-store"},
+        )
+    return JSONResponse({"key": get_or_create_api_key()}, headers={"Cache-Control": "no-store"})
+
+
 try:
     static_path = importlib_resources.files("freehand").joinpath("static").as_posix()
     app.mount("/static", StaticFiles(directory=static_path), name="static")

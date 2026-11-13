@@ -633,6 +633,13 @@
       color: var(--ink-strong);
     }
 
+    .signin-banner {
+      border: 2px solid var(--red-text);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+    }
+
     .facts-list {
       list-style: none;
       padding: 0;
@@ -938,6 +945,16 @@
   </nav>
 
   <main>
+    <!-- Shown when this browser can't use FreeHand yet (no or wrong API key). -->
+    <div id="signin-banner" class="signin-banner" role="alert" hidden>
+      <p><strong>This browser isn't signed in to FreeHand yet.</strong>
+        FreeHand can't save anything or answer until it is.</p>
+      <p>On the computer FreeHand runs on, reload this page and it signs in by itself.
+        Elsewhere, enter FreeHand's API key under Settings, then choose
+        "Remember key in this browser".</p>
+      <button type="button" id="signin-banner-settings">Go to Settings</button>
+    </div>
+
     <!-- Command Box -->
     <section id="command" aria-labelledby="cmd-heading">
       <h2 id="cmd-heading">
@@ -1404,8 +1421,31 @@
       var last401WarnAt = 0;
       var lastRefusedSaveAt = 0;
       var REFUSED_SAVE_MSG =
-        'Not saved: FreeHand needs its API key first. Enter it under ' +
-        'API Keys & OmniRoute and press Remember, then save again.';
+        'Not saved: this browser isn\'t signed in to FreeHand yet. ' +
+        'See the message at the top of the page.';
+
+      function showSignedOut(signedOut) {
+        var banner = document.getElementById('signin-banner');
+        if (banner) banner.hidden = !signedOut;
+      }
+
+      // The console on this computer signs itself in: the server hands the
+      // key only to its own page opened at 127.0.0.1/localhost (see
+      // /api/console-key). Elsewhere, or when that's switched off, people
+      // enter the key under Settings as before.
+      function ensureConsoleKey() {
+        return fetch('/api/console-key', { cache: 'no-store' })
+          .then(function(res) { return res.ok ? res.json() : null; })
+          .then(function(data) {
+            if (data && data.key) {
+              if (data.key !== storedApiKey()) storeApiKey(data.key);
+              showSignedOut(false);
+            } else if (!storedApiKey()) {
+              showSignedOut(true);
+            }
+          })
+          .catch(function() { if (!storedApiKey()) showSignedOut(true); });
+      }
 
       function apiFetch(url, options) {
         options = options || {};
@@ -1415,6 +1455,7 @@
         options.headers = headers;
         var method = (options.method || 'GET').toUpperCase();
         return fetch(url, options).then(function(res) {
+          if (res.status === 401) showSignedOut(true);
           if (res.status === 401 && method !== 'GET') {
             // A refused save must never look like success: the save
             // handlers used to say "saved" whatever the server answered.
@@ -2630,7 +2671,11 @@
       function loadFacts() {
         var q = factFilter.value.trim();
         apiFetch('/api/memory/facts?limit=100' + (q ? '&q=' + encodeURIComponent(q) : ''))
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (res.status === 401) return { error: 'This browser isn\'t signed in to FreeHand, so it can\'t show what FreeHand remembers.' };
+          if (!res.ok) return { error: 'Could not load what FreeHand remembers.' };
+          return res.json();
+        })
         .then(function(data) {
           factsList.innerHTML = '';
           if (data.error) {
@@ -2710,6 +2755,10 @@
           })
           .then(function(res) {
             if (!res.ok) return readError(res, 'Could not save the correction.').then(function(m) { throw new Error(m); });
+            // Other copies of the old fact would bring it back: retire them.
+            return deleteFactIds((fact.ids || []).slice(1));
+          })
+          .then(function() {
             showStatus('Corrected.', 'success');
             loadFacts();
           })
@@ -2726,11 +2775,22 @@
         input.focus();
       }
 
+      // A fact can be saved more than once; fact.ids lists every copy.
+      function deleteFactIds(ids) {
+        return ids.reduce(function(chain, id) {
+          return chain.then(function() {
+            return apiFetch('/api/memory/facts/' + encodeURIComponent(id), { method: 'DELETE' })
+              .then(function(res) {
+                if (!res.ok) return readError(res, 'Could not forget that.').then(function(m) { throw new Error(m); });
+              });
+          });
+        }, Promise.resolve());
+      }
+
       function forgetFact(fact) {
         if (!confirm('Forget this? "' + fact.text + '"')) return;
-        apiFetch('/api/memory/facts/' + encodeURIComponent(fact.id), { method: 'DELETE' })
-        .then(function(res) {
-          if (!res.ok) return readError(res, 'Could not forget that.').then(function(m) { throw new Error(m); });
+        deleteFactIds(fact.ids && fact.ids.length ? fact.ids : [fact.id])
+        .then(function() {
           showStatus('Forgotten.', 'success');
           loadFacts();
           factFilter.focus();
@@ -2798,15 +2858,26 @@
         });
       });
 
+      document.getElementById('signin-banner-settings').addEventListener('click', function() {
+        var field = document.getElementById('api-key');
+        var section = document.getElementById('settings');
+        if (section && section.scrollIntoView) section.scrollIntoView();
+        if (field) field.focus();
+      });
+
       // ---- Init ----
-      loadTasks();
-      loadTier();
-      loadConnections();
-      loadGatewayStatus();
-      loadAgents();
-      startApprovalsPolling();
-      loadMemoryFiles();
-      loadFacts();
+      // Sign in first (on this computer it's automatic), then load.
+      ensureConsoleKey().then(function() {
+        refreshKeyButtons();
+        loadTasks();
+        loadTier();
+        loadConnections();
+        loadGatewayStatus();
+        loadAgents();
+        startApprovalsPolling();
+        loadMemoryFiles();
+        loadFacts();
+      });
     })();
   </script>
 </body>

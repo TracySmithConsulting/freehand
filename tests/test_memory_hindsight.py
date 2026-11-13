@@ -160,3 +160,27 @@ def test_model_reasoning_is_not_shown():
     assert strip_reasoning("<think>The memory says pelican.</think>  pelican") == "pelican"
     assert strip_reasoning("<think>unfinished thought") == ""
     assert strip_reasoning("Plain answer") == "Plain answer"
+
+
+def test_the_same_fact_saved_twice_is_listed_once(hs):
+    _, replies = hs
+    replies["list"] = (200, {"items": [
+        {"id": "a", "text": "The user has 3 guide dogs.", "mentioned_at": "2026-11-13T11:00"},
+        {"id": "b", "text": "The user has 3 guide dogs. | Involving: user", "mentioned_at": "2026-11-13T11:05"},
+    ]})
+    out = long_memory.list_facts()
+    dogs = [i for i in out["items"] if "guide dogs" in i["text"]]
+    assert len(dogs) == 1 and sorted(dogs[0]["ids"]) == ["a", "b"]
+
+
+def test_forget_in_chat_retires_every_copy(hs):
+    calls, replies = hs
+    replies["recall"] = (200, {"results": [
+        {"id": "a", "text": "The user has 3 guide dogs."},
+        {"id": "b", "text": "The user has 3 guide dogs. | Involving: user"},
+        {"id": "c", "text": "The user lives in Pretoria."},
+    ]})
+    out = long_memory.forget_matching("my guide dogs")
+    assert out["forgotten"] and out["text"] == "The user has 3 guide dogs."
+    retired = [c[1].rsplit("/", 1)[-1] for c in calls if c[0] == "PATCH"]
+    assert retired == ["a", "b"]

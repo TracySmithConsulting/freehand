@@ -59,8 +59,11 @@ class TestKeyPlumbing:
         """Any bare fetch('/api/...') would 401 again for a user who has
         stored a key — every /api/* call must go through apiFetch."""
         html = _html()
-        bare = re.findall(r"(?<![A-Za-z])fetch\(\s*'/api/", html)
+        # /api/console-key is the one exception: it is how the console on
+        # this computer gets the key in the first place (Nov 2026).
+        bare = re.findall(r"(?<![A-Za-z])fetch\(\s*'/api/(?!console-key')", html)
         assert not bare, f"bare /api fetches bypass the key: {bare}"
+        assert "fetch('/api/console-key'" in html
 
     def test_headerless_event_source_channel_is_gone(self):
         """EventSource cannot send an X-API-Key header; approvals must be
