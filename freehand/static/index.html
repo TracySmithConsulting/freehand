@@ -633,6 +633,12 @@
       color: var(--ink-strong);
     }
 
+    .skill-body {
+      white-space: pre-wrap;
+      max-height: 30rem;
+      overflow: auto;
+    }
+
     .signin-banner {
       border: 2px solid var(--red-text);
       border-radius: 8px;
@@ -937,6 +943,7 @@
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Tasks</a></li>
           <li><a href="#memory">Memory</a></li>
+        <li><a href="#skills">Skills</a></li>
           <li><a href="#connections">Connections</a></li>
           <li><a href="#agents">Agents</a></li>
           <li><a href="#settings">Settings</a></li>
@@ -1094,6 +1101,25 @@
         <p class="empty-state">Loading vault files...</p>
       </div>
       <div id="memory-viewer" style="margin-top: 1rem;" aria-live="polite"></div>
+    </section>
+
+    <!-- Skills: saved instructions that have to earn their place -->
+    <section id="skills" aria-labelledby="skills-heading">
+      <h2 id="skills-heading" tabindex="-1">Skills</h2>
+      <p class="hint">
+        Skills are instructions FreeHand saves for tasks you do more than once.
+        New skills start as drafts. A draft becomes permanent after it has worked
+        3 times, or when you approve it. Skills that keep failing, and drafts
+        nobody uses for 30 days, are archived, so the list stays tidy.
+      </p>
+      <p id="skills-status" class="hint" role="status" aria-live="polite"></p>
+      <h3 id="skills-active-heading">Active</h3>
+      <ul id="skills-active" class="facts-list" aria-labelledby="skills-active-heading"></ul>
+      <h3 id="skills-draft-heading">Drafts</h3>
+      <ul id="skills-draft" class="facts-list" aria-labelledby="skills-draft-heading"></ul>
+      <h3 id="skills-archived-heading">Archived</h3>
+      <ul id="skills-archived" class="facts-list" aria-labelledby="skills-archived-heading"></ul>
+      <div id="skill-viewer" class="stack-top" aria-live="polite"></div>
     </section>
 
     <!-- Connections Panel -->
@@ -2825,6 +2851,135 @@
         factFilterTimer = setTimeout(loadFacts, 400);
       });
 
+      // ---- Skills ----
+      var SKILL_EMPTY = {
+        active: 'No active skills yet. Drafts become active once they have worked 3 times, or when you approve them.',
+        draft: 'No drafts. FreeHand saves a draft when you ask it to, or after a task you are likely to repeat.',
+        archived: 'Nothing archived.'
+      };
+
+      function skillButton(label, aria, cls, onClick) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        if (cls) b.className = cls;
+        b.textContent = label;
+        b.setAttribute('aria-label', aria);
+        b.addEventListener('click', onClick);
+        return b;
+      }
+
+      function skillSummary(s) {
+        var parts = [];
+        if (s.uses) parts.push('used ' + s.uses + (s.uses === 1 ? ' time' : ' times'));
+        if (s.successes || s.failures) parts.push('worked ' + s.successes + ', failed ' + s.failures);
+        if (s.source === 'imported') parts.push('imported');
+        if (s.source === 'learned') parts.push('written by FreeHand');
+        if (s.status_reason) parts.push(s.status_reason);
+        return parts.join(' · ');
+      }
+
+      function loadSkills() {
+        var status = document.getElementById('skills-status');
+        apiFetch('/api/skills')
+        .then(function(res) {
+          if (res.status === 401) throw new Error('This browser isn\'t signed in to FreeHand, so it can\'t show skills.');
+          if (!res.ok) throw new Error('Could not load skills.');
+          return res.json();
+        })
+        .then(function(list) {
+          var groups = { active: [], draft: [], archived: [] };
+          (list || []).forEach(function(s) { (groups[s.status] || groups.draft).push(s); });
+          status.textContent = groups.active.length + ' active, ' + groups.draft.length + ' drafts, ' +
+            groups.archived.length + ' archived.';
+          Object.keys(groups).forEach(function(state) {
+            var ul = document.getElementById('skills-' + state);
+            ul.innerHTML = '';
+            if (!groups[state].length) {
+              var empty = document.createElement('li');
+              empty.className = 'empty-state';
+              empty.textContent = SKILL_EMPTY[state];
+              ul.appendChild(empty);
+              return;
+            }
+            groups[state].forEach(function(s) { ul.appendChild(renderSkill(s)); });
+          });
+        })
+        .catch(function(err) { status.textContent = err.message; });
+      }
+
+      function renderSkill(s) {
+        var li = document.createElement('li');
+        li.className = 'connection-card';
+        var info = document.createElement('div');
+        info.className = 'connection-info';
+        var name = document.createElement('span');
+        name.className = 'connection-label';
+        name.textContent = s.name;
+        var desc = document.createElement('div');
+        desc.textContent = s.description || '(no description)';
+        var meta = document.createElement('div');
+        meta.className = 'connection-meta';
+        meta.textContent = skillSummary(s);
+        info.appendChild(name);
+        info.appendChild(desc);
+        if (meta.textContent) info.appendChild(meta);
+        li.appendChild(info);
+        var actions = document.createElement('div');
+        actions.className = 'connection-actions';
+        actions.appendChild(skillButton('Read', 'Read skill ' + s.name, 'secondary', function() { readSkill(s); }));
+        if (s.status === 'draft') {
+          actions.appendChild(skillButton('Approve', 'Approve skill ' + s.name, '', function() { setSkillStatus(s, 'active', 'Approved: ' + s.name); }));
+        }
+        if (s.status !== 'archived') {
+          actions.appendChild(skillButton('Archive', 'Archive skill ' + s.name, 'secondary', function() { setSkillStatus(s, 'archived', 'Archived: ' + s.name); }));
+        } else {
+          actions.appendChild(skillButton('Restore', 'Restore skill ' + s.name + ' as a draft', 'secondary', function() { setSkillStatus(s, 'draft', 'Restored as a draft: ' + s.name); }));
+          actions.appendChild(skillButton('Delete', 'Delete skill ' + s.name + ' permanently', 'danger', function() { deleteSkill(s); }));
+        }
+        li.appendChild(actions);
+        return li;
+      }
+
+      function readSkill(s) {
+        var viewer = document.getElementById('skill-viewer');
+        apiFetch('/api/skills/' + encodeURIComponent(s.id))
+        .then(function(res) { if (!res.ok) throw new Error('Could not open that skill.'); return res.json(); })
+        .then(function(full) {
+          viewer.innerHTML = '';
+          var h = document.createElement('h3');
+          h.id = 'skill-viewer-heading';
+          h.tabIndex = -1;
+          h.textContent = 'Skill: ' + full.name;
+          var pre = document.createElement('pre');
+          pre.className = 'skill-body';
+          pre.textContent = full.body;
+          var close = skillButton('Close', 'Close skill ' + full.name, 'secondary', function() {
+            viewer.innerHTML = '';
+            document.getElementById('skills-heading').focus();
+          });
+          viewer.appendChild(h);
+          viewer.appendChild(pre);
+          viewer.appendChild(close);
+          h.focus();
+        })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
+      function setSkillStatus(s, status, done) {
+        apiFetch('/api/skills/' + encodeURIComponent(s.id) + '/status', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: status })
+        })
+        .then(function(res) { if (!res.ok) throw new Error('Could not change that skill.'); showStatus(done, 'success'); loadSkills(); })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
+      function deleteSkill(s) {
+        if (!confirm('Delete the skill "' + s.name + '" permanently? This removes its file and can\'t be undone.')) return;
+        apiFetch('/api/skills/' + encodeURIComponent(s.id), { method: 'DELETE' })
+        .then(function(res) { if (!res.ok) throw new Error('Could not delete that skill.'); showStatus('Deleted: ' + s.name, 'success'); loadSkills(); })
+        .catch(function(err) { showStatus(err.message, 'error'); });
+      }
+
       document.getElementById('memory-sync-btn').addEventListener('click', function() {
         showStatus('Syncing vault files...');
         apiFetch('/api/memory/sync', { method: 'POST' })
@@ -2877,6 +3032,7 @@
         startApprovalsPolling();
         loadMemoryFiles();
         loadFacts();
+        loadSkills();
       });
     })();
   </script>

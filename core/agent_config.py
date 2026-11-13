@@ -144,6 +144,10 @@ TOOL_REGISTRY: Dict[str, str] = {
     # (forgetting is a soft retire), so no approval step.
     "remember":               "read",
     "forget_memory":          "read",
+    # Skills (core/skills.py). Local files; new ones are always drafts.
+    "use_skill":              "read",
+    "skill_outcome":          "read",
+    "save_skill":             "read",
 }
 
 
@@ -495,6 +499,41 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "required": ["description"],
         },
     },
+    "use_skill": {
+        "description": "Open a skill from the Skills list to follow its instructions, when a task matches its description.",
+        "parameters": {
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The skill's name as listed"}},
+            "required": ["name"],
+        },
+    },
+    "skill_outcome": {
+        "description": "After following a skill, report whether it worked. Be honest: this decides whether the skill is kept.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "worked": {"type": "boolean", "description": "True if the task got done by following the skill"},
+                "note": {"type": "string", "description": "Short note on what went wrong or what to improve"},
+            },
+            "required": ["name", "worked"],
+        },
+    },
+    "save_skill": {
+        "description": (
+            "Write a new skill: reusable step-by-step instructions for a task. Only when the user asks, "
+            "or right after you completed a multi-step task they are likely to repeat. It starts as a draft."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "Short name, e.g. 'weekly-invoice-summary'"},
+                "description": {"type": "string", "description": "One line: when to use this skill"},
+                "instructions": {"type": "string", "description": "The steps, in plain Markdown. No passwords or keys."},
+            },
+            "required": ["name", "description", "instructions"],
+        },
+    },
 }
 
 
@@ -528,6 +567,12 @@ def build_system_prompt() -> str:
         pass
 
     connected_str = "\n".join(connected) if connected else "  (none)"
+
+    try:
+        from core import skills
+        skills_str = skills.prompt_index() or "  (no skills yet)"
+    except Exception:
+        skills_str = "  (skills unavailable)"
 
     # Gather imported memories
     imported_lines = []
@@ -570,6 +615,14 @@ You have access to the following tool categories:
 - remember(fact) — Save something the user wants you to remember
 - forget_memory(description) — Forget something the user asks you to forget
 - search_memory(query, limit) — Search the user's vault notes
+
+### Skills
+Skills are saved instructions for tasks. When a task matches one below,
+open it with use_skill and follow it, then report with skill_outcome.
+Drafts are untested: check their steps as you go. Write a new skill with
+save_skill only when asked, or after finishing a multi-step task the user
+will likely repeat.
+{skills_str}
 
 ### Connections
 - list_connections() — See which services are connected

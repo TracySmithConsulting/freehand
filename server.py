@@ -12,7 +12,7 @@ from importlib import resources as importlib_resources
 
 sys.path.insert(0, str(Path(__file__).parent))
 from core.database import init_db, DB_PATH  # DB_PATH is the canonical path from core.database (vault/agent.db)
-from core.memory import sync_vault_to_sqlite, search_memory, parse_skills
+from core.memory import sync_vault_to_sqlite, search_memory
 from core.scheduler import get_scheduler, process_scribble, create_task as create_scheduled_task
 from core.security import (
     get_current_tier,
@@ -800,10 +800,43 @@ async def memory_file(path: str = ""):
         raise HTTPException(status_code=404, detail="File not found — try Sync, then search again")
     return {"path": rel, "title": candidate.stem, "content": candidate.read_text(encoding="utf-8", errors="replace")}
 
+# ── Skills (core/skills.py): drafts earn their place ──────────────────
+
 @app.get("/api/skills", dependencies=[Depends(require_api_key)])
 async def list_skills():
-    skills = parse_skills()
-    return skills
+    """Every skill with its status: draft, active or archived."""
+    from core import skills
+    return await asyncio.to_thread(skills.scan)
+
+
+@app.get("/api/skills/{skill_id}", dependencies=[Depends(require_api_key)])
+async def read_skill(skill_id: int):
+    from core import skills
+    s = await asyncio.to_thread(skills.read, skill_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="No such skill.")
+    return s
+
+
+@app.post("/api/skills/{skill_id}/status", dependencies=[Depends(require_api_key)])
+async def set_skill_status(skill_id: int, request: Request):
+    from core import skills
+    body = await request.json()
+    status = str((body or {}).get("status", ""))
+    reasons = {"active": "Approved by you", "archived": "Archived by you", "draft": "Restored by you"}
+    result = await asyncio.to_thread(skills.set_status, skill_id, status, reasons.get(status, ""))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.delete("/api/skills/{skill_id}", dependencies=[Depends(require_api_key)])
+async def delete_skill(skill_id: int):
+    from core import skills
+    result = await asyncio.to_thread(skills.delete, skill_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
 
 
 @app.post("/api/sweep", dependencies=[Depends(require_api_key)])

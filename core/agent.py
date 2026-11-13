@@ -27,7 +27,7 @@ from core.tools.integrations import (
     post_to_instagram, get_connections_summary,
 )
 from core.memory import search_memory
-from core import conversation, long_memory
+from core import conversation, long_memory, skills
 
 # Background memory saves; kept referenced so they aren't garbage-collected.
 _background_tasks: set = set()
@@ -245,6 +245,17 @@ async def execute_tool(name: str, args: dict) -> dict:
             return {"content": json.dumps(result, default=str)}
         elif name == "forget_memory":
             result = await asyncio.to_thread(long_memory.forget_matching, args.get("description", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "use_skill":
+            result = await asyncio.to_thread(skills.use, args.get("name", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "skill_outcome":
+            result = await asyncio.to_thread(
+                skills.record_outcome, args.get("name", ""), bool(args.get("worked")), args.get("note", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "save_skill":
+            result = await asyncio.to_thread(
+                skills.save, args.get("name", ""), args.get("description", ""), args.get("instructions", ""))
             return {"content": json.dumps(result, default=str)}
 
         # ── Browser v2 tools ───────────────────────────────────────────
@@ -542,6 +553,9 @@ def _remember_turn(conv_key: str, command: str, reply: str, source: str) -> None
     memory in the background (Hindsight extracts the facts worth keeping)."""
     conversation.add_turn(conv_key, command, reply)
     if long_memory.looks_secret(command) or long_memory.looks_secret(reply):
+        return
+    if source == "selftest":
+        # Live checks of FreeHand itself must not end up in someone's memory.
         return
     text = f"User: {command}\nFreeHand: {reply}"
     try:
