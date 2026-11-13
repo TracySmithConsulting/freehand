@@ -97,6 +97,13 @@ def _call_omniroute(text: str) -> Optional[dict]:
         return None
 
 
+def _llm_ready() -> bool:
+    """Is there a model to use: the main one (get_llm_config, so tests can
+    patch it here) or any backup (Nov 2026)?"""
+    from core.agent_config import get_llm_backups, llm_is_configured
+    return llm_is_configured(get_llm_config()) or bool(get_llm_backups())
+
+
 def _classify_via_llm(text: str) -> Optional[dict]:
     """Classify a scribble entry using the LLM configured in settings.llm.
 
@@ -105,14 +112,14 @@ def _classify_via_llm(text: str) -> Optional[dict]:
     unparseable — the caller then falls back to the keyword heuristic.
     """
     try:
-        config = get_llm_config()
-        if not (config.get("api_key", "").strip() or config.get("base_url", "").strip()):
+        if not _llm_ready():
             return None
         from core.agent import call_llm
+        # No config passed: the main model, then the backups (Nov 2026).
         resp = _run_coro(call_llm([
             {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
             {"role": "user", "content": text},
-        ], config=config))
+        ]))
         if "error" in resp:
             return None
         content = (resp.get("content") or "").strip()
@@ -519,8 +526,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
     global _TASK_RUNNER_WARNED
     from core.agent import run_agent  # lazy: avoids the heavy import chain at module load
 
-    config = get_llm_config()
-    if not (config.get("api_key", "").strip() or config.get("base_url", "").strip()):
+    if not _llm_ready():
         if not _TASK_RUNNER_WARNED:
             print("[WARN] No LLM configured (settings.llm) — task runner is idle. "
                   "Set an API key in the web UI to enable scheduled task execution.")

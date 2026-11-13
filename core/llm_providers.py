@@ -102,6 +102,17 @@ PROVIDERS: list[dict] = [
         "steps": ["Open the key page and sign in.", "Create a new key.", "Copy it and paste it here."],
     },
     {
+        "id": "ollama_cloud",
+        "name": "Ollama Cloud",
+        # https://docs.ollama.com/openai - OpenAI-compatible at ollama.com/v1
+        "base_url": "https://ollama.com/v1",
+        "key_prefixes": [],
+        "key_url": "https://ollama.com/settings/keys",
+        "default_model": "gpt-oss:120b",
+        "blurb": "Large open models run by Ollama on its own servers, with a free allowance. Nothing to install.",
+        "steps": ["Open the key page and sign in to Ollama.", "Create an API key.", "Copy it and paste it here."],
+    },
+    {
         "id": "ollama",
         "name": "Ollama (free, on this computer)",
         "base_url": "http://host.docker.internal:11434/v1",

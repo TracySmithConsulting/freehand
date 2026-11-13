@@ -98,6 +98,8 @@ async function main() {
         <details><input id="llm-base-url"></details>
         <button type="button" id="llm-test-btn">Test it</button>
         <button type="button" id="llm-save-btn">Save LLM Settings</button><p id="llm-test-result"></p>
+        <button type="button" id="llm-backup-add-btn">Add as a backup</button>
+        <p id="llm-last-switch"></p><ol id="llm-backups"></ol>
       </form>
       <button type="button" id="oauth-save-btn">Save OAuth Credentials</button>
       <input id="google-client-id"><input id="google-client-secret">

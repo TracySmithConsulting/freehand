@@ -1324,8 +1324,18 @@
           </div>
         </details>
         <button type="button" id="llm-test-btn" class="secondary">Test it</button>
-        <button type="button" id="llm-save-btn">Save</button>
+        <button type="button" id="llm-save-btn">Save as main model</button>
+        <button type="button" id="llm-backup-add-btn" class="secondary">Add as a backup</button>
         <p id="llm-test-result" role="status" aria-live="polite"></p>
+
+        <h3 id="llm-backups-heading" class="stack-top">Backup models</h3>
+        <p class="hint">
+          If the main model fails (no credit, a usage limit, or not responding), FreeHand switches to
+          these, in order, and tells you. To add one, fill in a service, key and model above, then choose
+          "Add as a backup".
+        </p>
+        <p id="llm-last-switch" role="status" aria-live="polite"></p>
+        <ol id="llm-backups" class="facts-list" aria-labelledby="llm-backups-heading"></ol>
       </fieldset>
 
       <!-- Remote Gateways -->
@@ -2002,6 +2012,7 @@
           describeCurrent(select.value, llm.model, !!llm.api_key);
           fillModelList([], llm.model || '');
           if (llm.api_key || (llmProvider(select.value) || {}).no_key) loadModels();
+          loadBackups();
         }).catch(function() {});
       }
 
@@ -2074,6 +2085,103 @@
           out.textContent = data.ok ? 'Working: the model answered. Press Save to use it.' : 'Not working yet: ' + data.message;
         })
         .catch(function() { out.textContent = 'Could not run the test.'; });
+      });
+
+      // ---- Backup models ----
+      function backupButton(label, aria, cls, onClick) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        if (cls) b.className = cls;
+        b.textContent = label;
+        b.setAttribute('aria-label', aria);
+        b.addEventListener('click', onClick);
+        return b;
+      }
+
+      function renderBackups(data) {
+        var list = llmEl('llm-backups');
+        list.innerHTML = '';
+        var backups = data.backups || [];
+        if (!backups.length) {
+          var empty = document.createElement('li');
+          empty.className = 'empty-state';
+          empty.textContent = 'No backups yet.';
+          list.appendChild(empty);
+        }
+        backups.forEach(function(b, i) {
+          var li = document.createElement('li');
+          li.className = 'connection-card';
+          var info = document.createElement('div');
+          info.className = 'connection-info';
+          var name = document.createElement('span');
+          name.className = 'connection-label';
+          var label = (i + 1) + '. ' + b.service + ', ' + b.model;
+          name.textContent = label;
+          var meta = document.createElement('div');
+          meta.className = 'connection-meta';
+          meta.textContent = 'Key ' + b.key_hint;
+          var result = document.createElement('div');
+          result.setAttribute('role', 'status');
+          info.appendChild(name); info.appendChild(meta); info.appendChild(result);
+          li.appendChild(info);
+          var actions = document.createElement('div');
+          actions.className = 'connection-actions';
+          actions.appendChild(backupButton('Test', 'Test backup ' + label, 'secondary', function() {
+            result.textContent = 'Testing...';
+            apiFetch('/api/llm/backups/' + i + '/test', { method: 'POST' })
+              .then(function(r) { return r.json(); })
+              .then(function(d) { result.textContent = d.ok ? 'Working.' : 'Not working: ' + d.message; })
+              .catch(function() { result.textContent = 'Could not run the test.'; });
+          }));
+          if (i > 0) actions.appendChild(backupButton('Move up', 'Move up: ' + label, 'secondary', function() { backupAction(i, 'move', { direction: 'up' }); }));
+          if (i < backups.length - 1) actions.appendChild(backupButton('Move down', 'Move down: ' + label, 'secondary', function() { backupAction(i, 'move', { direction: 'down' }); }));
+          actions.appendChild(backupButton('Make main', 'Make ' + label + ' the main model', 'secondary', function() {
+            backupAction(i, 'promote').then(function() { loadLlm(); showStatus(b.service + ' is now your main model.', 'success'); });
+          }));
+          actions.appendChild(backupButton('Remove', 'Remove backup ' + label, 'danger', function() {
+            if (!confirm('Remove the backup ' + b.service + ', ' + b.model + '?')) return;
+            apiFetch('/api/llm/backups/' + i, { method: 'DELETE' })
+              .then(function(r) { return r.json(); }).then(renderBackups);
+          }));
+          li.appendChild(actions);
+          list.appendChild(li);
+        });
+        var sw = data.last_switch || {};
+        llmEl('llm-last-switch').textContent = sw.to
+          ? 'Last switch, ' + sw.at + ': ' + sw.from + ' didn\'t answer because ' + sw.reason + ', so FreeHand used ' + sw.to + '.'
+          : '';
+      }
+
+      function backupAction(i, action, body) {
+        return apiFetch('/api/llm/backups/' + i + '/' + action, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
+        }).then(function(r) { return r.json(); }).then(renderBackups);
+      }
+
+      function loadBackups() {
+        return apiFetch('/api/llm/backups')
+          .then(function(r) { return r.ok ? r.json() : { backups: [] }; })
+          .then(renderBackups)
+          .catch(function() {});
+      }
+
+      llmEl('llm-backup-add-btn').addEventListener('click', function() {
+        var model = llmEl('llm-model').value.trim();
+        if (!model) { showStatus('Choose a model first, then add it as a backup.', 'error'); return; }
+        apiFetch('/api/llm/backups', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: llmEl('llm-provider').value, model: model,
+            api_key: llmEl('llm-api-key').value.trim(), base_url: llmEl('llm-base-url').value.trim()
+          })
+        })
+        .then(function(r) { if (!r.ok) throw new Error(); return r.json(); })
+        .then(function(data) {
+          renderBackups(data);
+          showStatus('Added as a backup. Your main model is unchanged.', 'success');
+          loadLlm();  // show the main model's settings again
+        })
+        .catch(function() { showStatus('Could not add the backup.', 'error'); });
       });
 
       llmEl('llm-openrouter-btn').addEventListener('click', function() {

@@ -82,6 +82,91 @@ def set_llm_config(updates: dict) -> dict:
     return get_llm_config()
 
 
+# ── Backup models (Nov 2026) ───────────────────────────────────────────
+# People can save several models. FreeHand uses the main one (settings
+# "llm") and, if it fails - no credit, a usage limit, not responding, a
+# rejected key - tries the backups in order (settings "llm_backups").
+
+_MODEL_FIELDS = ("provider", "model", "api_key", "base_url")
+
+
+def llm_is_configured(config: Optional[dict] = None) -> bool:
+    """Has this model been set up enough to try? A key, an address, or a
+    service that needs neither (Ollama on this computer)."""
+    if config is None:
+        config = get_llm_config()
+    if str(config.get("api_key", "")).strip() or str(config.get("base_url", "")).strip():
+        return True
+    from core import llm_providers
+    p = llm_providers.get(config.get("provider", ""))
+    return bool(p and p.get("no_key"))
+
+
+def get_llm_backups() -> List[Dict]:
+    backups = _load_settings().get("llm_backups") or []
+    out = []
+    for b in backups if isinstance(backups, list) else []:
+        if isinstance(b, dict) and b.get("model"):
+            out.append({k: str(b.get(k, "")) for k in _MODEL_FIELDS})
+    return out
+
+
+def _save_llm_backups(backups: List[Dict]) -> None:
+    settings = _load_settings()
+    settings["llm_backups"] = [{k: b.get(k, "") for k in _MODEL_FIELDS} for b in backups]
+    _save_settings(settings)
+
+
+def get_llm_chain() -> List[Dict]:
+    """The main model, then each backup, in the order to try them. Backups
+    share the main model's temperature and length settings."""
+    main = get_llm_config()
+    chain = [main] if llm_is_configured(main) else []
+    for b in get_llm_backups():
+        cfg = {**main, **b}
+        if llm_is_configured(cfg):
+            chain.append(cfg)
+    return chain
+
+
+def add_llm_backup(config: Dict) -> List[Dict]:
+    backups = get_llm_backups()
+    backups.append({k: str(config.get(k, "")).strip() for k in _MODEL_FIELDS})
+    _save_llm_backups(backups)
+    return backups
+
+
+def remove_llm_backup(index: int) -> List[Dict]:
+    backups = get_llm_backups()
+    if 0 <= index < len(backups):
+        backups.pop(index)
+        _save_llm_backups(backups)
+    return backups
+
+
+def move_llm_backup(index: int, delta: int) -> List[Dict]:
+    backups = get_llm_backups()
+    new = index + delta
+    if 0 <= index < len(backups) and 0 <= new < len(backups):
+        backups[index], backups[new] = backups[new], backups[index]
+        _save_llm_backups(backups)
+    return backups
+
+
+def promote_llm_backup(index: int) -> List[Dict]:
+    """Make a backup the main model; the old main becomes the first backup."""
+    backups = get_llm_backups()
+    if not 0 <= index < len(backups):
+        return backups
+    chosen = backups.pop(index)
+    old_main = {k: get_llm_config().get(k, "") for k in _MODEL_FIELDS}
+    if llm_is_configured(old_main):
+        backups.insert(0, old_main)
+    set_llm_config(chosen)
+    _save_llm_backups(backups)
+    return backups
+
+
 def _save_settings(data: dict) -> None:
     VAULT_DIR.mkdir(parents=True, exist_ok=True)
     SETTINGS_PATH.write_text(json.dumps(data))
