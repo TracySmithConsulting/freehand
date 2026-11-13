@@ -1856,9 +1856,10 @@
               'googlesheets': { name: 'Google Sheets', icon: 'G', sub: 'Read spreadsheets (via OpenConnector)' },
               'outlook': { name: 'Outlook', icon: 'M', sub: 'Read and send email (via OpenConnector)' },
               'outlook_calendar': { name: 'Outlook Calendar', icon: 'M', sub: 'Events and meetings (via OpenConnector)' },
-              'zoom': { name: 'Zoom', icon: 'Z', sub: 'Meetings, Recordings, Chat' },
+              'zoom': { name: 'Zoom', icon: 'Z', sub: 'List and schedule meetings (via OpenConnector)' },
               'facebook': { name: 'Facebook', icon: 'f', sub: 'Pages, Posts, Messages' },
-              'instagram': { name: 'Instagram', icon: 'I', sub: 'Posts, Stories, DMs' },
+              'instagram': { name: 'Instagram', icon: 'I', sub: 'Professional account posts (via OpenConnector)' },
+              'slack': { name: 'Slack', icon: 'S', sub: 'Channels and messages (via OpenConnector)' },
               'github': { name: 'GitHub', icon: 'GH', sub: 'Repos, Issues, Gists' },
               'email': { name: 'Email', icon: '@', sub: 'IMAP/SMTP (custom domains)' },
             };
@@ -1924,7 +1925,7 @@
                 });
 
                 // Add account button (for multi-account services)
-                if (['zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
+                if (['facebook', 'email'].includes(svc)) {
                   var addBtn = document.createElement('button');
                   addBtn.className = 'add-account-btn';
                   addBtn.textContent = '+ Add Account';
@@ -2032,15 +2033,34 @@
           });
       }
 
+      // FreeHand finds each account by this name, for example "read my
+      // Work email". One word: letters, numbers, - and _ (OpenConnector's
+      // rule for connection names).
+      function askAccountName(suggested) {
+        var name = prompt(
+          'What should FreeHand call this account? Use one short word, like Personal or Work. ' +
+          'If you only have one account here, keep "default".',
+          suggested || 'default'
+        );
+        if (name === null) return null;
+        name = name.trim() || 'default';
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
+          showStatus('Account names can use letters, numbers, - and _ only, with no spaces. For example: Personal or Work.', 'error');
+          return null;
+        }
+        return name;
+      }
+
       function connectService(service) {
-        window.open('/api/integrations/' + service + '/authorize?label=default', '_blank', 'width=600,height=700');
+        var name = askAccountName('default');
+        if (!name) return;
+        window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(name), '_blank', 'width=600,height=700');
       }
 
       function showAddAccountModal(service) {
-        var label = prompt('Enter a label for this account (e.g. "Work", "Personal"):');
-        if (!label) return;
-        label = label.trim() || 'default';
-        window.open('/api/integrations/' + service + '/authorize?label=' + encodeURIComponent(label), '_blank', 'width=600,height=700');
+        var name = askAccountName('');
+        if (!name) return;
+        window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(name), '_blank', 'width=600,height=700');
       }
 
       // R17-P6: expired tokens used to be announced only in the boot log.

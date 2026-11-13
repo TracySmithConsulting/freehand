@@ -410,6 +410,8 @@ services:
       - OOMOL_CONNECT_BASE_URL=http://open-connector:3001
       - OOMOL_CONNECT_CONSOLE_URL=${{OOMOL_CONNECT_CONSOLE_URL}}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${{OC_RUNTIME_TOKEN}}
+      # Connect starts OC sign-ins itself (no admin-token page for users).
+      - OOMOL_CONNECT_ADMIN_TOKEN=${{OC_ADMIN_TOKEN}}
       # Public https address behind Caddy; OAuth callbacks are built from it.
       - FREEHAND_PUBLIC_BASE_URL=${{FREEHAND_PUBLIC_BASE_URL:-}}
     # Composio settings come from this tenant's own composio.env, read

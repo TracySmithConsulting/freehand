@@ -36,6 +36,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent.parent))
 
 from core.oauth import broker as broker_mod  # noqa: E402
+from core.oauth import open_connector as oc_mod  # noqa: E402
 
 # Load the router module by file path and register it as "core.oauth.router"
 # so the package's `from .router import router` shadow is bypassed and
@@ -76,10 +77,10 @@ def client():
 class TestAuthorizeContentNegotiation:
     def test_browser_html_gets_302_to_consent(self, client):
         """The Connect-button case: a popup sends Accept: text/html for a
-        STATIC service (zoom) and must land on the provider consent page,
+        STATIC service (facebook) and must land on the provider consent page,
         NOT a JSON body."""
         r = client.get(
-            "/api/integrations/zoom/authorize?label=work",
+            "/api/integrations/facebook/authorize?label=work",
             headers={"Accept": "text/html"},
             follow_redirects=False,
         )
@@ -90,7 +91,7 @@ class TestAuthorizeContentNegotiation:
     def test_api_client_still_gets_json(self, client):
         """Regression guard: no Accept-html (curl, MCP, docs examples)
         keeps the existing JSON contract byte-for-byte."""
-        r = client.get("/api/integrations/zoom/authorize?label=work")
+        r = client.get("/api/integrations/facebook/authorize?label=work")
         assert r.status_code == 200
         body = r.json()
         assert "authorize_url" in body
@@ -139,9 +140,63 @@ class TestAuthorizeContentNegotiation:
         with (
             patch.object(broker_mod, "is_known_to_open_connector", lambda svc: True),
             patch.object(broker_mod, "get_client_credentials", lambda svc: (None, None, "none")),
+            patch.object(oc_mod, "start_oauth_connection", lambda svc, name: (None, "no_admin_token")),
         ):
             r = client.get("/api/integrations/linear/authorize", follow_redirects=False)
         assert r.status_code == 302
+
+
+class TestOpenConnectorDirectSignIn:
+    """Nov 2026: Connect starts OC sign-ins itself, so people go straight to
+    the provider instead of OC's admin-token page."""
+
+    def _patches(self, start):
+        return (
+            patch.object(broker_mod, "is_known_to_open_connector", lambda svc: True),
+            patch.object(broker_mod, "get_client_credentials", lambda svc: (None, None, "none")),
+            patch.object(oc_mod, "start_oauth_connection", start),
+        )
+
+    def test_browser_goes_straight_to_the_provider(self, client):
+        calls = []
+
+        def start(svc, name):
+            calls.append((svc, name))
+            return "https://accounts.google.com/o/oauth2/v2/auth?state=s", None
+
+        a, b, c = self._patches(start)
+        with a, b, c:
+            r = client.get("/api/integrations/gmail/authorize?label=Personal",
+                           headers={"Accept": "text/html"}, follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"].startswith("https://accounts.google.com/")
+        assert calls == [("gmail", "Personal")]
+
+    def test_account_name_with_spaces_is_refused_kindly(self, client):
+        a, b, c = self._patches(lambda svc, name: ("https://x", None))
+        with a, b, c:
+            r = client.get("/api/integrations/gmail/authorize?label=My%20work",
+                           headers={"Accept": "text/html"}, follow_redirects=False)
+        assert r.status_code == 400
+        assert "no spaces" in r.text
+
+    def test_api_key_apps_still_use_the_open_connector_page(self, client, monkeypatch):
+        monkeypatch.setenv("OOMOL_CONNECT_CONSOLE_URL", "http://localhost:3001")
+        a, b, c = self._patches(lambda svc, name: (None, "unsupported_auth_type"))
+        with a, b, c:
+            r = client.get("/api/integrations/github/authorize",
+                           headers={"Accept": "text/html"}, follow_redirects=False)
+        assert r.status_code == 302
+        assert r.headers["location"] == "http://localhost:3001/providers/github?connectionName=default"
+
+    def test_open_connector_down_shows_a_page_not_json(self, client):
+        a, b, c = self._patches(lambda svc, name: (None, "unreachable"))
+        with a, b, c:
+            r = client.get("/api/integrations/gmail/authorize",
+                           headers={"Accept": "text/html"}, follow_redirects=False)
+        assert r.status_code == 502
+        assert r.text.startswith("<!DOCTYPE html>")
+        assert "Check that OpenConnector is running" in r.text
 
     def test_fallback_503_browser_gets_html(self, client):
         """Even the 'request this service' fallback must not dump JSON in a

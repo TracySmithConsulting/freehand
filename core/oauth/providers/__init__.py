@@ -1,17 +1,14 @@
 from .email import EmailConnector
 from .facebook import FacebookConnector
-from .instagram import InstagramConnector
-from .slack import SlackConnector
-from .zoom import ZoomConnector
 
-# Google and Microsoft connect through OpenConnector (see
-# core/tools/integrations.py OC_APPS), not this broker.
+# Google, Microsoft, Zoom, Instagram and Slack connect through
+# OpenConnector (see core/tools/integrations.py OC_APPS and the oc_* tools),
+# not this broker. The rule: if OpenConnector has an app, it comes out of
+# the broker. Facebook and email (IMAP/SMTP) stay: OpenConnector has
+# neither.
 CONNECTORS = {
-    "zoom": ZoomConnector,
     "facebook": FacebookConnector,
-    "instagram": InstagramConnector,
     "email": EmailConnector,
-    "slack": SlackConnector,
 }
 
 

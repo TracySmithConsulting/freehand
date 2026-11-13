@@ -211,7 +211,7 @@ def gateway(subcommand: str = typer.Argument(help="status|start|stop|pair|secret
 # ── Connection commands ──────────────────────────────────────────────────────────
 
 @app.command()
-def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom, facebook, instagram, github, email"),
+def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom, instagram, slack, facebook, email"),
             label: str = typer.Option("default", "--label", "-l", help="Account label (e.g. work, personal)")):
     """Connect a service via OAuth or token."""
     import sys
@@ -220,16 +220,21 @@ def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom
     from core.oauth.providers import get_connector
     from core.oauth.manager import get_connection
 
-    if service in ("google", "microsoft"):
-        # Nov 2026: Google and Microsoft accounts live in OpenConnector.
-        import os
-        console = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/") or "http://localhost:3001"
-        apps = (["gmail", "googlecalendar", "googlesheets"] if service == "google"
-                else ["outlook", "outlook_calendar"])
-        typer.echo(f"{service.capitalize()} accounts are connected in OpenConnector.")
-        typer.echo(f"Open each of these and choose Connect, naming the connection '{label}':")
-        for app_id in apps:
-            typer.echo(f"  {console}/providers/{app_id}")
+    oc_apps = {
+        "google": ["Gmail", "Google Calendar", "Google Sheets"],
+        "microsoft": ["Outlook", "Outlook Calendar"],
+        "zoom": ["Zoom"],
+        "instagram": ["Instagram"],
+        "slack": ["Slack"],
+    }
+    if service in oc_apps:
+        # Nov 2026: these accounts live in OpenConnector. FreeHand's console
+        # starts the sign-in, so nobody needs OpenConnector's admin page.
+        typer.echo(f"{service.capitalize()} accounts connect in the FreeHand console.")
+        typer.echo("Open Connections and choose:")
+        for app_name in oc_apps[service]:
+            typer.echo(f"  Connect {app_name}")
+        typer.echo(f"When asked for the account name, enter '{label}'.")
         raise SystemExit(0)
 
     conn = get_connection(service, label)

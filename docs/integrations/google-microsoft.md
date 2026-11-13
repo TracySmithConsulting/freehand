@@ -46,17 +46,25 @@ Outlook, Outlook Calendar, Teams, OneDrive, Excel and To Do.
 
 In the FreeHand web console, open Connections, then choose Connect Gmail,
 Connect Google Calendar, Connect Google Sheets, Connect Outlook or Connect
-Outlook Calendar. Each opens OpenConnector's page for that app.
+Outlook Calendar.
 
-On that page, set **Connection name**. This is the name FreeHand uses to
-pick the account:
+FreeHand asks what to call the account. This is the name FreeHand uses to
+pick it:
 
-- One account per app: name it `default`.
-- Several accounts: give each a short name, such as `work` or `tracy`. Use
-  the same name for the same account in every app, for example `work` for
-  your work Gmail and your work Google Calendar.
+- One account per app: keep `default`.
+- Several accounts: give each a short one-word name, such as `Work` or
+  `Personal`. Use the same name for the same account in every app, for
+  example `Work` for your work Gmail and your work Google Calendar.
 
-Then choose Connect and sign in.
+FreeHand then opens Google's or Microsoft's own sign-in page. Sign in and
+allow access. OpenConnector shows "Connection complete" and the window
+closes. You never need OpenConnector's admin page or its admin token:
+FreeHand starts the sign-in for you.
+
+Zoom, Instagram and Slack connect the same way, once each has its app set
+up in OpenConnector (client ID and secret, and the return address
+`http://localhost:3001/oauth/callback` added in that app). Until then,
+Connect opens OpenConnector's page for the app instead.
 
 Each app is connected separately. To let FreeHand read your Gmail and your
 Google Calendar, connect both.
@@ -65,7 +73,7 @@ Google Calendar, connect both.
 
 Ask FreeHand as usual, for example "read my work email" or "what's on my
 calendar this week". If an account isn't connected yet, FreeHand says which
-one, and links to the page where you can connect it.
+one and how to connect it.
 
 ## Notes
 

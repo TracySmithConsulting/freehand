@@ -99,6 +99,10 @@ OC_APPS = {
     ("google", "sheets"): "googlesheets",
     ("microsoft", "email"): "outlook",
     ("microsoft", "calendar"): "outlook_calendar",
+    # Nov 2026: Zoom and Instagram moved too ("if OpenConnector has it, it
+    # comes out of the broker").
+    ("zoom", "meetings"): "zoom",
+    ("instagram", "posts"): "instagram",
 }
 OC_APP_NAMES = {
     "gmail": "Gmail",
@@ -106,6 +110,8 @@ OC_APP_NAMES = {
     "googlesheets": "Google Sheets",
     "outlook": "Outlook",
     "outlook_calendar": "Outlook Calendar",
+    "zoom": "Zoom",
+    "instagram": "Instagram",
 }
 OC_SERVICES = frozenset(service for service, _ in OC_APPS)
 
@@ -134,11 +140,12 @@ async def _oc_run(service: str, kind: str, action: str, inputs: dict, label: str
     if not result.get("ok"):
         err = result.get("error") or {}
         if err.get("code") == "connection_not_found":
-            url = f"{_oc_console_url()}/providers/{app}"
+            import urllib.parse
+            url = f"/api/integrations/{app}/authorize?label={urllib.parse.quote(label)}"
             return None, {
                 "error": (
-                    f"No {name} account called '{label}' is connected yet. Connect it in "
-                    f"OpenConnector at {url} and name the connection '{label}'."
+                    f"No {name} account called '{label}' is connected yet. In FreeHand, open "
+                    f"Connections, choose Connect {name} and name the account '{label}'."
                 ),
                 "connect_url": url,
             }
@@ -305,51 +312,33 @@ async def post_to_facebook(service: str = "facebook", label: str = "default", pa
 
 
 async def list_instagram_accounts(service: str = "instagram", label: str = "default") -> dict:
-    _check_write_permission("list_instagram_accounts", service, label)
-    conn, err = await _ensure_token(service, label)
+    data, err = await _oc_run("instagram", "posts", "get_current_user", {}, label)
     if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = f"https://graph.facebook.com/v19.0/me?fields=id,username,account_type&access_token={token_data.get('access_token', '')}"
-    result = await _call_api(token_data, "GET", url)
-    if "error" in result:
-        return result
-    return [result]
+        return err
+    return [data]
 
 
 async def post_to_instagram(service: str = "instagram", label: str = "default", content: str = "", media_url: str = "") -> dict:
     check = _check_write_permission("post_to_instagram", service, label)
     if not check.get("allowed"):
         return {"error": "Approval required to post to Instagram", "approval": check}
-    if not content and not media_url:
-        return {"error": "content or media_url are required"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    if media_url:
-        container_id = None
-        create_url = f"https://graph.facebook.com/v19.0/me/media?image_url={media_url}&caption={content}&access_token={token_data.get('access_token', '')}"
-        create_resp = await _call_api(token_data, "POST", create_url)
-        if "error" in create_resp:
-            return create_resp
-        container_id = create_resp.get("id")
-        publish_url = f"https://graph.facebook.com/v19.0/me/media_publish?creation_id={container_id}&access_token={token_data.get('access_token', '')}"
-        return await _call_api(token_data, "POST", publish_url)
-    return {"error": "Instagram requires media_url for posting"}
+    if not media_url:
+        return {"error": "Instagram posts need a picture: media_url must be a public https image address"}
+    data, err = await _oc_run(
+        "instagram", "posts", "publish_media",
+        {"kind": "image", "imageUrl": media_url, "caption": content}, label,
+    )
+    return err or data
 
 
 async def list_zoom_meetings(service: str = "zoom", label: str = "default", page_size: int = 30) -> dict:
-    _check_write_permission("list_zoom_meetings", service, label)
-    conn, err = await _ensure_token(service, label)
+    data, err = await _oc_run(
+        "zoom", "meetings", "list_meetings",
+        {"userId": "me", "pageSize": max(1, min(int(page_size or 30), 300))}, label,
+    )
     if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = f"https://api.zoom.us/v2/users/me/meetings?page_size={page_size}"
-    result = await _call_api(token_data, "GET", url)
-    if "error" in result:
-        return result
-    meetings = result.get("meetings", [])
+        return err
+    meetings = data.get("meetings", []) if isinstance(data, dict) else []
     return [{"id": m.get("id"), "topic": m.get("topic"), "start_time": m.get("start_time"), "status": m.get("status")} for m in meetings]
 
 
@@ -359,19 +348,13 @@ async def schedule_zoom_meeting(service: str = "zoom", label: str = "default", t
         return {"error": "Approval required to schedule Zoom meeting", "approval": check}
     if not title or not start_time:
         return {"error": "title and start_time are required"}
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    payload = {
-        "topic": title,
-        "type": 2,
-        "start_time": start_time,
-        "duration": duration,
-        "settings": {"host_video": True, "participant_video": True},
-    }
-    url = "https://api.zoom.us/v2/users/me/meetings"
-    return await _call_api(token_data, "POST", url, body=payload)
+    data, err = await _oc_run(
+        "zoom", "meetings", "create_meeting",
+        {"userId": "me", "topic": title, "type": 2, "startTime": start_time,
+         "duration": max(1, min(int(duration or 60), 1440))},
+        label,
+    )
+    return err or data
 
 
 def get_connections_summary() -> List[Dict]:
@@ -383,8 +366,8 @@ def get_connections_summary() -> List[Dict]:
             "Connected in OpenConnector. Use the connection name chosen there as the "
             f"label ('default' unless renamed). Manage accounts at {_oc_console_url()}."
         ),
-    } for family in ("google", "microsoft")]
-    for svc in ["zoom", "facebook", "instagram", "github", "email"]:
+    } for family in ("google", "microsoft", "zoom", "instagram")]
+    for svc in ["facebook", "github", "email"]:
         conns = list_connections(svc)
         for c in conns:
             results.append({
@@ -422,23 +405,3 @@ async def read_sheet_range(service: str = "google", label: str = "default", spre
     return err or data
 
 
-async def list_zoom_recordings(service: str = "zoom", label: str = "default") -> dict:
-    _check_write_permission("list_zoom_recordings", service, label)
-    conn, err = await _ensure_token(service, label)
-    if err:
-        return {"error": err}
-    token_data = conn["token_data"]
-    url = "https://api.zoom.us/v2/users/me/meetings?page_size=10"
-    result = await _call_api(token_data, "GET", url)
-    if "error" in result:
-        return result
-    meetings = result.get("meetings", [])
-    recordings = []
-    for m in meetings:
-        mid = m.get("id", "")
-        rec_url = f"https://api.zoom.us/v2/meetings/{mid}/recordings"
-        rec = await _call_api(token_data, "GET", rec_url)
-        if "error" not in rec and rec.get("recordings"):
-            for r in rec["recordings"]:
-                recordings.append({"meeting_id": mid, "topic": m.get("topic"), "recording_url": r.get("playback_url", ""), "type": r.get("type")})
-    return recordings

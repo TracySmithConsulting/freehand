@@ -65,30 +65,22 @@ def _isolated_vault(tmp_path, monkeypatch):
 
 
 class TestTier1bBeatsTier5:
-    def test_tier1b_set_oc_known_returns_json_no_302(self, tmp_path, monkeypatch):
-        """Tracy registered a Slack shared app AND OC knows Slack.
-        Tier-1b is more specific than tier-5 (real FreeHand credentials
-        beat runtime pointer), so the user gets FreeHand's JSON path —
-        NOT a 302 to OC. This is the Round 8 fix that prevents OC's
-        'configure your client first' page from hijacking the flow
-        when Tracy has done the work."""
+    def test_shared_app_without_a_broker_connector_goes_to_oc(self, tmp_path, monkeypatch):
+        """Nov 2026: Slack left the broker for OpenConnector, but its shared
+        app is still registered. With no broker connector left to use it,
+        the shared app must not block the OC path (it used to end in a
+        501)."""
         _isolated_vault(tmp_path, monkeypatch)
-        # tier-1b present
         monkeypatch.setattr(
             broker_mod, "_load_shared_apps",
             lambda: {"slack": {"client_id": "shared_id", "client_secret": "shared_secret"}},
         )
-        # tier-5 ALSO knows slack — the regression vector
         monkeypatch.setattr(broker_mod, "_oc_available", lambda: True)
         monkeypatch.setattr(broker_mod, "_oc_service_known", lambda svc: svc == "slack")
         client = _isolated_app()
         r = client.get("/api/integrations/slack/authorize?label=tracy", follow_redirects=False)
-        # Slack has no connector yet (not in providers/__init__.py), so the
-        # current router returns 501 with the new tier-1b check below the
-        # tier-5 redirect. The KEY assertion: NOT 302.
-        assert r.status_code != 302, (
-            f"tier-1b must preempt tier-5 redirect; got 302 to {r.headers.get('location')}"
-        )
+        assert r.status_code == 302, r.text[:200]
+        assert "slack" in r.headers.get("location", "")
 
 
 # ── 503 'honest option A' fallback ─────────────────────────────────────

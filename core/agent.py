@@ -23,7 +23,7 @@ from core.tools.integrations import (
     read_email, list_calendar_events, read_sheets, read_sheet_range,
     list_zoom_meetings, schedule_zoom_meeting,
     list_facebook_pages, post_to_facebook, list_instagram_accounts,
-    post_to_instagram, list_zoom_recordings, get_connections_summary,
+    post_to_instagram, get_connections_summary,
 )
 from core.memory import search_memory
 
@@ -218,9 +218,6 @@ async def execute_tool(name: str, args: dict) -> dict:
                 content=args.get("content", ""),
                 media_url=args.get("media_url", ""),
             )
-            return {"content": json.dumps(result, default=str)}
-        elif name == "list_zoom_recordings":
-            result = await list_zoom_recordings(label=args.get("label", "default"))
             return {"content": json.dumps(result, default=str)}
         elif name == "list_connections":
             result = get_connections_summary()
