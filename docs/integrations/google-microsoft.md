@@ -69,12 +69,13 @@ one, and links to the page where you can connect it.
 
 ## Notes
 
-- Personal Microsoft accounts (outlook.com, hotmail.com): set the Microsoft
-  apps' Tenant to `consumers` in OpenConnector. With `common`, an outlook.com
-  account that also administers an Azure directory can be signed in as that
-  directory's user, which has no mailbox, and connecting fails with
-  `credential_verification_failed` / `UnknownError`. Work or school
-  accounts need `organizations` or the tenant ID instead.
+- The Microsoft apps' Tenant setting in OpenConnector decides which accounts
+  can sign in: `common` (any), `consumers` (personal outlook.com and
+  hotmail.com accounts only) or `organizations` (work or school only).
+- If connecting Outlook fails with `credential_verification_failed` /
+  `UnknownError`, the sign-in worked but Microsoft would not return the
+  account's profile. First check that the account can open outlook.com and
+  that Microsoft 365 has no outage.
 - Microsoft Teams needs a work or school account and an administrator's
   consent for some permissions. Personal Microsoft accounts can't use it.
 - Meeting times without a time zone are taken as UTC. Include the offset,
