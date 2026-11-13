@@ -72,7 +72,9 @@ def test_not_connected_says_where_to_connect(oc, monkeypatch):
     reply["value"] = {"ok": False, "error": {"code": "connection_not_found", "message": "x"}}
     out = run(it.list_calendar_events("google", "tracy"))
     assert "No Google Calendar account called 'tracy'" in out["error"]
-    assert out["connect_url"] == "http://localhost:3001/providers/googlecalendar"
+    # FreeHand's own Connect, not OpenConnector's admin page
+    assert "open Connections" in out["error"]
+    assert out["connect_url"] == "/api/integrations/googlecalendar/authorize?label=tracy"
 
 
 def test_unreachable_open_connector_is_reported(oc):

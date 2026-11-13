@@ -41,15 +41,17 @@ class TestListAvailableTools:
         orphans = sch - reg
         assert not orphans, f"Schemas without registry entries: {orphans}"
 
-    def test_all_31_tools_visible_to_llm(self):
+    def test_all_30_tools_visible_to_llm(self):
         """The LLM should see exactly the tools in TOOL_REGISTRY.
 
         Round 14 dropped the 4 static GitHub tools (35 -> 31); GitHub
-        now routes through the oc_github_default_* OC actions."""
+        now routes through the oc_github_default_* OC actions. Nov 2026
+        dropped list_zoom_recordings (31 -> 30): Zoom runs through
+        OpenConnector, which has no recordings action."""
         tools = agent_config.list_available_tools()
         names = {t["function"]["name"] for t in tools}
         assert names == set(agent_config.TOOL_REGISTRY.keys())
-        assert len(tools) == 31
+        assert len(tools) == 30
 
     def test_write_tools_visible(self):
         """The previously-dead write tools (post_to_facebook etc.) are now visible."""
@@ -58,7 +60,6 @@ class TestListAvailableTools:
         # in Round 14 - GitHub now routes through oc_github_default_* actions)
         previously_dead = [
             "read_sheet_range",
-            "list_zoom_recordings",
             "schedule_zoom_meeting",
             "list_facebook_pages",
             "post_to_facebook",

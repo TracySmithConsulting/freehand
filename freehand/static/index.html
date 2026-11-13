@@ -1856,9 +1856,10 @@
               'googlesheets': { name: 'Google Sheets', icon: 'G', sub: 'Read spreadsheets (via OpenConnector)' },
               'outlook': { name: 'Outlook', icon: 'M', sub: 'Read and send email (via OpenConnector)' },
               'outlook_calendar': { name: 'Outlook Calendar', icon: 'M', sub: 'Events and meetings (via OpenConnector)' },
-              'zoom': { name: 'Zoom', icon: 'Z', sub: 'Meetings, Recordings, Chat' },
+              'zoom': { name: 'Zoom', icon: 'Z', sub: 'List and schedule meetings (via OpenConnector)' },
               'facebook': { name: 'Facebook', icon: 'f', sub: 'Pages, Posts, Messages' },
-              'instagram': { name: 'Instagram', icon: 'I', sub: 'Posts, Stories, DMs' },
+              'instagram': { name: 'Instagram', icon: 'I', sub: 'Professional account posts (via OpenConnector)' },
+              'slack': { name: 'Slack', icon: 'S', sub: 'Channels and messages (via OpenConnector)' },
               'github': { name: 'GitHub', icon: 'GH', sub: 'Repos, Issues, Gists' },
               'email': { name: 'Email', icon: '@', sub: 'IMAP/SMTP (custom domains)' },
             };
@@ -1906,31 +1907,38 @@
                   var userLabel = conn.email ? escapeHtml(conn.email) : escapeHtml(conn.label);
                   var scopes = (conn.scopes || []).slice(0, 3).join(', ');
                   if ((conn.scopes || []).length > 3) scopes += '...';
+                  // Plain-language status first: "Connected" or "Expired".
+                  var statusText = isExpired
+                    ? '<span class="expired-time">Expired. Reconnect to keep using it</span>'
+                    : 'Connected';
+                  var when = [timeLeft && !isExpired ? timeLeft : '', conn.connected_at ? 'since ' + escapeHtml(conn.connected_at) : '']
+                    .filter(Boolean).join(' · ');
+                  // Screen readers hear which account a button belongs to.
+                  var who = escapeHtml(info.name) + ' ' + escapeHtml(conn.label);
 
                   card.innerHTML =
                     '<div class="connection-info">' +
                       '<span class="connection-label">' + escapeHtml(conn.label) + '</span>' +
-                      '<div class="connection-meta">' + (isExpired ? '<span class="expired-time">' + timeLeft + '</span>' : timeLeft) + ' · ' + escapeHtml(conn.connected_at) + '</div>' +
-                      '<div class="connection-meta">' + escapeHtml(userLabel) + '</div>' +
-                      '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' +
+                      '<div class="connection-meta">' + statusText + (when ? ' · ' + when : '') + '</div>' +
+                      (conn.email && conn.email !== conn.label ? '<div class="connection-meta">' + userLabel + '</div>' : '') +
+                      (scopes ? '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' : '') +
                     '</div>' +                      '<div class="connection-actions">' +
                       (isExpired
-                        ? '<button class="secondary" onclick="reconnectConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Reconnect ' + escapeHtml(svc) + ' (' + escapeHtml(conn.label) + ')">Reconnect</button> '
+                        ? '<button class="secondary" onclick="reconnectConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Reconnect ' + who + '">Reconnect</button> '
                         : '') +
-                      '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Test</button>' +
-                      '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')">Disconnect</button>' +
+                      '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Test ' + who + '">Test</button>' +
+                      '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Disconnect ' + who + '">Disconnect</button>' +
                     '</div>';
                   bodyDiv.appendChild(card);
                 });
 
-                // Add account button (for multi-account services)
-                if (['zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
-                  var addBtn = document.createElement('button');
-                  addBtn.className = 'add-account-btn';
-                  addBtn.textContent = '+ Add Account';
-                  addBtn.onclick = function() { showAddAccountModal(svc); };
-                  bodyDiv.appendChild(addBtn);
-                }
+                // Every service can hold several accounts (each with its own
+                // name), so offer another one under each group.
+                var addBtn = document.createElement('button');
+                addBtn.className = 'add-account-btn';
+                addBtn.textContent = 'Add another ' + info.name + ' account';
+                addBtn.onclick = function() { showAddAccountModal(svc); };
+                bodyDiv.appendChild(addBtn);
 
                 groupDiv.appendChild(bodyDiv);
                 listEl.appendChild(groupDiv);
@@ -2032,43 +2040,84 @@
           });
       }
 
+      // FreeHand finds each account by this name, for example "read my
+      // Work email". One word: letters, numbers, - and _ (OpenConnector's
+      // rule for connection names).
+      function askAccountName(suggested) {
+        var name = prompt(
+          'What should FreeHand call this account? Use one short word, like Personal or Work. ' +
+          'If you only have one account here, keep "default".',
+          suggested || 'default'
+        );
+        if (name === null) return null;
+        name = name.trim() || 'default';
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(name)) {
+          showStatus('Account names can use letters, numbers, - and _ only, with no spaces. For example: Personal or Work.', 'error');
+          return null;
+        }
+        return name;
+      }
+
+      // Open the sign-in window, then refresh Connections when it closes,
+      // so a new account shows up as connected without reloading the page.
+      function openSignIn(service, name) {
+        var win = window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(name), '_blank', 'width=600,height=700');
+        if (!win) {
+          showStatus('Your browser blocked the sign-in window. Allow pop-ups for FreeHand, then try again.', 'error');
+          return;
+        }
+        showStatus('Sign in in the new window. When you finish, come back here.', 'success');
+        var timer = setInterval(function() {
+          if (!win.closed) return;
+          clearInterval(timer);
+          showStatus('Checking your connections...', 'success');
+          loadConnections();
+        }, 1000);
+      }
+
       function connectService(service) {
-        window.open('/api/integrations/' + service + '/authorize?label=default', '_blank', 'width=600,height=700');
+        var name = askAccountName('default');
+        if (!name) return;
+        openSignIn(service, name);
       }
 
       function showAddAccountModal(service) {
-        var label = prompt('Enter a label for this account (e.g. "Work", "Personal"):');
-        if (!label) return;
-        label = label.trim() || 'default';
-        window.open('/api/integrations/' + service + '/authorize?label=' + encodeURIComponent(label), '_blank', 'width=600,height=700');
+        var name = askAccountName('');
+        if (!name) return;
+        openSignIn(service, name);
       }
 
       // R17-P6: expired tokens used to be announced only in the boot log.
       // A reconnect reuses the same authorize endpoint with the SAME label,
       // so the existing connection row is refreshed in place.
       window.reconnectConnection = function(service, label) {
-        window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(label), '_blank', 'width=600,height=700');
+        openSignIn(service, label);
       };
 
       window.disconnectService = function(service, label) {
         if (!confirm('Disconnect ' + service + ' (' + label + ')?')) return;
-        apiFetch('/api/integrations/' + service + '/disconnect', {
+        // The server reads the account name from the address, not the body;
+        // sent only in the body, every Disconnect acted on 'default'.
+        apiFetch('/api/integrations/' + encodeURIComponent(service) + '/disconnect?label=' + encodeURIComponent(label), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label })
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (!res.ok) throw new Error('disconnect failed');
+          return res.json();
+        })
         .then(function() {
           showStatus('Disconnected: ' + service + ' (' + label + ')', 'success');
           loadConnections();
         })
         .catch(function() {
-          showStatus('Failed to disconnect.', 'error');
+          showStatus('Could not disconnect ' + service + ' (' + label + '). Try again.', 'error');
         });
       };
 
       window.testConnection = function(service, label) {
-        apiFetch('/api/integrations/' + service + '/test', {
+        apiFetch('/api/integrations/' + encodeURIComponent(service) + '/test?label=' + encodeURIComponent(label), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ label: label })

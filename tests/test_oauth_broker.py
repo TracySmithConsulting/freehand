@@ -144,9 +144,10 @@ class TestBrokerStatus:
         # Nov 2026: google and microsoft left the broker for OpenConnector
         assert "google" not in status["services"]
         assert "microsoft" not in status["services"]
-        assert "zoom" in status["services"]
+        # Nov 2026: so did zoom, instagram and slack (all in OpenConnector)
+        for gone in ("zoom", "instagram", "slack"):
+            assert gone not in status["services"]
         assert "facebook" in status["services"]
-        assert "instagram" in status["services"]
         # Round 14: github left the OAuth broker (connects via OC api_key)
         assert "github" not in status["services"]
         assert "email" in status["services"]
@@ -191,30 +192,17 @@ class TestWriteBrokerConfig:
         """write_broker_config returns the new status snapshot."""
         with _stub_vault_dir(tmp_path):
             result = broker.write_broker_config({
-                "zoom": {"client_id": "x", "client_secret": "y"},
+                "facebook": {"client_id": "x", "client_secret": "y"},
             })
         assert "services" in result
-        assert result["services"]["zoom"]["configured"] is True
-        assert result["services"]["zoom"]["source"] == "broker"
+        assert result["services"]["facebook"]["configured"] is True
+        assert result["services"]["facebook"]["source"] == "broker"
 
 
 # ── Connectors use broker ────────────────────────────────────────────
 
 class TestConnectorsUseBroker:
     """Confirm each connector's _get_credentials returns broker-resolved values."""
-
-    def test_zoom_connector_uses_broker(self, tmp_path, monkeypatch):
-        from core.oauth.providers.zoom import ZoomConnector
-        with _stub_vault_dir(tmp_path), \
-             _stub_user_settings({}):
-            monkeypatch.delenv("FREEHAND_BROKER_ZOOM_CLIENT_ID", raising=False)
-            monkeypatch.delenv("FREEHAND_BROKER_ZOOM_CLIENT_SECRET", raising=False)
-            broker.write_broker_config({
-                "zoom": {"client_id": "z-broker-cid", "client_secret": "z-broker-sec"},
-            })
-            cid, sec = ZoomConnector()._get_credentials()
-        assert cid == "z-broker-cid"
-        assert sec == "z-broker-sec"
 
     def test_facebook_connector_uses_broker(self, tmp_path, monkeypatch):
         from core.oauth.providers.facebook import FacebookConnector
@@ -231,15 +219,17 @@ class TestConnectorsUseBroker:
 
     def test_user_override_takes_precedence_over_broker(self, tmp_path, monkeypatch):
         """User-supplied credentials win even when broker has values."""
-        from core.oauth.providers.zoom import ZoomConnector
+        from core.oauth.providers.facebook import FacebookConnector
         with _stub_vault_dir(tmp_path), \
              _stub_user_settings({"oauth": {"providers": {
-                 "zoom": {"client_id": "user-cid", "client_secret": "user-sec"},
+                 "facebook": {"client_id": "user-cid", "client_secret": "user-sec"},
              }}}):
+            monkeypatch.delenv("FREEHAND_BROKER_FACEBOOK_CLIENT_ID", raising=False)
+            monkeypatch.delenv("FREEHAND_BROKER_FACEBOOK_CLIENT_SECRET", raising=False)
             broker.write_broker_config({
-                "zoom": {"client_id": "broker-cid", "client_secret": "broker-sec"},
+                "facebook": {"client_id": "broker-cid", "client_secret": "broker-sec"},
             })
-            cid, sec = ZoomConnector()._get_credentials()
+            cid, sec = FacebookConnector()._get_credentials()
         assert cid == "user-cid"
         assert sec == "user-sec"
 
@@ -277,11 +267,11 @@ class TestBrokerHttpEndpoints:
         r = client.post(
             "/api/broker/config",
             json={"providers": {
-                "zoom": {"client_id": "test-cid", "client_secret": "test-sec"},
+                "facebook": {"client_id": "test-cid", "client_secret": "test-sec"},
             }},
         )
         assert r.status_code == 200
-        assert r.json()["services"]["zoom"]["configured"] is True
+        assert r.json()["services"]["facebook"]["configured"] is True
 
         # And the file exists
         assert (vault / "broker_config.json").exists()

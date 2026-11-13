@@ -130,7 +130,6 @@ TOOL_REGISTRY: Dict[str, str] = {
     "read_sheet_range":   "read",
     # Zoom
     "list_zoom_meetings":     "read",
-    "list_zoom_recordings":   "read",
     "schedule_zoom_meeting":  "write",
     # Meta
     "list_facebook_pages":    "read",
@@ -387,17 +386,9 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "label": {"type": "string"},
+                "label": {"type": "string", "description": "Account name chosen when connecting (default 'default')"},
                 "page_size": {"type": "integer"},
             },
-            "required": [],
-        },
-    },
-    "list_zoom_recordings": {
-        "description": "List Zoom meeting recordings for the connected account",
-        "parameters": {
-            "type": "object",
-            "properties": {"label": {"type": "string"}},
             "required": [],
         },
     },
@@ -406,7 +397,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {
-                "label": {"type": "string"},
+                "label": {"type": "string", "description": "Account name chosen when connecting (default 'default')"},
                 "title": {"type": "string"},
                 "start_time": {"type": "string", "description": "ISO 8601 start datetime"},
                 "duration": {"type": "integer", "description": "Duration in minutes (default 60)"},
@@ -436,23 +427,23 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         },
     },
     "list_instagram_accounts": {
-        "description": "List Instagram business accounts available to the connected account",
+        "description": "Show the connected Instagram professional account",
         "parameters": {
             "type": "object",
-            "properties": {"label": {"type": "string"}},
+            "properties": {"label": {"type": "string", "description": "Account name chosen when connecting (default 'default')"}},
             "required": [],
         },
     },
     "post_to_instagram": {
-        "description": "Post content to an Instagram business account (write action — requires approval)",
+        "description": "Post a picture to the connected Instagram professional account (write action — requires approval)",
         "parameters": {
             "type": "object",
             "properties": {
-                "label": {"type": "string"},
+                "label": {"type": "string", "description": "Account name chosen when connecting (default 'default')"},
                 "content": {"type": "string", "description": "Caption text"},
-                "media_url": {"type": "string", "description": "Public URL to the image/video to post"},
+                "media_url": {"type": "string", "description": "Public https address of the image to post"},
             },
-            "required": [],
+            "required": ["media_url"],
         },
     },
     # ── Meta-utility ──────────────────────────────────────────────

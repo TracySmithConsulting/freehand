@@ -129,6 +129,9 @@ services:
       # https://connect.example.com.
       - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://localhost:3001}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
+      # Lets Connect start OC sign-ins itself, so people go straight to
+      # Google or Microsoft instead of OC's admin-token page.
+      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:?OC_ADMIN_TOKEN is not set - run python scripts/setup_env.py}
       # Optional: Composio-managed Meta authentication. These stay unset
       # unless Facebook/Instagram should use the Composio adapter.
       - COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}

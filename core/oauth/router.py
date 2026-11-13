@@ -39,11 +39,12 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 # and this list updates automatically.
 ALLOWED_SERVICES = list(CONNECTORS.keys())
 
-# OpenConnector apps that FreeHand's built-in email, calendar and Sheets
-# tools use (core/tools/integrations.py OC_APPS). Connect sends people to
-# OpenConnector's own sign-in page for each.
+# OpenConnector apps that FreeHand's built-in tools use
+# (core/tools/integrations.py OC_APPS), listed first in Connections.
+# Connect starts the sign-in in OpenConnector (_open_connector_connect).
 OC_FEATURED_SERVICES = (
     "gmail", "googlecalendar", "googlesheets", "outlook", "outlook_calendar",
+    "zoom", "instagram", "slack",
 )
 
 
@@ -357,6 +358,22 @@ async def list_integrations(request: Request):
         # A missing/broken optional backend must not break the core panel.
         pass
 
+    # Accounts connected in OpenConnector (Gmail, Outlook, Zoom, ...). Without
+    # these the panel never showed them as connected, even when they worked.
+    from core.oauth import open_connector as _oc
+    for account in _oc.list_accounts():
+        svc = account["service"]
+        services.setdefault(svc, {"service": svc, "connections": []})
+        services[svc]["connections"].append({
+            "label": account["label"],
+            "email": account["display"],
+            "connected_at": "",
+            "expires_at": "",
+            "scopes": account["scopes"],
+            "status": "active",
+            "backend": "open_connector",
+        })
+
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
     return {
@@ -376,6 +393,71 @@ async def list_integrations(request: Request):
     }
 
 
+def _oc_console_target(service: str, label: str) -> str:
+    """OpenConnector's own page for a service (needs OC's admin token)."""
+    import urllib.parse as _up
+    oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
+    console_url = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/")
+    target = f"{console_url or oc_base}/providers/{service}"
+    if label:
+        # OC names a new connection with a random id unless told;
+        # FreeHand finds accounts by this name (its label).
+        target += "?" + _up.urlencode({"connectionName": label})
+    return target
+
+
+def _simple_page(title: str, message: str, status_code: int) -> HTMLResponse:
+    import html as _html
+    return HTMLResponse(
+        "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'>"
+        f"<title>{_html.escape(title)}</title></head>"
+        "<body style='font-family:system-ui;padding:2rem;max-width:40rem'>"
+        f"<h1>{_html.escape(title)}</h1><p>{_html.escape(message)}</p>"
+        "<p><button type='button' onclick='window.close()'>Close this window</button></p>"
+        "</body></html>",
+        status_code=status_code,
+    )
+
+
+def _open_connector_connect(service: str, label: str, request: Request):
+    """Connect an OpenConnector app without OC's admin console.
+
+    FreeHand asks OC to start the sign-in (with OC's admin token, which the
+    user never sees) and sends the browser straight to the provider's
+    consent screen. OC's callback then shows "Connection complete" and
+    closes the window. Apps that don't sign in with OAuth (API keys, such
+    as GitHub) still use OC's own page.
+    """
+    from core.oauth import open_connector as _oc
+    import re as _re
+
+    name = (label or "default").strip()
+    if not _re.match(_oc.CONNECTION_NAME_RE, name):
+        message = (
+            "Account names can use letters, numbers, - and _ only, with no spaces, "
+            "for example Personal or Work."
+        )
+        if _wants_html(request):
+            return _simple_page("Choose a different account name", message, 400)
+        raise HTTPException(status_code=400, detail=message)
+
+    # OC services have always answered with a 302, for browsers and API
+    # clients alike (Round 7 / Pitfall 24); keep that.
+    url, error = _oc.start_oauth_connection(service, name)
+    if url:
+        return RedirectResponse(url, status_code=302)
+
+    if error in ("no_admin_token", "unsupported_auth_type", "oauth_client_config_required"):
+        # No way to start it from here: an API-key app, an OAuth app that
+        # isn't set up in OC yet, or no admin token. OC's page handles these.
+        return RedirectResponse(_oc_console_target(service, name), status_code=302)
+
+    message = f"FreeHand couldn't start the {service} sign-in ({error}). Check that OpenConnector is running, then try again."
+    if _wants_html(request):
+        return _simple_page("Couldn't connect", message, 502)
+    raise HTTPException(status_code=502, detail=message)
+
+
 @router.get("/{service}/authorize")
 async def get_authorize_url(service: str, label: str = "default", request: Request = None):
     service = service.lower()
@@ -387,9 +469,11 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
     # Composio hosted Connect Link so FreeHand never needs a Meta app secret.
     # When it is not configured, the existing first-party connector remains
     # available as a fallback for development and self-hosted users.
+    # Instagram now connects through OpenConnector (Nov 2026), so only
+    # Facebook can still use Composio.
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
-    if service in ("facebook", "instagram") and _composio.is_configured(service):
+    if service == "facebook" and _composio.is_configured(service):
         try:
             callback_url = _get_composio_callback_uri(service, label, request)
             link = await _composio.create_connect_link(service, label, callback_url)
@@ -437,29 +521,14 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
         from core.oauth import broker as _broker
         try:
             _cid, _sec, _src = _broker.get_client_credentials(service)
-            if _src == "shared_app":
+            if _src == "shared_app" and get_connector(service) is not None:
                 # Tier-1b resolves to a FreeHand-shared app. The provider
                 # connector (if any) will pick up the credentials through
                 # the broker. Fall through to the existing allowlist +
                 # connector.authorize_url() path. NOT a 302.
                 pass
             elif _broker.is_known_to_open_connector(service):
-                # Redirect into the OC *web console* provider page
-                # (/providers/<svc>) — the console is the clickable surface.
-                # The API base (OOMOL_CONNECT_BASE_URL) serves a JSON banner
-                # when no built console is embedded, so in dev the console
-                # runs on its own port (Vite, :5173); OOMOL_CONNECT_CONSOLE_URL
-                # overrides the target. Production default = API base, where
-                # the built console is co-served.
-                oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
-                console_url = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/")
-                target = f"{console_url or oc_base}/providers/{service}"
-                if label:
-                    # OC names a new connection with a random id unless told;
-                    # FreeHand finds accounts by this name (its label).
-                    import urllib.parse as _up
-                    target += "?" + _up.urlencode({"connectionName": label})
-                return RedirectResponse(target, status_code=302)
+                return _open_connector_connect(service, label, request)
             else:
                 # Neither tier-1b nor tier-5 has it. Round 8 honest-option-A
                 # fallback. Round 15.6: browsers get the HTML page (no JSON
@@ -694,10 +763,23 @@ async def handle_callback(
     )
 
 
+def _find_oc_account(service: str, label: str):
+    from core.oauth import open_connector as _oc
+    for account in _oc.list_accounts():
+        if account["service"] == service and account["label"] == label:
+            return account
+    return None
+
+
 @router.post("/{service}/disconnect")
 async def disconnect(service: str, label: str = "default"):
     if service not in ALLOWED_SERVICES:
-        raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+        # OpenConnector accounts (Gmail, Outlook, Zoom, ...).
+        from core.oauth import open_connector as _oc
+        if _find_oc_account(service, label) and _oc.disconnect_account(service, label):
+            return {"status": "disconnected", "service": service, "label": label,
+                    "backend": "open_connector"}
+        raise HTTPException(status_code=404, detail=f"No connection found: {service} ({label})")
 
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
@@ -719,7 +801,11 @@ async def disconnect(service: str, label: str = "default"):
 @router.post("/{service}/test")
 async def test_connection(service: str, label: str = "default"):
     if service not in ALLOWED_SERVICES:
-        raise HTTPException(status_code=404, detail=f"Unknown service: {service}")
+        # OpenConnector checks an account when it is connected and renews
+        # its sign-in itself; here we confirm OC still has it.
+        if _find_oc_account(service, label):
+            return {"service": service, "label": label, "valid": True, "backend": "open_connector"}
+        raise HTTPException(status_code=404, detail=f"Not connected: {service} ({label})")
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
     composio_account = _composio.get_account(service, label)

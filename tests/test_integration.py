@@ -117,22 +117,21 @@ class TestIntegrations:
         # so the pre-Round-9 set is six services, not seven.
         # Nov 2026: google and microsoft left the broker for OpenConnector;
         # its Gmail/Calendar/Sheets/Outlook apps are listed instead.
-        expected_pre_round9 = {
-            "zoom", "facebook",
-            "instagram", "email",
-        }
+        # Nov 2026: so did zoom, instagram and slack. The broker keeps
+        # facebook and email; everything else is an OpenConnector app.
+        expected_pre_round9 = {"facebook", "email"}
         actual = set(d["available_services"])
         assert expected_pre_round9.issubset(actual), (
             f"Pre-Round-9 services missing: {expected_pre_round9 - actual}"
         )
-        assert "slack" in actual, "Round 9: slack must be in available_services"
+        assert "slack" in actual, "slack must be in available_services (now via OpenConnector)"
         from core.oauth.router import OC_FEATURED_SERVICES
         assert set(OC_FEATURED_SERVICES).issubset(actual)
         assert "google" not in actual and "microsoft" not in actual
-        assert len(actual) == len(expected_pre_round9) + 1 + len(OC_FEATURED_SERVICES), sorted(actual)
+        assert len(actual) == len(expected_pre_round9) + len(OC_FEATURED_SERVICES), sorted(actual)
 
     def test_authorize_url(self, client):
-        r = client.get("/api/integrations/zoom/authorize?label=work")
+        r = client.get("/api/integrations/facebook/authorize?label=work")
         assert r.status_code == 200
         d = r.json()
         assert "authorize_url" in d
