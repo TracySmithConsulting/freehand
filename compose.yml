@@ -69,6 +69,11 @@ services:
       # uses, so its data sat in an unnamed volume and a new, empty one
       # was created whenever the container was rebuilt.
       - oc-data:/app/data
+    # IPv4 only. On some networks Docker's DNS hands back only IPv6
+    # addresses for login.microsoftonline.com, but the container has no
+    # IPv6 route, so Microsoft sign-ins failed with ENETUNREACH.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     healthcheck:
       # OC's /health endpoint returns {"ok": true} when ready.
       # wget --spider does a HEAD request, which OC handles correctly.
@@ -136,6 +141,9 @@ services:
     extra_hosts:
       # Docker Desktop provides host.docker.internal; Linux needs this line.
       - "host.docker.internal:host-gateway"
+    # IPv4 only, as for open-connector above.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     volumes:
       # Mount the host's vault directory so encryption.key, connections.db,
       # broker_config.json, credential_store.json, AND agent.db all
