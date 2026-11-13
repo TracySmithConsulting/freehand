@@ -31,6 +31,7 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     import core.gateway as gateway
     import core.memory as memory
     import core.oauth.manager as oauth_manager
+    import core.security as security
     import server as server_module
 
     vault = tmp_path / "vault"
@@ -43,6 +44,11 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     monkeypatch.setattr(agent_config, "SETTINGS_PATH", vault / "settings.json")
 
     monkeypatch.setattr(memory, "VAULT_DIR", vault)
+
+    # security.py binds its own SETTINGS_PATH (tier, approval base URL) at
+    # import time — without this, a tier change in a test hit the real vault.
+    monkeypatch.setattr(security, "VAULT_DIR", vault)
+    monkeypatch.setattr(security, "SETTINGS_PATH", vault / "settings.json")
 
     monkeypatch.setattr(gateway, "VAULT_DIR", vault)
     monkeypatch.setattr(gateway, "SCRIBBLE_PATH", vault / "00_Scribble.md")

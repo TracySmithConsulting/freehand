@@ -9,6 +9,23 @@
 # and broker_config.json persist across container restarts.
 vault/
 
+# ── Other secrets — NEVER bake these into the image either ─────────────
+# The project .env holds OpenConnector tokens and the Composio API key.
+# Every tenant image is built from this checkout, so without these lines
+# each customer's image carried the operator's keys. Compose passes the
+# values a container needs as environment variables instead.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+# The WhatsApp linked-device session: anyone with a copy can read and send
+# messages as that number. The bridge runs on the host, not in the image.
+**/auth_info_baileys/
+*.key
+*.pem
+
 # ── Python build artifacts ─────────────────────────────────────────────
 __pycache__
 **/__pycache__
@@ -23,6 +40,7 @@ dist/
 
 # ── Node.js — FreeHand's package.json is unrelated to OpenConnector ────
 node_modules/
+**/node_modules/
 
 # ── Local databases (other than vault/connections.db) ─────────────────
 *.db

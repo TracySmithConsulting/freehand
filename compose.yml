@@ -4,7 +4,7 @@
 # FreeHand waits for OC to be ready before starting.
 #
 # Usage:
-#   cp .env.example .env       # edit tokens for your install
+#   python scripts/setup_env.py   # creates .env with random passwords
 #   docker compose up -d       # bring up both services in background
 #   docker compose logs -f     # tail logs from both
 #   docker compose down        # stop (vault volume preserved)
@@ -17,16 +17,17 @@
 # Vault persistence:
 #   ./vault → /app/vault — host directory mounted into both services.
 #   FreeHand writes encryption.key + connections.db + broker_config.json
-#   there. OC writes its own SQLite store at /data inside the container
-#   (an anonymous volume). Don't confuse the two — only ./vault is
-#   bind-mounted; OC's /data is Docker-managed.
+#   there. OC writes its own SQLite store (connect.sqlite) at /app/data
+#   inside its container, kept in the named volume freehand-oc-data.
+#   Don't confuse the two — only ./vault is bind-mounted.
 #
 # Health checks:
 #   OC: wget /health  (returns 200 OK)
 #   FreeHand: Python urllib against its own root  (returns HTML)
 #
 # Production hardening (out of scope for this compose file):
-#   - Replace the test tokens in .env with real ones via `openssl rand`
+#   - scripts/setup_env.py generates the OpenConnector secrets; compose
+#     refuses to start without them (there are no built-in defaults)
 #   - Consider external Postgres for OC (replace SQLite with the
 #     postgres image, wire DATABASE_URL)
 #   - FreeHand's vault encryption key is auto-generated on first
@@ -37,9 +38,12 @@
 services:
   # ── OpenConnector runtime ──────────────────────────────────────────
   open-connector:
-    # Pin a specific tag (not :latest) for production reproducibility.
-    # :latest is fine for local dev — bump when upgrading.
-    image: ghcr.io/oomol-lab/open-connector:latest
+    # Pinned by digest so every install runs the version that was tested;
+    # ":latest" changes underneath you. Keep in step with OC_IMAGE in
+    # scripts/provision_tenant.py. To upgrade: docker pull
+    # ghcr.io/oomol-lab/open-connector:latest, test it, then copy the new
+    # digest from `docker image inspect --format "{{.RepoDigests}}"`.
+    image: ghcr.io/oomol-lab/open-connector@sha256:61e5e29a9ae7d8e817e8050d062ed57134e069cea3e7eef7cb15349c11b7a76d
     container_name: freehand-open-connector
     restart: unless-stopped
     # 127.0.0.1 keeps OC off the network. If FreeHand is later reachable
@@ -48,13 +52,28 @@ services:
       - "127.0.0.1:3001:3001"
     environment:
       - PORT=3001
-      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:-admintest123}
-      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:-runttest123}
-      - OOMOL_CONNECT_ENCRYPTION_KEY=${OC_ENCRYPTION_KEY:-this-is-a-thirty-two-byte-test-key}
+      # The exact address people open the OC console at. OC builds its
+      # OAuth callback (<origin>/oauth/callback) from it, and refuses
+      # sign-ins from any other origin (localhost and 127.0.0.1 differ).
+      # Unset, OC assumed http://localhost:<PORT> while FreeHand linked to
+      # http://127.0.0.1:3001, so sign-ins could not complete.
+      - OOMOL_CONNECT_ORIGIN=${OOMOL_CONNECT_CONSOLE_URL:-http://localhost:3001}
+      # No defaults: the old built-in test values were public. Compose
+      # stops with a message if .env doesn't set these.
+      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:?OC_ADMIN_TOKEN is not set - run python scripts/setup_env.py}
+      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
+      - OOMOL_CONNECT_ENCRYPTION_KEY=${OC_ENCRYPTION_KEY:?OC_ENCRYPTION_KEY is not set - run python scripts/setup_env.py}
     volumes:
-      # OC's own SQLite store — Docker-managed anonymous volume,
-      # separate from FreeHand's ./vault. Don't conflate.
-      - oc-data:/data
+      # OC's own SQLite store. OC keeps it in /app/data (its
+      # OOMOL_CONNECT_DATA_DIR). This used to mount /data, which OC never
+      # uses, so its data sat in an unnamed volume and a new, empty one
+      # was created whenever the container was rebuilt.
+      - oc-data:/app/data
+    # IPv4 only. On some networks Docker's DNS hands back only IPv6
+    # addresses for login.microsoftonline.com, but the container has no
+    # IPv6 route, so Microsoft sign-ins failed with ENETUNREACH.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     healthcheck:
       # OC's /health endpoint returns {"ok": true} when ready.
       # wget --spider does a HEAD request, which OC handles correctly.
@@ -108,14 +127,23 @@ services:
       # user's browser; the internal service name above is not.
       # Override this for a hosted deployment, e.g.
       # https://connect.example.com.
-      - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://127.0.0.1:3001}
-      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:-runttest123}
+      - OOMOL_CONNECT_CONSOLE_URL=${OOMOL_CONNECT_CONSOLE_URL:-http://localhost:3001}
+      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set - run python scripts/setup_env.py}
       # Optional: Composio-managed Meta authentication. These stay unset
       # unless Facebook/Instagram should use the Composio adapter.
       - COMPOSIO_API_KEY=${COMPOSIO_API_KEY:-}
       - COMPOSIO_AUTH_CONFIG_FACEBOOK=${COMPOSIO_AUTH_CONFIG_FACEBOOK:-}
       - COMPOSIO_AUTH_CONFIG_INSTAGRAM=${COMPOSIO_AUTH_CONFIG_INSTAGRAM:-}
       - COMPOSIO_BASE_URL=${COMPOSIO_BASE_URL:-https://backend.composio.dev}
+      # The WhatsApp bridge runs on the host (npm start in freehand/bridge).
+      # Inside this container 127.0.0.1 is the container, so reach the host.
+      - FREEHAND_BRIDGE_URL=${FREEHAND_BRIDGE_URL:-http://host.docker.internal:8765}
+    extra_hosts:
+      # Docker Desktop provides host.docker.internal; Linux needs this line.
+      - "host.docker.internal:host-gateway"
+    # IPv4 only, as for open-connector above.
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     volumes:
       # Mount the host's vault directory so encryption.key, connections.db,
       # broker_config.json, credential_store.json, AND agent.db all

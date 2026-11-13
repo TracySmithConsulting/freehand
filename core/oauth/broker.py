@@ -195,7 +195,7 @@ def get_client_credentials(service: str) -> Tuple[Optional[str], Optional[str], 
     config = _load_broker_config()
     p = config.get("providers", {}).get(service, {})
     cid = p.get("client_id", "")
-    sec = p.get("client_secret", "")
+    sec = _provider_secret(p)
     if cid and sec:
         return cid, sec, "broker"
 
@@ -289,8 +289,8 @@ def broker_status() -> dict:
         "broker_config_path": "/path/to/broker_config.json",
         "broker_config_exists": true,
         "services": {
-          "google": {"configured": true, "source": "broker"},
-          "microsoft": {"configured": false, "source": "none"},
+          "zoom": {"configured": true, "source": "broker"},
+          "facebook": {"configured": false, "source": "none"},
           ...
         },
       }
@@ -302,8 +302,9 @@ def broker_status() -> dict:
         "services": {},
     }
     # Round 14: github left this loop - it connects via OpenConnector
-    # (api_key), not the FreeHand OAuth broker.
-    for service in ("google", "microsoft", "zoom", "facebook", "instagram", "email"):
+    # (api_key), not the FreeHand OAuth broker. Nov 2026: so do Google
+    # and Microsoft (Gmail, Calendar, Sheets, Outlook ...).
+    for service in ("zoom", "facebook", "instagram", "email"):
         cid, sec, source = get_client_credentials(service)
         out["services"][service] = {
             "configured": cid is not None and sec is not None,
@@ -312,11 +313,59 @@ def broker_status() -> dict:
     return out
 
 
+def _provider_secret(entry: dict) -> str:
+    """Return a legacy-broker provider's client_secret in plaintext.
+
+    Secrets are stored Fernet-encrypted as ``client_secret_enc``. A plain
+    ``client_secret`` (written before encryption was added) is still
+    accepted so old vaults keep working until migrate_plaintext_secrets()
+    rewrites them. Returns "" on a missing or undecryptable secret.
+    """
+    enc = entry.get("client_secret_enc", "")
+    if enc:
+        try:
+            from core.oauth.manager import decrypt
+            return decrypt(enc)
+        except Exception as e:
+            log.warning("broker: could not decrypt client_secret_enc: %s", e)
+            return ""
+    return entry.get("client_secret", "") or ""
+
+
+def _encrypt_providers(providers: dict) -> dict:
+    """Copy of ``providers`` with every plaintext client_secret encrypted."""
+    from core.oauth.manager import encrypt
+    out = {}
+    for service, entry in providers.items():
+        if not isinstance(entry, dict):
+            out[service] = entry
+            continue
+        entry = dict(entry)
+        plain = entry.pop("client_secret", "")
+        if plain:
+            entry["client_secret_enc"] = encrypt(plain)
+        out[service] = entry
+    return out
+
+
+def _write_config_atomic(config: dict) -> None:
+    p = _broker_config_path()
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    tmp.replace(p)
+
+
 def write_broker_config(providers: dict) -> dict:
-    """Write broker_config.json with the given providers dict.
+    """Write the ``providers`` block of broker_config.json.
 
     Atomic write via tmp file + rename. Used by the admin endpoint
     POST /api/broker/config.
+
+    Every client_secret is Fernet-encrypted before it touches disk (stored
+    as ``client_secret_enc``). Other top-level blocks — notably
+    ``shared_apps`` — are preserved; this used to overwrite the whole file
+    and silently delete every registered shared app.
 
     Args:
         providers: dict like {"google": {"client_id": "...", "client_secret": "..."},
@@ -324,10 +373,28 @@ def write_broker_config(providers: dict) -> dict:
 
     Returns the new broker_status() snapshot.
     """
-    p = _broker_config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"providers": providers}
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    tmp.replace(p)
+    config = _load_broker_config()
+    config["providers"] = _encrypt_providers(providers)
+    _write_config_atomic(config)
     return broker_status()
+
+
+def migrate_plaintext_secrets() -> int:
+    """Encrypt any plaintext client_secret left in the providers block.
+
+    Idempotent: returns the number of secrets encrypted (0 once migrated).
+    Called once at server startup.
+    """
+    config = _load_broker_config()
+    providers = config.get("providers")
+    if not isinstance(providers, dict):
+        return 0
+    count = sum(
+        1 for e in providers.values()
+        if isinstance(e, dict) and e.get("client_secret")
+    )
+    if count:
+        config["providers"] = _encrypt_providers(providers)
+        _write_config_atomic(config)
+        log.info("broker: encrypted %d plaintext provider secret(s)", count)
+    return count

@@ -30,6 +30,7 @@ That creates, under `~/freehand-tenants/acme-corp/`:
 |---|---|
 | `compose.yml` | The tenant's **complete** compose file (see below) |
 | `.env` | Per-tenant secrets: OpenConnector tokens, the OC encryption key |
+| `composio.env` | Blank unless the customer uses Composio; then **their own** Composio project key |
 | `vault/encryption.key` | The tenant's Fernet key - **back this up** |
 | `vault/settings.json` | Settings skeleton; the customer adds their LLM key |
 | `Caddyfile.site` | The tenant's vhost: TLS, basic auth, access log |
@@ -102,6 +103,43 @@ proxies to `127.0.0.1:8100` returns **502**. The vhosts therefore proxy to
 `host.docker.internal:8100`, and the Caddy service carries
 `extra_hosts: ["host.docker.internal:host-gateway"]` so that name resolves
 to the host.
+
+**Chat webhooks skip the password.** Telegram and Slack cannot send
+basic-auth credentials, so the vhost exempts exactly `POST /api/gateway/telegram`
+and `POST /api/gateway/slack`. FreeHand authenticates those itself (Telegram
+secret-token header, Slack request signature) and then checks `allow_from`.
+Every other path stays behind basic auth. Tenants provisioned before this
+change need their `Caddyfile.site` regenerated (or edited by hand) and Caddy
+reloaded before Telegram or Slack will work.
+
+**The public address is set for you.** The tenant `.env` sets
+`FREEHAND_PUBLIC_BASE_URL=https://<hostname>`, and every OAuth/Composio callback
+and approval link is built from it (behind Caddy, FreeHand cannot work it out
+from the request). Register `https://<hostname>/api/integrations/<service>/callback`
+with each OAuth provider. Tenants provisioned earlier: add that line to their
+`.env` and to the `freehand` service environment, then recreate the container.
+
+**Two DNS records per tenant.** The OpenConnector console, where customers
+connect apps such as Slack, gets its own address: `connect.<hostname>` by
+default, or `--connect-hostname`. It sits behind the same password. Point
+both `<hostname>` and `connect.<hostname>` at the box. (The console used to
+be linked at FreeHand's own address, where Caddy only serves FreeHand, so
+customers got "not found". It can't share FreeHand's address under a path,
+because both use `/api` and the site root.)
+
+**Composio: one project per customer.** A Composio API key can act on every
+account connected in its Composio project. So never give tenants your own
+or a shared key: anyone who read one tenant's settings could post as every
+other tenant. If a customer uses Composio, create a Composio project for
+them and put that project's key in their `composio.env`. It is read straight
+into the container, never through `${...}` substitution, which compose
+fills from the operator's shell first.
+
+**Nothing secret is baked into the image.** `.dockerignore` excludes every
+`.env` file, key files, and the WhatsApp session folder. Before this,
+images built from the operator's checkout carried the operator's `.env`
+(Composio key included) into every tenant's image. Rebuild existing tenant
+images (`docker compose up -d --build`) to drop it.
 
 **`basicauth` is deprecated.** Use `basic_auth`. Caddy 2 logs a
 deprecation warning on every load otherwise.

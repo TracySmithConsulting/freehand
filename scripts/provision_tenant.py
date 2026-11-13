@@ -82,6 +82,16 @@ TENANTS_ROOT = Path.home() / "freehand-tenants"
 BACKUP_ROOT = Path.home() / "freehand-key-backups"
 
 DEFAULT_BASE_PORT = 8100
+
+# OpenConnector image, pinned by digest so every tenant runs exactly the
+# version that was tested (":latest" changes underneath you). Keep in step
+# with the repo's compose.yml. To upgrade: docker pull
+# ghcr.io/oomol-lab/open-connector:latest, test it, then copy the new
+# digest from `docker image inspect --format "{{.RepoDigests}}"`.
+OC_IMAGE = (
+    "ghcr.io/oomol-lab/open-connector"
+    "@sha256:61e5e29a9ae7d8e817e8050d062ed57134e069cea3e7eef7cb15349c11b7a76d"
+)
 CADDY_CONTAINER = "freehand-caddy"
 
 # Ports FreeHand/OpenConnector need per tenant.
@@ -349,7 +359,7 @@ def build_compose(
 
 services:
   open-connector:
-    image: ghcr.io/oomol-lab/open-connector:latest
+    image: {OC_IMAGE}
     container_name: freehand-oc-{safe}
     restart: unless-stopped
     # 127.0.0.1 keeps OC off the network. Caddy is the only way in.
@@ -357,11 +367,14 @@ services:
       - "127.0.0.1:{oc_port}:3001"
     environment:
       - PORT=3001
+      # The console's public address; OC builds its OAuth callback from it.
+      - OOMOL_CONNECT_ORIGIN=${{OOMOL_CONNECT_CONSOLE_URL}}
       - OOMOL_CONNECT_ADMIN_TOKEN=${{OC_ADMIN_TOKEN}}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${{OC_RUNTIME_TOKEN}}
       - OOMOL_CONNECT_ENCRYPTION_KEY=${{OC_ENCRYPTION_KEY}}
     volumes:
-      - oc-data:/data
+      # OC keeps its data in /app/data (OOMOL_CONNECT_DATA_DIR), not /data.
+      - oc-data:/app/data
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
       interval: 10s
@@ -397,10 +410,15 @@ services:
       - OOMOL_CONNECT_BASE_URL=http://open-connector:3001
       - OOMOL_CONNECT_CONSOLE_URL=${{OOMOL_CONNECT_CONSOLE_URL}}
       - OOMOL_CONNECT_RUNTIME_TOKEN=${{OC_RUNTIME_TOKEN}}
-      - COMPOSIO_API_KEY=${{COMPOSIO_API_KEY:-}}
-      - COMPOSIO_AUTH_CONFIG_FACEBOOK=${{COMPOSIO_AUTH_CONFIG_FACEBOOK:-}}
-      - COMPOSIO_AUTH_CONFIG_INSTAGRAM=${{COMPOSIO_AUTH_CONFIG_INSTAGRAM:-}}
-      - COMPOSIO_BASE_URL=${{COMPOSIO_BASE_URL:-https://backend.composio.dev}}
+      # Public https address behind Caddy; OAuth callbacks are built from it.
+      - FREEHAND_PUBLIC_BASE_URL=${{FREEHAND_PUBLIC_BASE_URL:-}}
+    # Composio settings come from this tenant's own composio.env, read
+    # straight into the container. Not `${{COMPOSIO_API_KEY}}` substitution:
+    # compose fills that from the operator's shell first, so a key exported
+    # there would have been handed to every tenant.
+    env_file:
+      - path: ./composio.env
+        required: false
     volumes:
       - ./vault:/app/vault
     healthcheck:
@@ -418,7 +436,7 @@ volumes:
 """
 
 
-def build_env(customer: str, oc_port: int, console_url: str) -> str:
+def build_env(customer: str, oc_port: int, console_url: str, public_url: str = "") -> str:
     """Per-customer secrets. Each gets its own runtime token and OC key."""
     runtime_token = secrets.token_urlsafe(32)
     oc_admin = secrets.token_urlsafe(24)
@@ -446,12 +464,39 @@ OC_RUNTIME_TOKEN={runtime_token}
 OC_ENCRYPTION_KEY={oc_encryption}
 
 # FreeHand
-OOMOL_CONNECT_CONSOLE_URL={console_url}{uid_gid}
+OOMOL_CONNECT_CONSOLE_URL={console_url}
+# The tenant's public https address. OAuth and Composio callbacks and
+# approval links are built from this; behind Caddy, FreeHand cannot work
+# it out from the request. Register {{this}}/api/integrations/<service>/callback
+# with each OAuth provider.
+FREEHAND_PUBLIC_BASE_URL={public_url}{uid_gid}
 
-# Composio (optional - leave blank unless the customer uses it)
+# Composio settings live in composio.env, not here.
+"""
+
+
+def build_composio_env(customer: str) -> str:
+    """Per-customer Composio settings, blank until the customer needs it.
+
+    A Composio API key can act on EVERY account connected in its Composio
+    project. So each customer gets their own Composio project and key;
+    the operator's own key must never go in here.
+    """
+    return f"""# Composio for customer '{customer}' (optional).
+#
+# Leave blank unless this customer connects Facebook or Instagram through
+# Composio. If they do, create a Composio project FOR THIS CUSTOMER ONLY
+# and use that project's key and auth configs here.
+#
+# Never paste your own or another customer's key: a Composio key can act
+# on every account connected in its project, so a shared key would let
+# one tenant's box post as every other tenant.
+#
+# After editing: docker compose up -d
 COMPOSIO_API_KEY=
 COMPOSIO_AUTH_CONFIG_FACEBOOK=
 COMPOSIO_AUTH_CONFIG_INSTAGRAM=
+COMPOSIO_BASE_URL=https://backend.composio.dev
 """
 
 
@@ -506,12 +551,19 @@ def hash_password() -> tuple[str | None, str]:
     return digest, password
 
 
+def connect_hostname_for(hostname: str) -> str:
+    """Default address of a tenant's OpenConnector console."""
+    return f"connect.{hostname}" if hostname else ""
+
+
 def build_caddy_site(
     hostname: str,
     freehand_port: int,
     auth_user: str,
     auth_hash: str,
     log_name: str,
+    oc_port: int | None = None,
+    connect_hostname: str = "",
 ) -> str:
     """One Caddy vhost: TLS + basic auth + access log in front of FreeHand.
 
@@ -529,35 +581,42 @@ def build_caddy_site(
 
     Note `basic_auth`, not `basicauth` - the latter is deprecated in Caddy 2
     and logs a deprecation warning on every load.
-    """
-    return f"""# Auto-generated by scripts/provision_tenant.py for customer '{hostname}'.
-# Include this from the main Caddyfile:  import /etc/caddy/sites/*.site
-# Safe to edit by hand afterwards.
 
-http://{hostname} {{
-\tredir https://{hostname}{{uri}} 308
+    Chat webhooks skip basic auth. Telegram and Slack cannot send a
+    basic-auth password, so with auth on every path the chat gateways could
+    never work on a hosted box. Exactly two paths are exempt, POST only:
+    /api/gateway/telegram and /api/gateway/slack. FreeHand authenticates
+    those itself (Telegram secret-token header, Slack HMAC signature) and
+    then checks allow_from. Everything else, including the rest of
+    /api/gateway/*, stays behind the password. WhatsApp is not exempt: its
+    bridge runs next to FreeHand and never comes in through Caddy.
+
+    The OpenConnector console gets its own address (connect.<hostname> by
+    default), behind the same password. FreeHand sends people there to
+    connect apps such as Slack. It used to send them to FreeHand's own
+    address, where Caddy only serves FreeHand, so they got "not found".
+    The console can't live under a path on FreeHand's address: both use
+    /api and the site root.
+    """
+    connect_block = ""
+    if oc_port and connect_hostname:
+        connect_block = f"""
+# OpenConnector console: where customers connect apps such as Slack.
+# Needs its own DNS record pointing at this box.
+http://{connect_hostname} {{
+\tredir https://{connect_hostname}{{uri}} 308
 }}
 
-https://{hostname} {{
-\t# Auth: bcrypt hash only. Never a plaintext password.
+https://{connect_hostname} {{
 \tbasic_auth {{
 \t\t{auth_user} {auth_hash}
 \t}}
+\treverse_proxy host.docker.internal:{oc_port}
 
-\t# Per-tenant access log - who hit this tenant, when, and what they asked
-\t# for. This is the audit trail a leak test needs.
 \tlog {{
-\t\toutput file /var/log/caddy/{log_name}.log {{
+\t\toutput file /var/log/caddy/{log_name}-connect.log {{
 \t\t\troll_size 10MiB
 \t\t\troll_keep 5
-\t\t}}
-\t}}
-
-\treverse_proxy host.docker.internal:{freehand_port} {{
-\t\t# Agent actions can be slow; don't let the proxy cut them off.
-\t\ttransport http {{
-\t\t\tread_timeout 300s
-\t\t\twrite_timeout 300s
 \t\t}}
 \t}}
 
@@ -569,6 +628,59 @@ https://{hostname} {{
 \t}}
 }}
 """
+    return f"""# Auto-generated by scripts/provision_tenant.py for customer '{hostname}'.
+# Include this from the main Caddyfile:  import /etc/caddy/sites/*.site
+# Safe to edit by hand afterwards.
+
+http://{hostname} {{
+\tredir https://{hostname}{{uri}} 308
+}}
+
+https://{hostname} {{
+\t# Chat webhooks: Telegram and Slack cannot send a basic-auth password.
+\t# FreeHand authenticates these two itself (Telegram secret-token header,
+\t# Slack signature) and checks allow_from. POST only; nothing else
+\t# bypasses the password below.
+\t@chat_webhooks {{
+\t\tmethod POST
+\t\tpath /api/gateway/telegram /api/gateway/slack
+\t}}
+\thandle @chat_webhooks {{
+\t\treverse_proxy host.docker.internal:{freehand_port}
+\t}}
+
+\thandle {{
+\t\t# Auth: bcrypt hash only. Never a plaintext password.
+\t\tbasic_auth {{
+\t\t\t{auth_user} {auth_hash}
+\t\t}}
+
+\t\treverse_proxy host.docker.internal:{freehand_port} {{
+\t\t\t# Agent actions can be slow; don't let the proxy cut them off.
+\t\t\ttransport http {{
+\t\t\t\tread_timeout 300s
+\t\t\t\twrite_timeout 300s
+\t\t\t}}
+\t\t}}
+\t}}
+
+\t# Per-tenant access log - who hit this tenant, when, and what they asked
+\t# for. This is the audit trail a leak test needs.
+\tlog {{
+\t\toutput file /var/log/caddy/{log_name}.log {{
+\t\t\troll_size 10MiB
+\t\t\troll_keep 5
+\t\t}}
+\t}}
+
+\theader {{
+\t\tX-Content-Type-Options nosniff
+\t\tX-Frame-Options DENY
+\t\tReferrer-Policy no-referrer
+\t\t-Server
+\t}}
+}}
+{connect_block}"""
 
 
 def build_caddy_main() -> str:
@@ -605,11 +717,24 @@ def build_summary(
     hostname: str,
     auth_user: str,
     hashed: bool,
+    connect_hostname: str = "",
 ) -> str:
     url_line = (
         f"- URL: https://{hostname}"
         if hostname
         else "- URL: (no hostname set - re-provision with --hostname to get TLS)"
+    )
+    connect_section = (
+        f"""
+## DNS: two records
+
+Point BOTH of these at this box, or connecting apps won't work:
+
+    {hostname}
+    {connect_hostname}   (the OpenConnector console, same password)
+"""
+        if hostname and connect_hostname
+        else ""
     )
     auth_note = (
         "- Auth: bcrypt hash written to Caddyfile.site"
@@ -631,6 +756,11 @@ Provisioned {datetime.date.today().isoformat()}.
 
 FreeHand's port is bound to 127.0.0.1 only. The Caddy vhost is the only
 route in.
+{connect_section}
+## Composio (only if this customer uses it)
+
+Put THIS customer's own Composio project key in `composio.env`, then run
+`docker compose up -d`. Never use your own or a shared key.
 
 ## Start
 
@@ -668,8 +798,13 @@ def provision(
     freehand_port: int,
     dry_run: bool,
     auth_user: str,
+    connect_hostname: str = "",
 ) -> int:
     oc_port = freehand_port + 1
+    if hostname and not connect_hostname:
+        connect_hostname = connect_hostname_for(hostname)
+    if not hostname:
+        connect_hostname = ""
 
     existing = load_tenants()
     if customer in existing:
@@ -685,7 +820,7 @@ def provision(
     key = Fernet.generate_key().decode()
 
     console_url = (
-        f"https://{hostname}" if hostname else f"http://127.0.0.1:{oc_port}"
+        f"https://{connect_hostname}" if connect_hostname else f"http://127.0.0.1:{oc_port}"
     )
 
     plan = [
@@ -695,6 +830,7 @@ def provision(
         f"freehand:    127.0.0.1:{freehand_port} (loopback only)",
         f"openconn:    127.0.0.1:{oc_port} (loopback only)",
         f"hostname:    {hostname or '(none - no TLS, no auth vhost)'}",
+        f"connect:     {connect_hostname or '(none)'} (OpenConnector console)",
         f"auth user:   {auth_user}",
         "fernet key:  generated (never printed)",
         f"backups to:  {BACKUP_ROOT / customer}",
@@ -731,7 +867,9 @@ def provision(
     write_secret_file(vault / "settings.json", json.dumps(settings, indent=2))
 
     # 4. Per-customer secrets.
-    write_secret_file(base / ".env", build_env(customer, oc_port, console_url))
+    public_url = f"https://{hostname}" if hostname else ""
+    write_secret_file(base / ".env", build_env(customer, oc_port, console_url, public_url))
+    write_secret_file(base / "composio.env", build_composio_env(customer))
 
     # 5. Self-contained compose file. See build_compose() for why this is
     #    not an override of the repo's compose.yml.
@@ -753,6 +891,8 @@ def provision(
                     auth_user,
                     auth_hash or "",
                     container_suffix(customer),
+                    oc_port,
+                    connect_hostname,
                 ),
                 encoding="utf-8",
             )
@@ -792,6 +932,7 @@ def provision(
             hostname,
             auth_user,
             hashed and bool(hostname),
+            connect_hostname,
         ),
         encoding="utf-8",
     )
@@ -810,11 +951,15 @@ def provision(
 
     if hostname and hashed:
         log(f"\nCustomer sign-in:\n  https://{hostname}\n  user: {auth_user}")
+        log(f"  (the same sign-in opens https://{connect_hostname})")
         log(f"  pass: {auth_password}")
         log("\nThis password is shown ONCE. Hand it over now; only the hash")
         log("is stored.")
     elif hostname:
         log(f"\nCustomer sign-in: https://{hostname} (password not hashed - see note above)")
+
+    if connect_hostname:
+        log(f"\nDNS: point both {hostname} and {connect_hostname} at this box.")
 
     log("\nBack up the second key copy somewhere Tracy controls before the")
     log("customer connects a real account.")
@@ -925,6 +1070,10 @@ def main() -> int:
         help="Public hostname for TLS + auth, e.g. acme.example.com",
     )
     parser.add_argument(
+        "--connect-hostname",
+        help="Address for the OpenConnector console (default connect.<hostname>)",
+    )
+    parser.add_argument(
         "--auth-user", default="tenant", help="Basic-auth username"
     )
     parser.add_argument(
@@ -962,8 +1111,15 @@ def main() -> int:
     try:
         customer = normalise_customer(args.customer)
         hostname = normalise_hostname(args.hostname)
+        connect_hostname = normalise_hostname(args.connect_hostname)
+        if connect_hostname and connect_hostname == hostname:
+            raise ProvisionError(
+                "--connect-hostname must differ from --hostname: the "
+                "OpenConnector console needs its own address."
+            )
         return provision(
-            customer, hostname, args.port, args.dry_run, args.auth_user
+            customer, hostname, args.port, args.dry_run, args.auth_user,
+            connect_hostname,
         )
     except ProvisionError as exc:
         log(f"ERROR: {exc}")

@@ -39,6 +39,13 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 # and this list updates automatically.
 ALLOWED_SERVICES = list(CONNECTORS.keys())
 
+# OpenConnector apps that FreeHand's built-in email, calendar and Sheets
+# tools use (core/tools/integrations.py OC_APPS). Connect sends people to
+# OpenConnector's own sign-in page for each.
+OC_FEATURED_SERVICES = (
+    "gmail", "googlecalendar", "googlesheets", "outlook", "outlook_calendar",
+)
+
 
 def _load_oauth_settings() -> dict:
     """Delegate to agent_config so there is ONE patchable settings path
@@ -271,10 +278,8 @@ def _get_redirect_uri(service: str, request: Request) -> str:
     # OAuth providers such as Meta require an HTTPS callback on a public
     # hostname. A configured base URL lets a local UI or reverse proxy use
     # the same stable callback instead of deriving it from the incoming host.
-    public_base = (
-        os.environ.get("FREEHAND_PUBLIC_BASE_URL", "").strip()
-        or settings.get("oauth", {}).get("public_base_url", "").strip()
-    ).rstrip("/")
+    from core.agent_config import resolve_public_base_url
+    public_base = resolve_public_base_url(settings)
     if public_base:
         return f"{public_base}/api/integrations/{service}/callback"
 
@@ -283,7 +288,9 @@ def _get_redirect_uri(service: str, request: Request) -> str:
     # Route is /api/integrations/{service}/callback — NOT
     # /api/integrations/callback/{service}. The latter is what the
     # original code generated, which is why every OAuth callback 404'd.
-    current = f"{request.url.scheme}://{request.url.hostname}:{request.url.port}/api/integrations/{service}/callback"
+    # netloc, not hostname:port — port is None on a default port, which
+    # used to produce "https://host:None/...".
+    current = f"{request.url.scheme}://{request.url.netloc}/api/integrations/{service}/callback"
     if stored and stored != current:
         if "oauth" not in settings:
             settings["oauth"] = {}
@@ -291,16 +298,14 @@ def _get_redirect_uri(service: str, request: Request) -> str:
             settings["oauth"]["redirect_uris"] = {}
         settings["oauth"]["redirect_uris"][service] = current
         _save_oauth_settings(settings)
-    return current or current
+    return current
 
 
 def _get_composio_callback_uri(service: str, label: str, request: Request) -> str:
     """Build the callback Composio will redirect to after hosted auth."""
     settings = _load_oauth_settings()
-    public_base = (
-        os.environ.get("FREEHAND_PUBLIC_BASE_URL", "").strip()
-        or settings.get("oauth", {}).get("public_base_url", "").strip()
-    ).rstrip("/")
+    from core.agent_config import resolve_public_base_url
+    public_base = resolve_public_base_url(settings)
     if public_base:
         base = public_base
     else:
@@ -356,13 +361,18 @@ async def list_integrations(request: Request):
     _composio = importlib.import_module("core.oauth.composio")
     return {
         "connections": list(services.values()),
-        "available_services": ALLOWED_SERVICES,
+        # Google and Microsoft apps connect through OpenConnector; list the
+        # ones FreeHand's own tools use first, so they are easy to find.
+        "available_services": ALLOWED_SERVICES + list(OC_FEATURED_SERVICES),
         "composio_services": _composio.configured_services(),
         # Round 15.6: OpenConnector catalogue services that the static
         # allowlist does NOT already cover, so the Connections panel can
         # offer them as connect targets (they 302 into OC's consent
         # screen). [] when OC is unreachable — the panel hides the group.
-        "oc_services": [s for s in _oc_catalogue() if s not in ALLOWED_SERVICES],
+        "oc_services": [
+            s for s in _oc_catalogue()
+            if s not in ALLOWED_SERVICES and s not in OC_FEATURED_SERVICES
+        ],
     }
 
 
@@ -444,6 +454,11 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
                 oc_base = os.environ.get("OOMOL_CONNECT_BASE_URL", "http://127.0.0.1:3000").rstrip("/")
                 console_url = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/")
                 target = f"{console_url or oc_base}/providers/{service}"
+                if label:
+                    # OC names a new connection with a random id unless told;
+                    # FreeHand finds accounts by this name (its label).
+                    import urllib.parse as _up
+                    target += "?" + _up.urlencode({"connectionName": label})
                 return RedirectResponse(target, status_code=302)
             else:
                 # Neither tier-1b nor tier-5 has it. Round 8 honest-option-A

@@ -165,8 +165,11 @@ def intercept_action(
     })
 
     # Send external notification if source is telegram/slack
-    if source in ("telegram", "slack"):
-        _send_external_approval(action_type, description, approval_id, source)
+    if source in ("telegram", "slack", "whatsapp"):
+        _send_external_approval(
+            action_type, description, approval_id, source,
+            caller_id=caller_id, payload=payload,
+        )
 
     return {
         "allowed": False,
@@ -202,11 +205,26 @@ def _send_external_approval(
     description: str,
     approval_id: int,
     source: str,
+    caller_id: Optional[str] = None,
+    payload: Optional[dict] = None,
 ) -> None:
+    details = _approval_details(payload)
     if source == "telegram":
-        _send_telegram_approval(action_type, description, approval_id)
+        _send_telegram_approval(action_type, description, approval_id, caller_id, details)
     elif source == "slack":
-        _send_slack_approval(action_type, description, approval_id)
+        _send_slack_approval(action_type, description, approval_id, details)
+    elif source == "whatsapp":
+        _send_whatsapp_approval(action_type, description, approval_id, caller_id, details)
+
+
+def _approval_details(payload: Optional[dict], cap: int = 400) -> str:
+    """Short preview of a held tool call's arguments, so a person approving
+    from a phone can see WHAT they are approving, not just the tool name."""
+    args = (payload or {}).get("args")
+    if not args:
+        return ""
+    text = json.dumps(args, ensure_ascii=False, default=str)
+    return text if len(text) <= cap else text[:cap] + "..."
 
 
 def _get_approval_base_url() -> str:
@@ -219,8 +237,8 @@ def _get_approval_base_url() -> str:
 
     Returns the URL with no trailing slash.
     """
-    settings = _load_settings()
-    base = settings.get("public_base_url", "").strip().rstrip("/")
+    from core.agent_config import resolve_public_base_url
+    base = resolve_public_base_url(_load_settings())
     if base:
         return base
     # Fallback with warning. Single warning per process is enough.
@@ -238,23 +256,34 @@ def _get_approval_base_url() -> str:
 _get_approval_base_url._warned = False
 
 
-def _send_telegram_approval(action_type: str, description: str, approval_id: int) -> None:
+def _send_telegram_approval(
+    action_type: str,
+    description: str,
+    approval_id: int,
+    caller_id: Optional[str] = None,
+    details: str = "",
+) -> None:
     settings = _load_settings()
     bot_token = settings.get("telegram_bot_token", "")
-    chat_id = settings.get("telegram_chat_id", "")
+    # Send the prompt to the chat that made the request (only that chat can
+    # approve it remotely); fall back to the configured owner chat.
+    chat_id = str(caller_id or "").strip() or settings.get("telegram_chat_id", "")
     if not bot_token or not chat_id:
         return
+    # Plain text, not Markdown: tool args can contain * _ ` which would make
+    # Telegram reject the whole message.
     text = (
-        f"🔐 *Approval Request #{approval_id}*\n\n"
-        f"*Action:* {action_type}\n"
-        f"*Description:* {description}\n\n"
-        f"Reply with `/approve {approval_id}` or `/deny {approval_id}`"
+        f"Approval request #{approval_id}\n"
+        f"Action: {action_type}\n"
+        f"Description: {description}\n"
+        + (f"Details: {details}\n" if details else "")
+        + f"\nReply /approve {approval_id} or /deny {approval_id}"
     )
     url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     if not _HAS_HTTP:
         return
     try:
-        payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}).encode()
+        payload = json.dumps({"chat_id": chat_id, "text": text}).encode()
         req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
@@ -262,7 +291,55 @@ def _send_telegram_approval(action_type: str, description: str, approval_id: int
         pass
 
 
-def _send_slack_approval(action_type: str, description: str, approval_id: int) -> None:
+def _send_whatsapp_approval(
+    action_type: str,
+    description: str,
+    approval_id: int,
+    caller_id: Optional[str] = None,
+    details: str = "",
+) -> None:
+    """Send the approval prompt to the WhatsApp chat that asked, via the
+    bridge's authenticated /reply endpoint."""
+    jid = str(caller_id or "").strip()
+    secret = str(_load_settings().get("bridge_secret", "")).strip()
+    if not jid or not secret or not _HAS_HTTP:
+        return
+    from core.gateway import _get_bridge_url  # lazy: gateway imports security
+    text = (
+        f"Approval request #{approval_id}\n"
+        f"Action: {action_type}\n"
+        f"Description: {description}\n"
+        + (f"Details: {details}\n" if details else "")
+        + f"\nReply /approve {approval_id} or /deny {approval_id}"
+    )
+    try:
+        payload = json.dumps({"jid": jid, "text": text}).encode()
+        req = urllib.request.Request(
+            _get_bridge_url() + "/reply",
+            data=payload,
+            headers={"Content-Type": "application/json", "X-Bridge-Secret": secret},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception:
+        pass
+
+
+def _send_slack_approval(
+    action_type: str,
+    description: str,
+    approval_id: int,
+    details: str = "",
+) -> None:
+    """Post an approval prompt to the configured Slack webhook.
+
+    This used to post Approve/Deny link buttons pointing at
+    /api/approvals/<id>/approve. A link click is an unauthenticated GET
+    against a key-gated POST endpoint, so the buttons could never work.
+    Now it tells the person to reply in chat (or use the web console).
+    "approve 5" works without the slash, because Slack intercepts messages
+    that start with "/" as slash commands.
+    """
     settings = _load_settings()
     webhook = settings.get("slack_webhook_url", "")
     if not webhook:
@@ -270,34 +347,19 @@ def _send_slack_approval(action_type: str, description: str, approval_id: int) -
     if not _HAS_HTTP:
         return
 
-    # C5 fix: derive base URL from settings.public_base_url (with fallback).
-    # Slack buttons must be clickable from the user's browser; hardcoding
-    # localhost breaks any non-local deployment.
     base = _get_approval_base_url()
-
+    text = (
+        f"*Action:* {action_type}\n*Description:* {description}"
+        + (f"\n*Details:* `{details}`" if details else "")
+        + f"\n\nReply `approve {approval_id}` or `deny {approval_id}` to the "
+        f"FreeHand bot, or open the console: {base}"
+    )
     blocks = [
         {"type": "header", "text": {"type": "plain_text", "text": f"Approval Request #{approval_id}"}},
-        {"type": "section", "text": {"type": "mrkdwn", "text": f"*Action:* {action_type}\n*Description:* {description}"}},
-        {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Approve"},
-                    "url": f"{base}/api/approvals/{approval_id}/approve",
-                    "style": "primary",
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "Deny"},
-                    "url": f"{base}/api/approvals/{approval_id}/deny",
-                    "style": "danger",
-                },
-            ],
-        },
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
     ]
     try:
-        payload = json.dumps({"blocks": blocks}).encode()
+        payload = json.dumps({"blocks": blocks, "text": f"Approval request #{approval_id}"}).encode()
         req = urllib.request.Request(webhook, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as resp:
             resp.read()
@@ -390,11 +452,20 @@ def clear_pending_approvals(reason: str = "") -> int:
     return count
 
 
-# ── Round 15 slice 3: close the loop on held destructive actions ──────
-# REMOTE_SOURCES is the single source of truth for "which sources are
-# remote gateways vs a local terminal/web session". agent.py's N6 write
-# tightening and re_execute_approval() both gate on it, so it lives here.
+# ── Approvals: who may release a held action ─────────────────────────
+# REMOTE_SOURCES is the single source of truth for "which channels are
+# remote chat gateways vs the local web console / CLI". agent.py's N6
+# write tightening and the approval rules below both gate on it.
 REMOTE_SOURCES = {"telegram", "slack", "whatsapp"}
+
+# The rule is decided by WHERE THE APPROVAL IS GIVEN, not where the request
+# came from:
+#   - Web console / CLI (approver "local"): approving re-runs the held tool,
+#     whatever channel asked for it. That is the trusted surface.
+#   - Chat gateway: only the same chat that made the request can approve
+#     it, and only for registered, non-destructive tools. Destructive tools
+#     (e.g. github.delete_repo) can only be released from the web console,
+#     so a hijacked chat account can never fire one.
 
 
 def _get_approval(approval_id: int) -> Optional[dict]:
@@ -402,7 +473,7 @@ def _get_approval(approval_id: int) -> Optional[dict]:
     conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.execute(
-        "SELECT id, action_type, description, payload, status "
+        "SELECT id, action_type, description, payload, status, created_at "
         "FROM approvals WHERE id = ?",
         (approval_id,),
     )
@@ -411,28 +482,45 @@ def _get_approval(approval_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-async def re_execute_approval(approval_id: int) -> dict:
-    """Round 15 slice 3 — when an APPROVED destructive action is approved,
-    re-drive the exact tool + args it was held with.
+def _payload_of(row: dict) -> dict:
+    try:
+        payload = json.loads(row.get("payload") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
 
-    This is what makes the out-of-band /approve buttons real instead of
-    decorative: before this, handle_approval only flipped the DB status,
-    so approving a held github.delete_repo did nothing.
 
-    Source-gated (the security decision): only LOCAL-originating calls
-    re-execute. A call held at a remote gateway (telegram/slack/whatsapp)
-    stays veto/record-only — a remote /approve button must NOT fire a
-    destructive action.
+def _remote_release_refusal(tool: str) -> Optional[str]:
+    """Why a chat gateway may NOT release this tool (None if it may).
+
+    Fails closed: a tool the permission registry doesn't know is refused,
+    as is anything flagged destructive.
+    """
+    from core.agent_config import get_tool_permission
+    from core.tools import composio_registry as _composio_registry
+    from core.tools import registry as _registry
+    if get_tool_permission(tool) == "unknown":
+        return f"'{tool}' is not a registered tool, so it can only be approved in the FreeHand web console."
+    if _registry.is_destructive_tool(tool) or _composio_registry.is_destructive_tool(tool):
+        return f"'{tool}' is a destructive action, so it can only be approved in the FreeHand web console."
+    return None
+
+
+async def re_execute_approval(approval_id: int, approver: str = "local") -> dict:
+    """Re-drive the exact tool + args an APPROVED action was held with.
+
+    ``approver`` is the channel the approval was given from: "local" (web
+    console / CLI) or a REMOTE_SOURCES gateway. Remote approvers cannot
+    release destructive or unregistered tools (see _remote_release_refusal).
 
     Returns:
       {"re_executed": True, "tool": <name>, "result": <execute_tool result>}
       {"re_executed": False, "reason": <why>}  for any of:
-        missing row, status not 'approved', no tool in payload, remote source.
+        missing row, status not 'approved', no tool in payload, remote
+        approver releasing a destructive/unregistered tool.
 
-    The re-execute target is looked up lazily on the core.agent module
-    (agent.py imports security at top level, so a top-level import here
-    would be a cycle) — and lazily so a monkeypatched
-    core.agent.execute_tool is what actually runs.
+    core.agent is imported lazily (it imports security at top level), and
+    so that a monkeypatched core.agent.execute_tool is what actually runs.
     """
     row = _get_approval(approval_id)
     if row is None:
@@ -444,26 +532,109 @@ async def re_execute_approval(approval_id: int) -> dict:
             "reason": f"approval status is '{row.get('status')}', not approved",
         }
 
-    try:
-        payload = json.loads(row.get("payload") or "{}")
-    except (json.JSONDecodeError, TypeError):
-        payload = {}
-
+    payload = _payload_of(row)
     tool = payload.get("tool")
     if not tool:
         return {"re_executed": False, "reason": "approval payload has no tool"}
 
-    source = str(payload.get("source", ""))
-    if source in REMOTE_SOURCES:
-        return {
-            "re_executed": False,
-            "reason": (
-                f"remote source '{source}' is veto-only: a remote /approve "
-                "must not fire a destructive action"
-            ),
-        }
+    if approver in REMOTE_SOURCES:
+        refusal = _remote_release_refusal(tool)
+        if refusal:
+            return {"re_executed": False, "reason": refusal}
 
     args = payload.get("args") or {}
     import core.agent as _agent  # lazy: avoid import cycle + respect tests
     result = await _agent.execute_tool(tool, args)
     return {"re_executed": True, "tool": tool, "result": result}
+
+
+def _remote_ownership_refusal(row: Optional[dict], source: str, caller_id: str) -> Optional[str]:
+    """Check a chat user may act on this approval: it must exist, be pending,
+    and have been requested from this same channel and chat."""
+    if row is None or row.get("status") != "pending":
+        return "That approval was not found or has already been handled."
+    payload = _payload_of(row)
+    if (
+        str(payload.get("source", "")) != source
+        or str(payload.get("caller_id", "")) != str(caller_id)
+    ):
+        return (
+            "You can only approve or deny requests made from this chat. "
+            "Use the FreeHand web console for others."
+        )
+    return None
+
+
+# A chat approval must be given while the request is fresh. An old pending
+# request (the person may have forgotten it, or the situation changed) can
+# still be approved in the web console, where it is shown in full.
+REMOTE_APPROVAL_MAX_AGE_SECONDS = 24 * 3600
+
+
+def _is_stale(row: dict) -> bool:
+    """True if the approval is older than REMOTE_APPROVAL_MAX_AGE_SECONDS.
+
+    created_at is SQLite CURRENT_TIMESTAMP (UTC, "YYYY-MM-DD HH:MM:SS").
+    An unreadable timestamp counts as stale (fail closed).
+    """
+    from datetime import datetime, timezone
+    try:
+        created = datetime.strptime(str(row.get("created_at")), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return True
+    age = datetime.now(timezone.utc).replace(tzinfo=None) - created
+    return age.total_seconds() > REMOTE_APPROVAL_MAX_AGE_SECONDS
+
+
+def _summarise_result(result: Optional[dict], cap: int = 500) -> str:
+    content = (result or {}).get("content", "")
+    if not isinstance(content, str):
+        content = json.dumps(content, default=str)
+    return content if len(content) <= cap else content[:cap] + "..."
+
+
+async def approve_from_remote(approval_id: int, source: str, caller_id: str) -> str:
+    """/approve from a chat gateway. Returns the reply text for the chat."""
+    row = _get_approval(approval_id)
+    refusal = _remote_ownership_refusal(row, source, caller_id)
+    if refusal:
+        return refusal
+
+    if _is_stale(row):
+        hours = REMOTE_APPROVAL_MAX_AGE_SECONDS // 3600
+        return (
+            f"Approval #{approval_id} is more than {hours} hours old, so it can't be "
+            "approved from chat. Approve it in the FreeHand web console if it's still "
+            f"wanted, or reply /deny {approval_id}."
+        )
+
+    tool = _payload_of(row).get("tool")
+    if tool:
+        refusal = _remote_release_refusal(tool)
+        if refusal:
+            # Left pending on purpose, so it can still be approved locally.
+            return refusal
+
+    try:
+        handle_approval(approval_id, "approve")
+    except ValueError:
+        return "That approval was not found or has already been handled."
+
+    if not tool:
+        return f"Approved #{approval_id}."
+    outcome = await re_execute_approval(approval_id, approver=source)
+    if not outcome.get("re_executed"):
+        return f"Approved #{approval_id}, but it did not run: {outcome.get('reason', 'unknown reason')}"
+    return f"Approved #{approval_id}. Ran {tool}:\n{_summarise_result(outcome.get('result'))}"
+
+
+def deny_from_remote(approval_id: int, source: str, caller_id: str) -> str:
+    """/deny from a chat gateway. Same ownership rule as approve."""
+    refusal = _remote_ownership_refusal(_get_approval(approval_id), source, caller_id)
+    if refusal:
+        return refusal
+    try:
+        handle_approval(approval_id, "deny")
+    except ValueError:
+        return "That approval was not found or has already been handled."
+    return f"Denied #{approval_id}."

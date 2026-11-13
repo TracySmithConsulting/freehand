@@ -106,12 +106,21 @@ def _get_max_body_bytes() -> int:
         return DEFAULT_MAX_BODY_BYTES
 
 
+# Chat webhooks: authenticated by their own secret or signature (see each
+# handler), never by X-API-Key. Nothing else under /api/gateway/ is exempt.
+CHAT_WEBHOOK_PATHS = frozenset({
+    "/api/gateway/telegram",
+    "/api/gateway/slack",
+    "/api/gateway/whatsapp",
+})
+
+
 @app.middleware("http")
 async def limit_request_body(request: Request, call_next):
     """Reject requests whose Content-Length exceeds the cap."""
     # Allow gateway webhooks (they may carry Slack/Telegram payloads —
     # typically small but we want to be permissive here so callbacks work).
-    if request.url.path.startswith("/api/gateway/"):
+    if request.url.path in CHAT_WEBHOOK_PATHS:
         return await call_next(request)
 
     # Health/static: no body expected.
@@ -141,7 +150,7 @@ async def limit_request_body(request: Request, call_next):
 # Exceptions (no auth required):
 #   GET  /                          - serves the static web UI
 #   GET  /health                    - liveness probe
-#   POST /api/gateway/telegram      - bot-token-based auth + allow_from
+#   POST /api/gateway/telegram      - webhook secret header + allow_from
 #   POST /api/gateway/slack         - HMAC signature + allow_from
 #   POST /api/gateway/whatsapp      - bridge-secret header + allow_from
 #
@@ -195,8 +204,12 @@ async def require_api_key(request: Request) -> None:
     path = request.url.path
     if path in ("/", "/health"):
         return
-    if path.startswith("/api/gateway/"):
-        return  # Telegram/Slack/WhatsApp each have their own auth mechanism
+    if path in CHAT_WEBHOOK_PATHS:
+        # Telegram/Slack/WhatsApp each have their own auth mechanism. Only
+        # these exact paths: this used to skip every /api/gateway/* path,
+        # so the gateway status, settings form and WhatsApp pairing needed
+        # no key at all.
+        return
 
     expected = get_or_create_api_key()
 
@@ -296,6 +309,9 @@ async def startup_event():
     _tool_registry.bootstrap()
     from core.tools import composio_registry as _composio_tool_registry
     _composio_tool_registry.bootstrap()
+    # Encrypt any legacy plaintext client_secret in broker_config.json
+    # (providers block). Idempotent — no-op once migrated.
+    oauth_broker.migrate_plaintext_secrets()
     # Log any expired connections on startup
     from core.oauth.manager import list_connections, is_token_expired
     all_conns = list_connections()
@@ -399,12 +415,10 @@ async def api_approve(approval_id: int):
         result = handle_approval(approval_id, "approve")
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    # Round 15 slice 3: closing the loop. If this approval is a
-    # locally-originated destructive action, approving it now re-executes
-    # the held tool call (the button was decorative before — approving
-    # only flipped the DB status). Source-gated: remote-origin approvals
-    # stay veto/record-only, so a remote /approve cannot fire a
-    # destructive action.
+    # Approving in the web console re-runs the exact held tool call,
+    # whatever channel requested it — this is the trusted surface. Chat
+    # gateways approve via core.security.approve_from_remote, which only
+    # releases the caller's own, registered, non-destructive requests.
     result["re_execute"] = await re_execute_approval(approval_id)
     return result
 
@@ -497,9 +511,11 @@ async def security_check(body: dict):
 SETTINGS_ALLOWED_KEYS = frozenset({
     "api_key", "omniroute", "llm", "tier", "oauth", "telegram",
     "telegram_bot_token", "telegram_chat_id", "telegram_chat_whitelist",
+    "telegram_webhook_secret", "telegram_allow_from", "allowed_read_dirs",
+    "allowed_write_dirs",
     "slack", "slack_bot_token", "slack_webhook_url", "slack_signing_secret",
     "slack_allow_from", "whatsapp", "whatsapp_enabled", "whatsapp_pairing_phone",
-    "bridge_secret", "whatsapp_allow_from", "public_base_url",
+    "bridge_secret", "whatsapp_allow_from", "whatsapp_allow_self", "public_base_url",
     "sweep_interval", "allowed_browser_domains", "user",
     "max_request_body_bytes", "max_screenshot_size_mb",
 })
@@ -605,23 +621,9 @@ async def agent_command(body: dict):
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
 
-    # N3 fix: truncate command before storing. Full text goes to the agent
-    # loop but only the first 200 chars land in the memories table. Sensitive
-    # secrets in commands are not persisted indefinitely.
-    import hashlib
-    cmd_truncated = command[:200]
-    cmd_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()[:16]
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        "INSERT INTO memories (path, title, content) VALUES (?, ?, ?)",
-        ("/agent/command", f"Command ({cmd_hash}): " + cmd_truncated[:50], cmd_truncated)
-    )
-    conn.commit()
-    conn.close()
-
-    # Run the agent
-    from core.agent import run_agent
-    result = await run_agent(command, source=source, caller_id=caller_id)
+    # Records a truncated copy (N3) and runs the agent loop.
+    from core.agent import run_command
+    result = await run_command(command, source=source, caller_id=caller_id)
     return result
 
 
@@ -718,8 +720,24 @@ async def api_sweep():
 # exception list above. Inside each handler we enforce allow_from as the
 # second layer (see core/gateway.py).
 
+# Telegram signs nothing, so the webhook must be registered with a
+# secret_token (setWebhook ... secret_token=<telegram_webhook_secret>);
+# Telegram then sends it back in X-Telegram-Bot-Api-Secret-Token on every
+# update. Without this check, anyone who can reach this URL could forge an
+# update from an allowed chat_id (chat ids are not secrets). Closed when
+# the secret is unset, same as the WhatsApp bridge.
 @app.post("/api/gateway/telegram")
 async def telegram_webhook(request: Request):
+    settings = _load_settings_for_auth()
+    expected = str(settings.get("telegram_webhook_secret", "")).strip()
+    if not expected:
+        return JSONResponse(
+            {"error": "telegram_webhook_secret not configured in settings.json"},
+            status_code=503,
+        )
+    provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "").strip()
+    if not provided or not _secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing Telegram secret token")
     try:
         update = await request.json()
     except Exception:
@@ -765,7 +783,9 @@ async def whatsapp_webhook(request: Request):
     text = data.get("text", "")
     if not remote_jid or not text:
         return {"error": "remote_jid and text required"}
-    result = await handle_whatsapp_message(remote_jid, text)
+    result = await handle_whatsapp_message(
+        remote_jid, text, data.get("message_id"), from_self=data.get("from_self") is True
+    )
     return result
 
 
@@ -776,8 +796,10 @@ async def gateway_status():
 
 @app.post("/api/gateway/settings", dependencies=[Depends(require_api_key)])
 async def gateway_settings(body: dict):
-    result = update_gateway_settings(body)
-    return result
+    try:
+        return update_gateway_settings(body)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/gateway/whatsapp/pair", dependencies=[Depends(require_api_key)])
@@ -791,8 +813,17 @@ async def whatsapp_pair(body: dict):
 
 # ── Tool Endpoints ─────────────────────────────────────────────────────────────
 
+def _require_readable(path: str) -> None:
+    """403 unless the path is inside the vault or settings.allowed_read_dirs."""
+    from core.tools.office import check_read_allowed
+    denied = check_read_allowed(path)
+    if denied:
+        raise HTTPException(status_code=403, detail=denied)
+
+
 @app.get("/api/tools/office/read/docx", dependencies=[Depends(require_api_key)])
 async def tool_read_docx(path: str):
+    _require_readable(path)
     result = read_docx(path)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -814,6 +845,7 @@ async def tool_write_docx(body: dict):
 
 @app.get("/api/tools/office/read/xlsx", dependencies=[Depends(require_api_key)])
 async def tool_read_xlsx(path: str):
+    _require_readable(path)
     result = read_xlsx(path)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
@@ -834,6 +866,7 @@ async def tool_write_xlsx(body: dict):
 
 @app.get("/api/tools/office/read/pptx", dependencies=[Depends(require_api_key)])
 async def tool_read_pptx(path: str):
+    _require_readable(path)
     result = read_pptx(path)
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])

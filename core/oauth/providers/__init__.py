@@ -1,14 +1,12 @@
-from .google import GoogleConnector
-from .microsoft import MicrosoftConnector
-from .zoom import ZoomConnector
+from .email import EmailConnector
 from .facebook import FacebookConnector
 from .instagram import InstagramConnector
-from .email import EmailConnector
 from .slack import SlackConnector
+from .zoom import ZoomConnector
 
+# Google and Microsoft connect through OpenConnector (see
+# core/tools/integrations.py OC_APPS), not this broker.
 CONNECTORS = {
-    "google": GoogleConnector,
-    "microsoft": MicrosoftConnector,
     "zoom": ZoomConnector,
     "facebook": FacebookConnector,
     "instagram": InstagramConnector,

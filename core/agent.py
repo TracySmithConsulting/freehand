@@ -128,6 +128,11 @@ def parse_tool_call(message: dict) -> Optional[dict]:
 async def execute_tool(name: str, args: dict) -> dict:
     """Execute a tool by name with the given arguments."""
     try:
+        if name in ("read_docx", "read_xlsx", "read_pptx"):
+            from core.tools.office import check_read_allowed
+            denied = check_read_allowed(args.get("path", ""))
+            if denied:
+                return {"content": json.dumps({"error": denied})}
         if name == "read_docx":
             result = read_docx(args.get("path", ""))
             return {"content": json.dumps(result, default=str)}
@@ -400,7 +405,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                 result = intercept_action(
                     "oauth_access",
                     f"Tool call: {tool_name}",
-                    {"tool": tool_name, "args": tool_args, "source": source},
+                    {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id},
                     source,
                     caller_id,
                 )
@@ -432,7 +437,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
                     result = intercept_action(
                         "oauth_access",
                         f"Destructive tool call: {tool_name}",
-                        {"tool": tool_name, "args": tool_args, "source": source},
+                        {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id},
                         source,
                         caller_id,
                         force_confirm=True,
@@ -495,6 +500,38 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         })
 
     return final_response
+
+
+def _record_command(command: str) -> None:
+    """Store a truncated, hashed record of a command in the memories table.
+
+    N3: only the first 200 chars are persisted so secrets pasted into a
+    command don't live in the DB indefinitely.
+    """
+    import hashlib
+    import sqlite3
+    from core import database
+    cmd_truncated = command[:200]
+    cmd_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()[:16]
+    conn = sqlite3.connect(str(database.DB_PATH))
+    try:
+        conn.execute(
+            "INSERT INTO memories (path, title, content) VALUES (?, ?, ?)",
+            ("/agent/command", f"Command ({cmd_hash}): " + cmd_truncated[:50], cmd_truncated),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+async def run_command(command: str, source: str = "", caller_id: str = "") -> dict:
+    """Record a command and run the agent on it.
+
+    Single entry point shared by POST /api/agent/command and the chat
+    gateways, so both behave identically.
+    """
+    _record_command(command)
+    return await run_agent(command, source=source, caller_id=caller_id)
 
 
 async def _run_tool(name: str, args: dict) -> dict:

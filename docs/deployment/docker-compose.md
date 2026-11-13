@@ -10,7 +10,7 @@ A single `docker compose up` brings up two services:
 
 | Service | Image | Port | Purpose |
 |---|---|---|---|
-| `open-connector` | `ghcr.io/oomol-lab/open-connector:latest` | 3001 | Node runtime that hosts 1500+ provider OAuth configs (Round 7 tier-5 fallback) |
+| `open-connector` | `ghcr.io/oomol-lab/open-connector` (pinned by digest) | 3001 | Node runtime that hosts 1500+ provider OAuth configs (Round 7 tier-5 fallback) |
 | `freehand` | Local Dockerfile build | 8000 | Python FastAPI app |
 
 Both bind to `127.0.0.1` only — no LAN exposure. To expose on a tailnet or VPS, change the `ports:` lines in `compose.yml` from `127.0.0.1:PORT:PORT` to `PORT:PORT`.
@@ -22,9 +22,8 @@ Both bind to `127.0.0.1` only — no LAN exposure. To expose on a tailnet or VPS
 git clone https://github.com/TracySmithConsulting/freehand.git
 cd freehand
 
-# 2. Create the env file with your tokens (defaults are placeholders)
-cp .env.example .env
-# Edit .env if you need real OC tokens (see "Environment variables" below)
+# 2. Create .env with random OpenConnector passwords
+python scripts/setup_env.py
 
 # 3. (Round 10 PR 1: no chmod needed — agent.db now lives inside ./vault/)
 
@@ -67,7 +66,7 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 │               │                                  │               │
 │               ▼                                  ▼               │
 │  ┌────────────────────────┐     ┌────────────────────────────┐  │
-│  │ oc-data (anon volume)  │     │ ./vault  (bind mount)     │  │
+│  │ oc-data (named volume) │     │ ./vault  (bind mount)     │  │
 │  │ OC's SQLite store      │     │ encryption.key             │  │
 │  │                        │     │ connections.db             │  │
 │  │                        │     │ broker_config.json         │  │
@@ -82,24 +81,28 @@ freehand-open-connector   Up (healthy)              127.0.0.1:3001->3001/tcp
 | Host path | Container path | Owner | Purpose |
 |---|---|---|---|
 | `./vault` | `/app/vault` | `freehand:freehand` | FreeHand's encrypted vault — encryption.key, connection tokens, broker config, credential store, AND agent.db (Round 10 PR 1 consolidated these into one directory) |
-| (anonymous) | `/data` (in OC) | OC's runtime user | OC's own SQLite store |
+| `freehand-oc-data` | `/app/data` (in OC) | OC's runtime user | OC's own SQLite store (`connect.sqlite`) |
 
-**`./vault` is bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/data` is an anonymous Docker volume (named `freehand-oc-data`) that survives `down` but is removed by `down -v`.
+**`./vault` is bind-mounted from the host — your existing data survives `docker compose down/up`.** OC's `/app/data` is the named Docker volume `freehand-oc-data`, which survives `down` and rebuilds but is removed by `down -v`. (Before Nov 2026 the volume was mounted at `/data`, which OC never uses, so OC's data lived in an unnamed volume and was left behind on each rebuild.)
 
 > **Round 10 PR 1 note**: Round 9 had two separate bind-mounts (`./vault` and `./agent.db`) which forced the Windows-only `FREEHAND_USER=0:0` workaround because Docker Desktop on Windows uses gRPC-FUSE and doesn't propagate host UID mappings cleanly across two mounts. Round 10 puts agent.db inside `./vault` — one mount covers everything, no Windows workaround needed for that reason alone.
 
 ## Environment variables
 
-`compose.yml` reads from `.env` (gitignored). `.env.example` shows the full template:
+`compose.yml` reads from `.env` (gitignored). Create it with:
 
 ```bash
-OC_ADMIN_TOKEN=admintest123
-OC_RUNTIME_TOKEN=runttest123
-OC_ENCRYPTION_KEY=this-is-a-thirty-two-byte-test-key
-UID=1000
-GID=1000
-FREEHAND_USER=0:0   # Windows compatibility default
+python scripts/setup_env.py
 ```
+
+That copies `.env.example` and fills in random values for `OC_ADMIN_TOKEN`,
+`OC_RUNTIME_TOKEN` and `OC_ENCRYPTION_KEY`. Run it again on an existing
+install to replace the old public test values (`admintest123`,
+`runttest123`). It keeps the encryption key if OpenConnector already has
+data, because a new key makes saved connections unreadable.
+
+`compose.yml` has no defaults for these three: it stops with a message
+naming the missing value instead of starting with a guessable password.
 
 **Production hardening** (recommended before exposing to a network):
 
@@ -212,7 +215,7 @@ tar -xzf freehand-vault-YYYYMMDD.tar.gz
 docker compose up -d
 ```
 
-**OC's own data** (`/data` inside the OC container, anonymous Docker volume `freehand-oc-data`): contains Slack token records, GitHub OAuth configs, etc. Not currently backed up by this process — pull it via `docker compose exec open-connector ...` if you need it.
+**OC's own data** (`/app/data` inside the OC container, Docker volume `freehand-oc-data`): contains Slack token records, GitHub OAuth configs, etc. Not currently backed up by this process — pull it via `docker compose exec open-connector ...` if you need it.
 
 ## When NOT to use
 

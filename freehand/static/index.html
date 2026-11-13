@@ -692,6 +692,11 @@
       background: var(--surface-sunken);
     }
 
+    .wa-step {
+      font-size: 1rem;
+      margin: 1.25rem 0 0.25rem;
+    }
+
     .provider-body {
       padding: 0.25rem 0;
     }
@@ -1230,8 +1235,10 @@
           Connectors vs gateways: a <strong>connector</strong> is an account the agent
           acts <em>with</em> (e.g. your Slack shared app → post/read channels).
           A <strong>gateway</strong> is a channel that reaches <em>you</em> — where
-          approval buttons and remote commands arrive (Telegram / Slack / WhatsApp
+          approval requests and remote commands arrive (Telegram / Slack / WhatsApp
           bot tokens below). Different credentials, different jobs.
+          From chat you can approve or deny only requests made from that same
+          chat; destructive actions must be approved here in the console.
         </p>
         <div id="gateway-status" aria-live="polite">
           <p class="empty-state">Loading gateway status...</p>
@@ -1246,7 +1253,7 @@
           <div class="form-group">
             <label for="tg-whitelist">Allowed Chat IDs (comma-separated)</label>
             <input type="text" id="tg-whitelist" placeholder="123456789, 987654321">
-            <p class="hint">Leave empty to allow all chats. Add specific chat IDs for security.</p>
+            <p class="hint">Only these chats can talk to FreeHand. If this is empty, FreeHand ignores every chat.</p>
           </div>
         </fieldset>
 
@@ -1265,13 +1272,52 @@
 
         <fieldset>
           <legend>WhatsApp</legend>
+          <p id="wa-bridge-state" class="hint" aria-live="polite"></p>
+
+          <h3 class="wa-step">Step 1: Choose which number FreeHand uses</h3>
+          <p class="hint">
+            We recommend a separate WhatsApp number for FreeHand, such as a spare SIM
+            or a WhatsApp Business number. It keeps FreeHand's chats apart from your
+            own, so it's cleaner.
+          </p>
+          <p class="hint">
+            No second number? That's fine. Use your own number, and talk to FreeHand
+            in your "Message yourself" chat. To find it, start a new chat in WhatsApp
+            and pick your own name at the top of the contact list.
+          </p>
+
+          <h3 class="wa-step">Step 2: Link that number</h3>
           <div class="form-group">
-            <label for="wa-phone">Pairing Phone Number</label>
-            <input type="text" id="wa-phone" placeholder="+1234567890">
-            <p class="hint">Enter your phone number with country code. An 8-digit code will be generated.</p>
+            <label for="wa-phone">The number FreeHand will use, with country code</label>
+            <input type="tel" id="wa-phone" placeholder="+27 82 123 4567" autocomplete="tel" aria-describedby="wa-phone-hint">
+            <p class="hint" id="wa-phone-hint">Spaces and the plus sign are fine.</p>
           </div>
-          <button type="button" id="wa-pair-btn">Generate Pairing Code</button>
-          <p class="hint" id="wa-code-hint" style="margin-top:0.5rem; font-weight:600;"></p>
+          <button type="button" id="wa-pair-btn">Get a linking code</button>
+          <p class="hint" id="wa-code-hint" role="status" style="margin-top:0.5rem; font-weight:600;"></p>
+          <p class="hint">
+            Then, on the phone with that number, open WhatsApp and go to Settings,
+            then Linked devices, then Link a device. Choose "Link with phone number
+            instead" and type the code.
+          </p>
+
+          <h3 class="wa-step">Step 3: Say who may talk to FreeHand</h3>
+          <div class="form-group">
+            <label for="wa-allow">Phone numbers that may message FreeHand</label>
+            <textarea id="wa-allow" rows="3" placeholder="+27 82 123 4567" aria-describedby="wa-allow-hint"></textarea>
+            <p class="hint" id="wa-allow-hint">
+              One number per line, with country code. FreeHand ignores messages from
+              anyone not on this list. If you used a separate number in step 2, put
+              your own personal number here.
+            </p>
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="wa-allow-self" checked>
+              Let the linked number talk to FreeHand in its "Message yourself" chat
+            </label>
+            <p class="hint">Leave this on if you linked your own number.</p>
+          </div>
+          <p class="hint">Press "Save Gateway Settings" below when you're done.</p>
         </fieldset>
 
         <button type="button" id="gateway-save-btn">Save Gateway Settings</button>
@@ -1321,6 +1367,10 @@
       }
 
       var last401WarnAt = 0;
+      var lastRefusedSaveAt = 0;
+      var REFUSED_SAVE_MSG =
+        'Not saved: FreeHand needs its API key first. Enter it under ' +
+        'API Keys & OmniRoute and press Remember, then save again.';
 
       function apiFetch(url, options) {
         options = options || {};
@@ -1328,7 +1378,15 @@
         var key = storedApiKey();
         if (key) headers['X-API-Key'] = key;
         options.headers = headers;
+        var method = (options.method || 'GET').toUpperCase();
         return fetch(url, options).then(function(res) {
+          if (res.status === 401 && method !== 'GET') {
+            // A refused save must never look like success: the save
+            // handlers used to say "saved" whatever the server answered.
+            lastRefusedSaveAt = Date.now();
+            showStatus(REFUSED_SAVE_MSG, 'error');
+            throw new Error('unauthorized');
+          }
           // A stored-but-rejected key means the server key changed; say so
           // once (rate-limited) rather than on every poll.
           if (res.status === 401 && key && Date.now() - last401WarnAt > 30000) {
@@ -1344,6 +1402,11 @@
       let statusTimeout = null;
 
       function showStatus(message, type) {
+        // A save handler's generic "Failed to save ..." right after a
+        // refused save would hide the reason; keep the useful message.
+        if (type === 'error' && Date.now() - lastRefusedSaveAt < 1000) {
+          message = REFUSED_SAVE_MSG;
+        }
         statusRegion.textContent = message;
         statusRegion.className = 'status-region visible ' + (type || '');
         clearTimeout(statusTimeout);
@@ -1749,7 +1812,10 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ llm: llmConfig })
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
         .then(function(data) {
           showStatus(
             data.runner_triggered
@@ -1785,8 +1851,11 @@
             });
             var available = data.available_services || [];
             var providers = {
-              'google': { name: 'Google Workspace', icon: 'G', sub: 'Gmail, Calendar, Sheets, Meet' },
-              'microsoft': { name: 'Microsoft 365', icon: 'M', sub: 'Outlook, Teams, Calendar' },
+              'gmail': { name: 'Gmail', icon: 'G', sub: 'Read and send email (via OpenConnector)' },
+              'googlecalendar': { name: 'Google Calendar', icon: 'G', sub: 'Events and meetings (via OpenConnector)' },
+              'googlesheets': { name: 'Google Sheets', icon: 'G', sub: 'Read spreadsheets (via OpenConnector)' },
+              'outlook': { name: 'Outlook', icon: 'M', sub: 'Read and send email (via OpenConnector)' },
+              'outlook_calendar': { name: 'Outlook Calendar', icon: 'M', sub: 'Events and meetings (via OpenConnector)' },
               'zoom': { name: 'Zoom', icon: 'Z', sub: 'Meetings, Recordings, Chat' },
               'facebook': { name: 'Facebook', icon: 'f', sub: 'Pages, Posts, Messages' },
               'instagram': { name: 'Instagram', icon: 'I', sub: 'Posts, Stories, DMs' },
@@ -1855,7 +1924,7 @@
                 });
 
                 // Add account button (for multi-account services)
-                if (['google', 'microsoft', 'zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
+                if (['zoom', 'facebook', 'instagram', 'github'].includes(svc)) {
                   var addBtn = document.createElement('button');
                   addBtn.className = 'add-account-btn';
                   addBtn.textContent = '+ Add Account';
@@ -2088,9 +2157,29 @@
             html += '<tr><td>Pending approvals:</td><td>' + status.pending_approvals + '</td></tr>';
             html += '<tr><td>Telegram:</td><td>' + (status.telegram.configured ? '<span class="badge badge-active">configured</span>' : '<span class="badge badge-pending">not configured</span>') + '</td></tr>';
             html += '<tr><td>Slack:</td><td>' + (status.slack.configured ? '<span class="badge badge-active">configured</span>' : '<span class="badge badge-pending">not configured</span>') + '</td></tr>';
-            html += '<tr><td>WhatsApp:</td><td>' + (status.whatsapp.auth_exists ? '<span class="badge badge-active">linked</span>' : '<span class="badge badge-pending">not linked</span>') + '</td></tr>';
+            var wa = status.whatsapp || {};
+            var waBadge;
+            if (wa.connected) {
+              waBadge = '<span class="badge badge-active">connected</span>';
+            } else if (!wa.bridge_running) {
+              waBadge = '<span class="badge badge-pending">bridge not running</span>';
+            } else {
+              waBadge = '<span class="badge badge-pending">not linked yet</span>';
+            }
+            html += '<tr><td>WhatsApp:</td><td>' + waBadge + '</td></tr>';
             html += '</table>';
             el.innerHTML = html;
+
+            var waState = document.getElementById('wa-bridge-state');
+            if (wa.connected) {
+              waState.textContent = 'WhatsApp is connected and ready.';
+            } else if (!wa.bridge_running) {
+              waState.textContent = 'The WhatsApp bridge is not running. On the FreeHand computer, open the freehand/bridge folder and run "npm start", then reload this page.';
+            } else {
+              waState.textContent = 'The bridge is running, but no WhatsApp number is linked yet. Follow the steps below.';
+            }
+            document.getElementById('wa-allow').value = (wa.allow_from || []).join('\n');
+            document.getElementById('wa-allow-self').checked = wa.allow_self !== false;
 
             // Populate form fields
             apiFetch('/api/settings')
@@ -2114,13 +2203,18 @@
           telegram_chat_whitelist: document.getElementById('tg-whitelist').value.trim().split(',').filter(function(x) { return x.trim(); }).map(function(x) { return x.trim(); }),
           slack_signing_secret: document.getElementById('slack-signing').value.trim(),
           slack_bot_token: document.getElementById('slack-token').value.trim(),
+          whatsapp_allow_from: document.getElementById('wa-allow').value.split(/[\n,]/).map(function(x) { return x.trim(); }).filter(function(x) { return x; }),
+          whatsapp_allow_self: document.getElementById('wa-allow-self').checked,
         };
         apiFetch('/api/gateway/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(data)
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          return res.json();
+        })
         .then(function() {
           showStatus('Gateway settings saved.', 'success');
           loadGatewayStatus();
@@ -2146,10 +2240,12 @@
         .then(function(res) { return res.json(); })
         .then(function(data) {
           if (data.code) {
-            hint.textContent = 'Pairing code: ' + data.code + ' — Enter this in WhatsApp on your phone.';
+            hint.textContent = 'Your linking code is ' + data.code + '. Type it into WhatsApp on that phone, as described below. It works for a few minutes.';
             hint.style.color = 'var(--teal)';
           } else {
-            hint.textContent = 'Error: ' + (data.error || 'unknown');
+            hint.textContent = (data.error === 'Bridge unavailable')
+              ? 'The WhatsApp bridge is not running. On the FreeHand computer, open the freehand/bridge folder and run "npm start", then try again.'
+              : 'Could not get a code: ' + (data.error || 'unknown error');
             hint.style.color = 'var(--red-text)';
           }
         })

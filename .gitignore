@@ -42,6 +42,10 @@ vault/
 
 # Secrets
 .env
+# WhatsApp linked-device session: anyone with a copy can use the account.
+auth_info_baileys/
+freehand/bridge/message_queue.json
+freehand/bridge/response_queue.json
 .env.local
 .vault/encryption.key
 

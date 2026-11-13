@@ -115,8 +115,10 @@ class TestIntegrations:
         # Round 14 dropped github from CONNECTORS (it now connects via
         # OpenConnector's api_key path, not the FreeHand OAuth broker),
         # so the pre-Round-9 set is six services, not seven.
+        # Nov 2026: google and microsoft left the broker for OpenConnector;
+        # its Gmail/Calendar/Sheets/Outlook apps are listed instead.
         expected_pre_round9 = {
-            "google", "microsoft", "zoom", "facebook",
+            "zoom", "facebook",
             "instagram", "email",
         }
         actual = set(d["available_services"])
@@ -124,12 +126,13 @@ class TestIntegrations:
             f"Pre-Round-9 services missing: {expected_pre_round9 - actual}"
         )
         assert "slack" in actual, "Round 9: slack must be in available_services"
-        assert len(actual) == len(expected_pre_round9) + 1, (
-            f"Expected exactly 7 services (6 pre-Round-9 + slack), got {len(actual)}: {sorted(actual)}"
-        )
+        from core.oauth.router import OC_FEATURED_SERVICES
+        assert set(OC_FEATURED_SERVICES).issubset(actual)
+        assert "google" not in actual and "microsoft" not in actual
+        assert len(actual) == len(expected_pre_round9) + 1 + len(OC_FEATURED_SERVICES), sorted(actual)
 
     def test_authorize_url(self, client):
-        r = client.get("/api/integrations/google/authorize?label=work")
+        r = client.get("/api/integrations/zoom/authorize?label=work")
         assert r.status_code == 200
         d = r.json()
         assert "authorize_url" in d
@@ -235,9 +238,18 @@ class TestAuthEnforcement:
         assert r.status_code == 200
 
     def test_gateway_telegram_does_not_require_api_key(self, raw_client):
-        # Gateway endpoints have their own auth mechanism
-        r = raw_client.post("/api/gateway/telegram", json={"message": {}})
-        # Telegram handler returns {"ok": True} or {"ok": False, "error": "Invalid JSON"}
+        # Gateway endpoints have their own auth mechanism: for Telegram, the
+        # webhook secret token header (not the X-API-Key).
+        import json as _json
+        import server as _server
+        (_server.VAULT_DIR / "settings.json").write_text(
+            _json.dumps({"telegram_webhook_secret": "tg-secret"})
+        )
+        r = raw_client.post(
+            "/api/gateway/telegram",
+            json={"message": {}},
+            headers={"X-Telegram-Bot-Api-Secret-Token": "tg-secret"},
+        )
         assert r.status_code == 200
 
     def test_wrong_api_key_rejected(self, raw_client):

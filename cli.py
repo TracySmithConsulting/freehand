@@ -139,7 +139,7 @@ def sweep():
 
 
 @app.command()
-def gateway(subcommand: str = typer.Argument(help="status|start|stop|pair"), phone: str = typer.Argument(default="")):
+def gateway(subcommand: str = typer.Argument(help="status|start|stop|pair|secret"), phone: str = typer.Argument(default="")):
     """Manage the remote chat gateway (Telegram, Slack, WhatsApp)."""
     import sys
     sys.path.insert(0, str(_get_project_root()))
@@ -157,12 +157,13 @@ def gateway(subcommand: str = typer.Argument(help="status|start|stop|pair"), pho
         typer.echo("  Slack: " + ("configured" if sk["configured"] else "not configured"))
         wa = status["whatsapp"]
         typer.echo("  WhatsApp: " + ("linked" if wa["auth_exists"] else "not linked"))
+        typer.echo("  Bridge secret: " + ("set" if wa.get("bridge_secret_set") else "NOT SET - run: freehand gateway secret"))
         typer.echo("  Bridge port: " + str(status["bridge_port"]))
 
     elif subcommand == "start":
         typer.echo("Starting gateway...")
         typer.echo("  Telegram/Slack webhooks: enabled (configure tokens in settings)")
-        typer.echo("  WhatsApp bridge: run 'npm start' in bridge/ directory")
+        typer.echo("  WhatsApp bridge: run 'npm start' in the freehand/bridge directory")
         typer.echo("  Status: freehand gateway status")
 
     elif subcommand == "stop":
@@ -172,29 +173,39 @@ def gateway(subcommand: str = typer.Argument(help="status|start|stop|pair"), pho
         if not phone:
             typer.echo("Usage: freehand gateway pair <phone_number>")
             raise SystemExit(1)
-        import aiohttp
-        bridge_url = _get_bridge_url()
-        async def do_pair():
-            try:
-                async with aiohttp.ClientSession() as sess:
-                    async with sess.post(
-                        bridge_url + "/pair",
-                        json={"phone": phone},
-                        timeout=aiohttp.ClientTimeout(total=15)
-                    ) as resp:
-                        return await resp.json()
-            except Exception as e:
-                return {"error": str(e)}
         import asyncio
-        result = asyncio.run(do_pair())
+        from core.gateway import handle_whatsapp_pair
+        result = asyncio.run(handle_whatsapp_pair(phone))
         if "code" in result:
-            typer.echo("Pairing code for " + result["phone"] + ": " + result["code"])
-            typer.echo("Enter this code in WhatsApp on your phone to link the device.")
+            typer.echo("Linking code for " + result["phone"] + ": " + result["code"])
+            typer.echo("On the phone with that number, open WhatsApp, then Settings, Linked devices,")
+            typer.echo("Link a device, 'Link with phone number instead', and type the code.")
+            typer.echo("")
+            typer.echo("Linked your own number? Talk to FreeHand in your 'Message yourself' chat.")
+            typer.echo("Linked a separate number? Add your own number to whatsapp_allow_from,")
+            typer.echo("in the web console under Remote Gateways, WhatsApp, step 3.")
+        elif result.get("error") == "Bridge unavailable":
+            typer.echo("The WhatsApp bridge is not running. In the freehand/bridge folder, run: npm start")
         else:
-            typer.echo("Error: " + result.get("error", "unknown"))
+            typer.echo("Could not get a code: " + result.get("error", "unknown error"))
+
+    elif subcommand == "secret":
+        # The shared secret between FreeHand and the WhatsApp bridge. Created
+        # once; printed so it can go into freehand/bridge/.env.
+        import secrets as _secrets
+        from core import agent_config
+        settings = agent_config._load_settings()
+        secret = str(settings.get("bridge_secret", "")).strip()
+        if not secret:
+            secret = _secrets.token_urlsafe(32)
+            settings["bridge_secret"] = secret
+            agent_config._save_settings(settings)
+            typer.echo("Created a new bridge secret and saved it in FreeHand's settings.")
+        typer.echo("Put this line in freehand/bridge/.env, then restart the bridge:")
+        typer.echo("BRIDGE_SECRET=" + secret)
 
     else:
-        typer.echo("Usage: freehand gateway [status|start|stop|pair <phone>]")
+        typer.echo("Usage: freehand gateway [status|start|stop|pair <phone>|secret]")
 
 
 # ── Connection commands ──────────────────────────────────────────────────────────
@@ -208,6 +219,18 @@ def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom
     from core.oauth.router import _get_redirect_uri
     from core.oauth.providers import get_connector
     from core.oauth.manager import get_connection
+
+    if service in ("google", "microsoft"):
+        # Nov 2026: Google and Microsoft accounts live in OpenConnector.
+        import os
+        console = os.environ.get("OOMOL_CONNECT_CONSOLE_URL", "").rstrip("/") or "http://localhost:3001"
+        apps = (["gmail", "googlecalendar", "googlesheets"] if service == "google"
+                else ["outlook", "outlook_calendar"])
+        typer.echo(f"{service.capitalize()} accounts are connected in OpenConnector.")
+        typer.echo(f"Open each of these and choose Connect, naming the connection '{label}':")
+        for app_id in apps:
+            typer.echo(f"  {console}/providers/{app_id}")
+        raise SystemExit(0)
 
     conn = get_connection(service, label)
     if conn:

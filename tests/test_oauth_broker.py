@@ -141,8 +141,9 @@ class TestBrokerStatus:
         with _stub_vault_dir(tmp_path):
             status = broker.broker_status()
         assert "services" in status
-        assert "google" in status["services"]
-        assert "microsoft" in status["services"]
+        # Nov 2026: google and microsoft left the broker for OpenConnector
+        assert "google" not in status["services"]
+        assert "microsoft" not in status["services"]
         assert "zoom" in status["services"]
         assert "facebook" in status["services"]
         assert "instagram" in status["services"]
@@ -190,30 +191,17 @@ class TestWriteBrokerConfig:
         """write_broker_config returns the new status snapshot."""
         with _stub_vault_dir(tmp_path):
             result = broker.write_broker_config({
-                "google": {"client_id": "x", "client_secret": "y"},
+                "zoom": {"client_id": "x", "client_secret": "y"},
             })
         assert "services" in result
-        assert result["services"]["google"]["configured"] is True
-        assert result["services"]["google"]["source"] == "broker"
+        assert result["services"]["zoom"]["configured"] is True
+        assert result["services"]["zoom"]["source"] == "broker"
 
 
 # ── Connectors use broker ────────────────────────────────────────────
 
 class TestConnectorsUseBroker:
     """Confirm each connector's _get_credentials returns broker-resolved values."""
-
-    def test_google_connector_uses_broker(self, tmp_path, monkeypatch):
-        from core.oauth.providers.google import GoogleConnector
-        with _stub_vault_dir(tmp_path), \
-             _stub_user_settings({}):
-            monkeypatch.delenv("FREEHAND_BROKER_GOOGLE_CLIENT_ID", raising=False)
-            monkeypatch.delenv("FREEHAND_BROKER_GOOGLE_CLIENT_SECRET", raising=False)
-            broker.write_broker_config({
-                "google": {"client_id": "g-broker-cid", "client_secret": "g-broker-sec"},
-            })
-            cid, sec = GoogleConnector()._get_credentials()
-        assert cid == "g-broker-cid"
-        assert sec == "g-broker-sec"
 
     def test_zoom_connector_uses_broker(self, tmp_path, monkeypatch):
         from core.oauth.providers.zoom import ZoomConnector
@@ -227,35 +215,6 @@ class TestConnectorsUseBroker:
             cid, sec = ZoomConnector()._get_credentials()
         assert cid == "z-broker-cid"
         assert sec == "z-broker-sec"
-
-    def test_microsoft_connector_uses_broker(self, tmp_path, monkeypatch):
-        """Microsoft connector picks up client_id/secret from broker.
-
-        Tenant is still read from settings.json (broker only manages
-        client_id/secret). We write a real (isolated) settings.json so
-        both broker AND the Microsoft connector read the same value.
-        """
-        from core.oauth.providers.microsoft import MicrosoftConnector
-        from core import agent_config
-        vault = tmp_path / "vault"
-        vault.mkdir(exist_ok=True)
-        # Write a real settings.json that BOTH the broker and the
-        # Microsoft connector will read.
-        (vault / "settings.json").write_text(json.dumps({
-            "oauth": {"providers": {"microsoft": {"tenant": "common"}}},
-        }), encoding="utf-8")
-        monkeypatch.setattr(agent_config, "VAULT_DIR", vault)
-
-        monkeypatch.delenv("FREEHAND_BROKER_MICROSOFT_CLIENT_ID", raising=False)
-        monkeypatch.delenv("FREEHAND_BROKER_MICROSOFT_CLIENT_SECRET", raising=False)
-        broker.write_broker_config({
-            "microsoft": {"client_id": "ms-broker-cid", "client_secret": "ms-broker-sec"},
-        })
-        cid, sec, tenant = MicrosoftConnector()._get_credentials()
-        assert cid == "ms-broker-cid"
-        assert sec == "ms-broker-sec"
-        # Tenant preserved from user settings (not broker)
-        assert tenant == "common"
 
     def test_facebook_connector_uses_broker(self, tmp_path, monkeypatch):
         from core.oauth.providers.facebook import FacebookConnector
@@ -272,15 +231,15 @@ class TestConnectorsUseBroker:
 
     def test_user_override_takes_precedence_over_broker(self, tmp_path, monkeypatch):
         """User-supplied credentials win even when broker has values."""
-        from core.oauth.providers.google import GoogleConnector
+        from core.oauth.providers.zoom import ZoomConnector
         with _stub_vault_dir(tmp_path), \
              _stub_user_settings({"oauth": {"providers": {
-                 "google": {"client_id": "user-cid", "client_secret": "user-sec"},
+                 "zoom": {"client_id": "user-cid", "client_secret": "user-sec"},
              }}}):
             broker.write_broker_config({
-                "google": {"client_id": "broker-cid", "client_secret": "broker-sec"},
+                "zoom": {"client_id": "broker-cid", "client_secret": "broker-sec"},
             })
-            cid, sec = GoogleConnector()._get_credentials()
+            cid, sec = ZoomConnector()._get_credentials()
         assert cid == "user-cid"
         assert sec == "user-sec"
 
@@ -318,11 +277,11 @@ class TestBrokerHttpEndpoints:
         r = client.post(
             "/api/broker/config",
             json={"providers": {
-                "google": {"client_id": "test-cid", "client_secret": "test-sec"},
+                "zoom": {"client_id": "test-cid", "client_secret": "test-sec"},
             }},
         )
         assert r.status_code == 200
-        assert r.json()["services"]["google"]["configured"] is True
+        assert r.json()["services"]["zoom"]["configured"] is True
 
         # And the file exists
         assert (vault / "broker_config.json").exists()
@@ -363,33 +322,6 @@ class TestBrokerHttpEndpoints:
 # Passing a pre-urlencoded string to aiohttp's data= kwarg makes it default
 # to text/plain, which Microsoft rejects with AADSTS900144 ("request body
 # must contain grant_type"). Same bug pattern as Google on round 5.
-
-class TestProviderTokenExchangeContentType:
-    """Every provider's handle_callback must post a dict (not a string) so
-    aiohttp sends the correct Content-Type header to the token endpoint."""
-
-    def test_microsoft_uses_dict_payload(self):
-        import inspect
-        from core.oauth.providers.microsoft import MicrosoftConnector
-        src = inspect.getsource(MicrosoftConnector.handle_callback)
-        # Must NOT use the old urlencode + data=string pattern
-        assert "urlencode({" not in src, (
-            "Microsoft handle_callback still uses urlencode() — would send "
-            "text/plain Content-Type and Microsoft rejects with AADSTS900144"
-        )
-        # Must use a dict-based `data=` kwarg
-        assert "data=payload_dict" in src or "data={" in src, (
-            "Microsoft handle_callback should post a dict via data=payload_dict"
-        )
-
-    def test_google_uses_dict_payload(self):
-        """Cross-check: Google's handler was fixed in round 5 commit 63b32fa."""
-        import inspect
-        from core.oauth.providers.google import GoogleConnector
-        src = inspect.getsource(GoogleConnector.handle_callback)
-        assert "urlencode({" not in src
-        assert "data=payload_dict" in src or "data={" in src
-
 
 class TestRenameConnectionLabel:
     """Round 6.1: rename_connection_label() — used when user picks the wrong

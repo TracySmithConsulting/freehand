@@ -412,6 +412,30 @@ class TestBuildCaddySite:
     def test_has_an_access_log(self, site):
         assert "/var/log/caddy/acme_corp.log" in site
 
+    def test_chat_webhooks_bypass_basic_auth_post_only(self, site):
+        """Telegram/Slack cannot send a basic-auth password; FreeHand
+        authenticates them itself. Exactly these two paths, POST only.
+        (Verified against a real Caddy 2 container: both POSTs proxied;
+        GET on them, /api/gateway/whatsapp, /api/gateway/settings,
+        /api/gateway/telegram/x and ../ tricks all 401.)"""
+        assert "@chat_webhooks {" in site
+        assert "method POST" in site
+        paths = [line.strip() for line in site.splitlines() if line.strip().startswith("path ")]
+        assert paths == ["path /api/gateway/telegram /api/gateway/slack"]
+        assert "/api/gateway/*" not in site
+        assert "whatsapp" not in site
+
+    def test_everything_else_stays_behind_basic_auth(self, site):
+        # Exactly one basic_auth, inside the catch-all `handle {` — never at
+        # the top level (which would also cover the webhooks) and never in
+        # the webhook handle.
+        assert site.count("basic_auth {") == 1
+        webhook_block = site.split("handle @chat_webhooks {", 1)[1].split("}", 1)[0]
+        assert "basic_auth" not in webhook_block
+        before_catch_all, catch_all = site.split("handle {\n", 1)
+        assert "basic_auth" not in before_catch_all
+        assert catch_all.index("basic_auth {") < catch_all.index("reverse_proxy")
+
     def test_has_security_headers(self, site):
         assert "X-Content-Type-Options nosniff" in site
         assert "X-Frame-Options DENY" in site
