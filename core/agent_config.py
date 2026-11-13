@@ -52,6 +52,30 @@ def get_llm_config() -> dict:
     }
 
 
+def resolve_llm_endpoint(config: Optional[dict] = None) -> tuple:
+    """(base_url, headers) for the configured model's OpenAI-compatible API.
+
+    Shared by the agent loop and the memory service's pass-through
+    (/internal/llm/v1), so both reach the model the same way."""
+    if config is None:
+        config = get_llm_config()
+    provider = config.get("provider", "openai")
+    api_key = config.get("api_key", "")
+    base_url = config.get("base_url", "")
+    if provider == "openai" and not base_url:
+        base_url = "https://api.openai.com/v1"
+    elif provider == "google":
+        if not base_url:
+            base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+        if api_key:
+            base_url = base_url.replace("{API_KEY}", api_key)
+            api_key = ""
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return base_url.rstrip("/"), headers
+
+
 def set_llm_config(updates: dict) -> dict:
     settings = _load_settings()
     if "llm" not in settings:

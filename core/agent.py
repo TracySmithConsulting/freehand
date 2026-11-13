@@ -54,23 +54,13 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
     if config is None:
         config = get_llm_config()
 
-    provider = config.get("provider", "openai")
+    from core.agent_config import resolve_llm_endpoint
     model = config.get("model", "gpt-4o-mini")
-    api_key = config.get("api_key", "")
-    base_url = config.get("base_url", "")
     temperature = config.get("temperature", 0.7)
     max_tokens = config.get("max_tokens", 4096)
 
-    if provider == "openai" and not base_url:
-        base_url = "https://api.openai.com/v1"
-    elif provider == "google":
-        if not base_url:
-            base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
-        if api_key:
-            base_url = base_url.replace("{API_KEY}", api_key)
-            api_key = ""
-
-    url = f"{base_url.rstrip('/')}/chat/completions"
+    base_url, headers = resolve_llm_endpoint(config)
+    url = f"{base_url}/chat/completions"
     payload = {
         "model": model,
         "messages": messages,
@@ -80,12 +70,6 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-
-    headers = {
-        "Content-Type": "application/json",
-    }
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
 
     timeout = aiohttp.ClientTimeout(total=120)
 

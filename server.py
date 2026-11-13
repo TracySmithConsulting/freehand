@@ -223,6 +223,78 @@ async def require_api_key(request: Request) -> None:
     if not provided or not _secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
 
+# ── The memory service's AI model, through FreeHand ───────────────────
+# Hindsight needs an AI model to pick facts out of conversations. Rather
+# than asking people to set a model up twice, Hindsight (in compose) calls
+# this OpenAI-compatible endpoint, and FreeHand passes the request on to
+# whatever model is set up in FreeHand - so changing the model in Settings
+# changes it for memory too. Guarded by FREEHAND_LLM_PROXY_TOKEN (shared
+# with Hindsight through .env); without that token the endpoint is off.
+
+def _llm_proxy_allowed(request: Request) -> bool:
+    import os as _os
+    expected = _os.environ.get("FREEHAND_LLM_PROXY_TOKEN", "").strip()
+    auth = request.headers.get("authorization", "").strip()
+    provided = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    return bool(expected) and bool(provided) and _secrets.compare_digest(provided, expected)
+
+
+@app.get("/internal/llm/v1/models")
+async def llm_proxy_models(request: Request):
+    if not _llm_proxy_allowed(request):
+        raise HTTPException(status_code=401, detail="Invalid or missing token")
+    from core.agent_config import get_llm_config
+    model = get_llm_config().get("model", "")
+    return {"object": "list", "data": [{"id": model, "object": "model", "owned_by": "freehand"}]}
+
+
+@app.post("/internal/llm/v1/chat/completions")
+async def llm_proxy_chat(request: Request):
+    import aiohttp
+    from fastapi.responses import Response, StreamingResponse
+    from core.agent_config import get_llm_config, resolve_llm_endpoint
+
+    if not _llm_proxy_allowed(request):
+        raise HTTPException(status_code=401, detail="Invalid or missing token")
+    config = get_llm_config()
+    if not config.get("api_key") and not config.get("base_url"):
+        raise HTTPException(status_code=503, detail="No AI model is set up in FreeHand yet (Settings, AI model).")
+    try:
+        body = await request.json()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Body must be JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    body["model"] = config.get("model") or body.get("model", "")
+    base_url, headers = resolve_llm_endpoint(config)
+    url = f"{base_url}/chat/completions"
+    timeout = aiohttp.ClientTimeout(total=300)
+
+    if body.get("stream"):
+        session = aiohttp.ClientSession(timeout=timeout)
+        upstream = await session.post(url, json=body, headers=headers)
+
+        async def relay():
+            try:
+                async for chunk in upstream.content.iter_any():
+                    yield chunk
+            finally:
+                upstream.release()
+                await session.close()
+
+        return StreamingResponse(relay(), status_code=upstream.status,
+                                 media_type=upstream.headers.get("Content-Type", "text/event-stream"))
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        try:
+            async with session.post(url, json=body, headers=headers) as upstream:
+                content = await upstream.read()
+                return Response(content=content, status_code=upstream.status,
+                                media_type=upstream.headers.get("Content-Type", "application/json"))
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise HTTPException(status_code=502, detail=f"Couldn't reach the AI model: {str(exc)[:200]}")
+
+
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 

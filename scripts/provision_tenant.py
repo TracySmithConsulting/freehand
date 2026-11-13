@@ -92,6 +92,11 @@ OC_IMAGE = (
     "ghcr.io/oomol-lab/open-connector"
     "@sha256:61e5e29a9ae7d8e817e8050d062ed57134e069cea3e7eef7cb15349c11b7a76d"
 )
+# Keep in step with the hindsight image in the repo's compose.yml.
+HINDSIGHT_IMAGE = (
+    "ghcr.io/vectorize-io/hindsight"
+    "@sha256:50311d02b4d5d2b7c5242bd336edf8735df8374eaad496a92f49c83b37d2aa06"
+)
 CADDY_CONTAINER = "freehand-caddy"
 
 # Ports FreeHand/OpenConnector need per tenant.
@@ -382,6 +387,29 @@ services:
       retries: 5
       start_period: 30s
 
+  hindsight:
+    # This customer's long-term memory, kept in its own volume. No host
+    # ports: only this tenant's FreeHand can reach it.
+    image: {HINDSIGHT_IMAGE}
+    container_name: freehand-hindsight-{safe}
+    restart: unless-stopped
+    environment:
+      # Uses this tenant's FreeHand model through FreeHand (server.py
+      # /internal/llm/v1), so the customer sets a model up once.
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_BASE_URL=http://freehand:8000/internal/llm/v1
+      - HINDSIGHT_API_LLM_API_KEY=${{FREEHAND_LLM_PROXY_TOKEN}}
+      - HINDSIGHT_API_LLM_MODEL=freehand
+      - HINDSIGHT_API_WORKER_ID=freehand-{safe}
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
   freehand:
     build:
       # The image is built from the repo checkout; the vault below is
@@ -414,6 +442,10 @@ services:
       - OOMOL_CONNECT_ADMIN_TOKEN=${{OC_ADMIN_TOKEN}}
       # Hosted: the console never hands out the API key by itself.
       - FREEHAND_CONSOLE_AUTO_KEY=0
+      # This tenant's memory service, and the token it uses to reach
+      # FreeHand's model.
+      - FREEHAND_HINDSIGHT_URL=http://hindsight:8888
+      - FREEHAND_LLM_PROXY_TOKEN=${{FREEHAND_LLM_PROXY_TOKEN}}
       # Public https address behind Caddy; OAuth callbacks are built from it.
       - FREEHAND_PUBLIC_BASE_URL=${{FREEHAND_PUBLIC_BASE_URL:-}}
     # Composio settings come from this tenant's own composio.env, read
@@ -437,6 +469,9 @@ volumes:
     # Per-tenant OC data volume. Named (not anonymous) so --destroy
     # can find and remove it.
     name: freehand-oc-data-{safe}
+  hindsight-data:
+    # Per-tenant memory. Named so --destroy can find and remove it.
+    name: freehand-hindsight-data-{safe}
 """
 
 
@@ -444,6 +479,7 @@ def build_env(customer: str, oc_port: int, console_url: str, public_url: str = "
     """Per-customer secrets. Each gets its own runtime token and OC key."""
     runtime_token = secrets.token_urlsafe(32)
     oc_admin = secrets.token_urlsafe(24)
+    llm_proxy_token = secrets.token_urlsafe(32)
     # On a POSIX host the container's user must match the host user that
     # owns the vault, or the bind mount is not writable. On Windows there
     # is no meaningful uid, so the defaults apply.
@@ -466,6 +502,9 @@ OC_ADMIN_TOKEN={oc_admin}
 OC_RUNTIME_TOKEN={runtime_token}
 # Exactly 32 bytes, base64-encoded (openssl rand -base64 32 equivalent).
 OC_ENCRYPTION_KEY={oc_encryption}
+
+# Memory: lets this tenant's Hindsight use its FreeHand model.
+FREEHAND_LLM_PROXY_TOKEN={llm_proxy_token}
 
 # FreeHand
 OOMOL_CONNECT_CONSOLE_URL={console_url}
@@ -1008,19 +1047,21 @@ def destroy(customer: str, confirm: bool) -> int:
     stop_containers(customer)
     shutil.rmtree(base)
 
-    # Remove the per-tenant OC volume too; it holds that customer's
-    # OpenConnector state and is not inside the tenant directory.
+    # Remove the per-tenant OC and memory volumes too; they hold that
+    # customer's OpenConnector state and memories, outside the tenant
+    # directory.
     safe = container_suffix(customer)
-    try:
-        subprocess.run(
-            ["docker", "volume", "rm", "-f", f"freehand-oc-data-{safe}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=60,
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+    for volume in (f"freehand-oc-data-{safe}", f"freehand-hindsight-data-{safe}"):
+        try:
+            subprocess.run(
+                ["docker", "volume", "rm", "-f", volume],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+            pass
 
     backup = BACKUP_ROOT / customer
     if backup.exists():
