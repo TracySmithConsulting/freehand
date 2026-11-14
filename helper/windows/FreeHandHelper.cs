@@ -29,7 +29,7 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("FreeHand Helper")]
 [assembly: System.Reflection.AssemblyProduct("FreeHand")]
-[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.1.0")]
 
 namespace FreeHand.Helper
 {
@@ -110,6 +110,12 @@ namespace FreeHand.Helper
                 result["installed"] = Change.Programs("notepad", "installed");
                 var install = Change.Prepare("package", new Dictionary<string, object> { { "do", "install" }, { "id", "Zoom.Zoom" } });
                 result["install_asks"] = install.Summary + " | " + install.Details;
+                try
+                {
+                    var all = Change.Prepare("package", new Dictionary<string, object> { { "do", "update_all" } });
+                    result["update_all_asks"] = all.Summary + " | " + all.Details;
+                }
+                catch (HelperRefusal ex) { result["update_all_asks"] = ex.Message; }
                 var fix = Change.Prepare("fix", new Dictionary<string, object> { { "fix", "sound" } });
                 result["fix_asks"] = fix.Summary + " | admin=" + fix.Admin;
                 try { Change.Prepare("package", new Dictionary<string, object> { { "do", "install" }, { "id", "x; rm -rf" } }); result["bad_id"] = "allowed (wrong)"; }
@@ -1427,6 +1433,11 @@ namespace FreeHand.Helper
             if (query.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(query, @"^[\w .\-+]{1,60}$"))
                 throw new HelperRefusal("Search with plain words only.");
             var q = query.Length > 0 ? " --query \"" + query + "\"" : "";
+            if (where == "updates")
+            {
+                var ups = Run(Winget(), "upgrade --accept-source-agreements --disable-interactivity", 180000, out exit);
+                return new Dictionary<string, object> { { "updates", Table(ups, 60) } };
+            }
             if (where == "available")
             {
                 if (query.Length == 0) throw new HelperRefusal("Say what program to look for.");
@@ -1464,8 +1475,25 @@ namespace FreeHand.Helper
             {
                 plan.Do = Arg("do").ToLowerInvariant();
                 plan.Target = Arg("id");
+                if (plan.Do == "update_all")
+                {
+                    // One question listing every program that would update.
+                    var ups = Programs("", "updates")["updates"] as List<object>;
+                    if (ups.Count == 0) throw new HelperRefusal("Every program is already up to date.");
+                    var names = new List<string>();
+                    foreach (Dictionary<string, object> r in ups)
+                        names.Add(r["name"] + (r.ContainsKey("version") && r.ContainsKey("available") ? " (" + r["version"] + " to " + r["available"] + ")" : ""));
+                    plan.Summary = "update " + ups.Count + (ups.Count == 1 ? " program" : " programs") + " that have updates";
+                    plan.Details = "These would update:\r\n" + string.Join("\r\n", names.ToArray()) +
+                        "\r\n\r\nSome programs may close while they update, so save your work first.";
+                    foreach (var n in names)
+                        if (n.StartsWith("Docker Desktop"))
+                            plan.Details += "\r\nDocker Desktop is in the list. FreeHand runs inside Docker on this computer, so " +
+                                "updating it restarts FreeHand, and FreeHand may not be able to tell you how the update went.";
+                    return plan;
+                }
                 if (plan.Do != "install" && plan.Do != "update" && plan.Do != "remove")
-                    throw new HelperRefusal("For a program, FreeHand can install, update or remove.");
+                    throw new HelperRefusal("For a program, FreeHand can install, update, update everything (update_all) or remove.");
                 if (!PackageId.IsMatch(plan.Target))
                     throw new HelperRefusal("Give the program's exact id from computer_programs (like Zoom.Zoom).");
                 if (plan.Do == "remove")
@@ -1508,9 +1536,11 @@ namespace FreeHand.Helper
             int exit;
             if (plan.Action == "package")
             {
-                var verb = plan.Do == "remove" ? "uninstall" : plan.Do == "update" ? "upgrade" : "install";
-                var text = Run(Winget(), verb + " --id " + plan.Target + " --exact --silent --accept-source-agreements" +
-                    (verb == "uninstall" ? "" : " --accept-package-agreements") + " --disable-interactivity", 1100000, out exit);
+                var verb = plan.Do == "remove" ? "uninstall" : plan.Do == "install" ? "install" : "upgrade";
+                var which = plan.Do == "update_all" ? "--all" : "--id " + plan.Target + " --exact";
+                var text = Run(Winget(), verb + " " + which + " --silent --accept-source-agreements" +
+                    (verb == "uninstall" ? "" : " --accept-package-agreements") + " --disable-interactivity",
+                    plan.Do == "update_all" ? 3500000 : 1100000, out exit);
                 var tail = new List<string>();
                 foreach (var l in text.Split('\n')) { var c = Clean(l); if (c.Trim().Length > 0 && !c.Contains("█") && !c.Contains("▒")) tail.Add(c.Trim()); }
                 var last = tail.Count > 6 ? tail.GetRange(tail.Count - 6, 6) : tail;

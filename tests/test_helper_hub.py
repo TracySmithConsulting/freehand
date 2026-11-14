@@ -231,7 +231,7 @@ def test_installs_wait_long_enough(monkeypatch):
         helper_hub.connected({"id": "d3", "name": "PC"}, send, close)
         return await helper_hub.request("d3", "package", {"do": "install", "id": "Zoom.Zoom"})
     asyncio.run(go())
-    assert waited["timeout"] == 1200
+    assert waited["timeout"] == 3600  # updating everything can take an hour
 
 
 def test_package_ids_and_fixes_reach_the_helper(monkeypatch):
@@ -246,3 +246,32 @@ def test_package_ids_and_fixes_reach_the_helper(monkeypatch):
     assert seen == {"action": "package", "args": {"do": "install", "id": "Zoom.Zoom", "window": ""}}
     asyncio.run(helper_hub.run_tool("computer_fix", {"fix": "printer", "why": "stuck job"}))
     assert seen["args"]["fix"] == "printer"
+
+
+def test_work_on_the_computer_gets_more_steps(monkeypatch):
+    """Open, look, type, check: more than the usual five steps."""
+    monkeypatch.setattr(helper_hub, "device_now", lambda person=None: "dev1")
+
+    async def fake_request(device, action, args=None, why=""):
+        return {"ok": True, "data": {"window": "Notepad", "tree": "x"}}
+    monkeypatch.setattr(helper_hub, "request", fake_request)
+    calls = []
+
+    async def fake_llm(messages, tools=None, config=None):
+        calls.append(1)
+        if len(calls) <= 8:
+            return {"content": "", "tool_calls": [{"id": f"c{len(calls)}", "type": "function", "function": {
+                "name": "computer_look", "arguments": json.dumps({"window": "Notepad", "why": f"step {len(calls)}"})}}]}
+        return {"content": "All done."}
+    monkeypatch.setattr(agent, "call_llm", fake_llm)
+    out = asyncio.run(agent.run_agent("look at Notepad on my screen", source="selftest", caller_id="steps"))
+    assert out["text"] == "All done." and len(calls) == 9
+
+
+def test_updating_everything_is_one_question():
+    s = {x["function"]["name"]: x["function"]["parameters"] for x in helper_hub.change_schemas()}
+    assert "update_all" in s["computer_package"]["properties"]["do"]["enum"]
+    assert s["computer_package"]["required"] == ["do", "why"]
+    assert "updates" in s["computer_programs"]["properties"]["where"]["enum"]
+    opener = [x for x in helper_hub.schemas() if x["function"]["name"] == "computer_open"][0]
+    assert "Never use it to open a terminal" in opener["function"]["description"]

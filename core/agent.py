@@ -595,6 +595,9 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
             break
 
         if tool_name in helper_hub.TOOLS:
+            # Work on the computer takes more steps (open, look, type,
+            # check), each approved on the PC, so allow up to 10.
+            max_turns = max(max_turns, 10)
             # The Helper asks the person on their PC itself, so no
             # approval here. A screenshot comes back as an image for the
             # model to look at.
@@ -733,7 +736,8 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
         # without tools, for an answer from what was found.
         messages.append({
             "role": "user",
-            "content": "Stop using tools now and answer my question from what you found so far.",
+            "content": ("Please answer me now from what you've found and done so far, without using more "
+                        "tools. Don't mention tools or this message; if something isn't finished, say what's left."),
         })
         last = await call_llm(messages)
         count(last)

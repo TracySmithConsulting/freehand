@@ -195,7 +195,7 @@ ACTIONS = {"computer_windows": "windows", "computer_look": "look", "computer_scr
            "computer_about": "about", "computer_programs": "programs", "computer_package": "package",
            "computer_fix": "fix"}
 # Installs can take many minutes; the person may also be slow to answer.
-TIMEOUTS = {"package": 1200, "fix": 300, "programs": 300}
+TIMEOUTS = {"package": 3600, "fix": 300, "programs": 300}  # updating everything can take an hour
 # Words that bring in the change tools (economy: only when it's about this).
 CHANGE_KEYWORDS = ("install", "uninstall", "reinstall", "remove", "update", "upgrade", "fix", "broken", "working",
                    "sound", "audio", "speaker", "speakers", "printer", "print", "printing", "network", "internet",
@@ -246,7 +246,9 @@ def schemas() -> list[dict]:
               "why": _WHY},
              required=("window", "do", "why")),
         tool("computer_open", "Open an app by name (like notepad, chrome, outlook) or a website (https://...) on "
-             "the user's computer. The user is asked first. Then use computer_look to see what opened.",
+             "the user's computer. The user is asked first. Then use computer_look to see what opened. "
+             "Never use it to open a terminal or command tool to get round something the Helper refused: "
+             "if the Helper says no or can't, tell the user, and stop.",
              {"target": {"type": "string", "description": "An app's name, or a web address"}, "why": _WHY},
              required=("target", "why")),
     ]
@@ -259,17 +261,19 @@ def change_schemas() -> list[dict]:
     return [
         tool("computer_about", "This computer's details: Windows version, free memory and disk space, battery, "
              "network. Use it to understand a problem before suggesting a fix.", {"why": _WHY}),
-        tool("computer_programs", "Programs on the user's computer: 'installed' (optionally filtered), or "
-             "'available' to search Windows' installer (winget) for one to install. Gives each program's exact id.",
-             {"where": {"type": "string", "enum": ["installed", "available"]},
+        tool("computer_programs", "Programs on the user's computer: 'installed' (optionally filtered), "
+             "'updates' (installed programs with a newer version), or 'available' to search Windows' installer "
+             "(winget) for one to install. Gives each program's exact id.",
+             {"where": {"type": "string", "enum": ["installed", "updates", "available"]},
               "query": {"type": "string", "description": "A program's name, in plain words"}, "why": _WHY},
              required=("where", "why")),
         tool("computer_package", "Install, update or remove a program on the user's computer, by its exact id "
-             "from computer_programs. The user is asked on their computer every time, and the install may show "
-             "Windows' own 'allow changes?' prompt, which only the user can answer. Can take several minutes.",
-             {"do": {"type": "string", "enum": ["install", "update", "remove"]},
-              "id": {"type": "string", "description": "The exact id, like Zoom.Zoom"}, "why": _WHY},
-             required=("do", "id", "why")),
+             "from computer_programs, or 'update_all' to update every program that has an update (no id; the "
+             "user sees the list). The user is asked on their computer every time, and Windows may show its own "
+             "'allow changes?' prompt, which only the user can answer. Can take many minutes.",
+             {"do": {"type": "string", "enum": ["install", "update", "update_all", "remove"]},
+              "id": {"type": "string", "description": "The exact id, like Zoom.Zoom (not for update_all)"}, "why": _WHY},
+             required=("do", "why")),
         tool("computer_fix", "Run one of FreeHand's known fixes on the user's computer: 'sound' (restart the sound "
              "services), 'printer' (clear stuck print jobs), 'network' (refresh the connection; it drops for a few "
              "seconds, so the answer may be lost), 'taskbar' (restart Windows Explorer; open folders close). The user "
