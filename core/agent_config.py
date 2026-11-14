@@ -684,13 +684,19 @@ def build_system_prompt() -> str:
     except Exception:
         skills_str = "  (skills unavailable)"
 
-    # Gather imported memories
+    # Imported files from other agents: a one-line count per agent, not a
+    # list. Listing every file path (5,000+ after a Hermes/OpenClaw import)
+    # made this prompt ~140,000 tokens on EVERY message, which is slow and
+    # expensive and tells the model nothing it can use. What matters from
+    # those files is already in long-term memory, the skills list, and
+    # search_memory.
     imported_lines = []
     try:
+        from collections import Counter
         from core.agents import list_imported_sources
-        sources = list_imported_sources()
-        for src in sources:
-            imported_lines.append(f"[{src['agent'].upper()}] {src['file_type']}: {src['vault_path']}")
+        counts = Counter(src["agent"] for src in list_imported_sources())
+        for agent_name, n in sorted(counts.items()):
+            imported_lines.append(f"- {agent_name.capitalize()}: {n} files imported. What was useful in them is in your memory, skills and notes.")
     except Exception:
         pass
     imported_str = "\n".join(imported_lines) if imported_lines else "  (none)"
