@@ -1,4 +1,4 @@
-// FreeHand Helper for Windows (stage 1: Look).
+// FreeHand Helper for Windows (stage 1: Look; stage 2: Act).
 //
 // Lets FreeHand, wherever it runs (Docker on this PC, or a server), see
 // this computer through Windows accessibility (what screen readers use) and
@@ -29,7 +29,7 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("FreeHand Helper")]
 [assembly: System.Reflection.AssemblyProduct("FreeHand")]
-[assembly: System.Reflection.AssemblyVersion("0.1.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.2.0.0")]
 
 namespace FreeHand.Helper
 {
@@ -106,6 +106,34 @@ namespace FreeHand.Helper
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr w, IntPtr l);
         [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
         public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+        [DllImport("user32.dll")] public static extern short VkKeyScan(char ch);
+        [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+        [DllImport("user32.dll")] public static extern uint SendInput(uint n, INPUT[] inputs, int size);
+        public const int SW_RESTORE = 9;
+        public const uint WM_CLOSE = 0x0010;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct INPUT { public uint type; public InputUnion u; }
+        [StructLayout(LayoutKind.Explicit)]
+        public struct InputUnion { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct MOUSEINPUT { public int dx, dy; public uint mouseData, dwFlags, time; public IntPtr extra; }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct KEYBDINPUT { public ushort vk, scan; public uint flags, time; public IntPtr extra; }
+
+        // Bring a window to the front. Windows only lets the program in
+        // front do that, so tap Alt first (a well-known, harmless trick).
+        public static void Front(IntPtr h)
+        {
+            if (h == IntPtr.Zero) return;
+            if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            SetForegroundWindow(h);
+        }
         public static readonly uint ShowMessage = RegisterWindowMessage("FreeHandHelperShowWindow");
     }
 
@@ -173,6 +201,8 @@ namespace FreeHand.Helper
 
         volatile bool stopped;      // the person pressed Stop
         volatile bool lookAllowed;  // allowed to look for this session
+        // Apps where the person allowed FreeHand to act for 30 minutes.
+        readonly Dictionary<string, DateTime> appGrants = new Dictionary<string, DateTime>();
         volatile bool quitting;
         bool hotkeyOk;
         CancellationTokenSource connection;
@@ -303,13 +333,23 @@ namespace FreeHand.Helper
                 text = "Not paired yet. In FreeHand, open Settings, Help on my computer, and press Add a computer. Type the code it shows below, then press Pair.";
             else if (stopped)
                 text = "Stopped. FreeHand can't see or do anything on this computer. Press \"Let FreeHand help again\" when you want it back.";
-            else if (lookAllowed)
-                text = "FreeHand is helping: it can see your screen for this session. Press Ctrl+Alt+Escape or Stop at any time.";
+            else if (lookAllowed || GrantsText().Length > 0)
+                text = "FreeHand is helping: " + (lookAllowed ? "it can see your screen for this session. " : "") + GrantsText() +
+                       "Press Ctrl+Alt+Escape or Stop at any time.";
             else
                 text = "Ready. FreeHand will ask you before it looks at anything. " + connectionState;
             statusLabel.Text = text;
             Text = lookAllowed && !stopped ? "FreeHand Helper - helping" : "FreeHand Helper";
             trayIcon.Text = lookAllowed && !stopped ? "FreeHand Helper: helping" : "FreeHand Helper";
+        }
+
+        string GrantsText()
+        {
+            var parts = new List<string>();
+            lock (appGrants)
+                foreach (var g in appGrants)
+                    if (g.Value > DateTime.Now) parts.Add(g.Key + " until " + g.Value.ToString("HH:mm"));
+            return parts.Count > 0 ? "It can act without asking in " + string.Join(", ", parts.ToArray()) + ". " : "";
         }
 
         // ── Pairing ──────────────────────────────────────────────────
@@ -385,6 +425,7 @@ namespace FreeHand.Helper
             if (!settings.Paired) return;
             stopped = true;
             lookAllowed = false;
+            lock (appGrants) appGrants.Clear();
             if (connection != null) connection.Cancel();
             Log("Stopped. " + why);
             Ui(UpdateView);
@@ -477,12 +518,23 @@ namespace FreeHand.Helper
                 var window = args != null ? Get(args, "window") : "";
                 var why = Get(msg, "why");
                 if (stopped) throw new HelperRefusal("The person stopped the FreeHand Helper.");
-                if (!AskToLook(why)) throw new HelperRefusal("The person said no to FreeHand looking at their screen.");
                 object data;
-                if (action == "windows") { data = Look.Windows(); Log("Listed the open windows. " + why); }
-                else if (action == "look") { var d = Look.Window(window); data = d; Log("Read \"" + d["window"] + "\". " + why); }
-                else if (action == "screenshot") { var d = Look.Screenshot(window); data = d; Log("Took a picture of \"" + d["window"] + "\". " + why); }
-                else throw new HelperRefusal("This Helper can only look (stage 1). It can't do \"" + action + "\" yet.");
+                if (action == "act" || action == "window" || action == "open")
+                {
+                    // Act: work out exactly what would happen, ask, then do it.
+                    var plan = Act.Prepare(action, args);
+                    if (!AskToAct(plan, why)) throw new HelperRefusal("The person said no to: " + plan.Summary + ".");
+                    data = Act.Run(plan);
+                    Log("Did: " + plan.Summary + ". " + why);
+                }
+                else
+                {
+                    if (!AskToLook(why)) throw new HelperRefusal("The person said no to FreeHand looking at their screen.");
+                    if (action == "windows") { data = Look.Windows(); Log("Listed the open windows. " + why); }
+                    else if (action == "look") { var d = Look.Window(window); data = d; Log("Read \"" + d["window"] + "\". " + why); }
+                    else if (action == "screenshot") { var d = Look.Screenshot(window); data = d; Log("Took a picture of \"" + d["window"] + "\". " + why); }
+                    else throw new HelperRefusal("This Helper can't do \"" + action + "\" yet.");
+                }
                 reply["ok"] = true;
                 reply["data"] = data;
             }
@@ -496,6 +548,40 @@ namespace FreeHand.Helper
         }
 
         readonly object askLock = new object();
+
+        // Every action asks, unless the person allowed this app for 30
+        // minutes. Opening an app always asks.
+        bool AskToAct(Plan plan, string why)
+        {
+            lock (askLock)
+            {
+                if (stopped) return false;
+                var key = plan.App.ToLowerInvariant();
+                lock (appGrants)
+                {
+                    DateTime until;
+                    if (key.Length > 0 && appGrants.TryGetValue(key, out until) && until > DateTime.Now) return true;
+                }
+                int choice = 0;
+                Invoke((Action)delegate
+                {
+                    using (var dialog = new ActDialog(plan, why))
+                    {
+                        dialog.ShowDialog();
+                        choice = dialog.Choice;
+                    }
+                });
+                if (stopped) return false;
+                if (choice == 2 && key.Length > 0)
+                {
+                    lock (appGrants) appGrants[key] = DateTime.Now.AddMinutes(30);
+                    Log("You allowed FreeHand to act in " + plan.App + " for 30 minutes.");
+                    Ui(UpdateView);
+                }
+                else if (choice == 0) Log("You said no to: " + plan.Summary + ".");
+                return choice > 0;
+            }
+        }
 
         // The first look in a session asks; the answer lasts until Stop or
         // the Helper is closed.
@@ -594,6 +680,7 @@ namespace FreeHand.Helper
             var w = Find(title);
             var sb = new StringBuilder();
             int count = 0;
+            Act.Seen.Clear();
             Walk(w, 0, sb, ref count);
             var text = sb.ToString();
             bool cut = text.Length > MaxChars || count >= MaxNodes;
@@ -615,7 +702,8 @@ namespace FreeHand.Helper
             if (!container)
             {
                 count++;
-                sb.Append(new string(' ', depth * 2)).Append(type);
+                Act.Seen.Add(el);
+                sb.Append(new string(' ', depth * 2)).Append('#').Append(Act.Seen.Count).Append(' ').Append(type);
                 sb.Append(name.Length > 0 ? " \"" + Clip(name, 120) + "\"" : " (no name)");
                 Describe(el, c, sb);
                 sb.Append('\n');
@@ -704,6 +792,371 @@ namespace FreeHand.Helper
                         { "image", "data:image/jpeg;base64," + Convert.ToBase64String(ms.ToArray()) } };
                 }
             }
+        }
+    }
+
+    // What FreeHand wants to do, worked out before asking.
+    class Plan
+    {
+        public string Action = "", Do = "", Text = "", Target = "", App = "", WindowTitle = "", Summary = "";
+        public AutomationElement Window, Element;
+    }
+
+    // The "Allow?" question for acting: a normal dialog, so screen readers
+    // read it. Focus starts on the message; Escape means Don't allow.
+    class ActDialog : Form
+    {
+        public int Choice; // 0 no, 1 once, 2 this app for 30 minutes
+
+        public ActDialog(Plan plan, string why)
+        {
+            Text = "FreeHand Helper: allow FreeHand to do this?";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MinimizeBox = false; MaximizeBox = false; ShowInTaskbar = true; TopMost = true;
+            StartPosition = FormStartPosition.CenterScreen;
+            Font = new Font("Segoe UI", 10f);
+            Width = 560; Height = 330;
+
+            var text = "FreeHand wants to: " + plan.Summary + "." +
+                (plan.WindowTitle.Length > 0 ? "\r\nIn: " + plan.WindowTitle + (plan.App.Length > 0 ? " (" + plan.App + ")" : "") : "") +
+                (why.Length > 0 ? "\r\nWhy: " + why : "") +
+                (plan.App.Length > 0 && plan.Action != "open"
+                    ? "\r\n\r\nIf you allow " + plan.App + " for 30 minutes, FreeHand can click and type in it without asking until then. " +
+                      "Something on screen could try to trick it, so only choose that for apps you trust."
+                    : "") +
+                "\r\n\r\nCtrl+Alt+Escape stops FreeHand at any time.";
+            var message = new TextBox { Multiline = true, ReadOnly = true, Text = text, Dock = DockStyle.Fill, TabIndex = 0,
+                                        ScrollBars = ScrollBars.Vertical, AccessibleName = "What FreeHand wants to do", BorderStyle = BorderStyle.None };
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(6) };
+            var once = new Button { Text = "Allow once", AutoSize = true, TabIndex = 1 };
+            once.Click += delegate { Choice = 1; Close(); };
+            buttons.Controls.Add(once);
+            if (plan.App.Length > 0 && plan.Action != "open")
+            {
+                var app = new Button { Text = "Allow in " + plan.App + " for 30 minutes", AutoSize = true, TabIndex = 2 };
+                app.Click += delegate { Choice = 2; Close(); };
+                buttons.Controls.Add(app);
+            }
+            var no = new Button { Text = "Don't allow", AutoSize = true, TabIndex = 3 };
+            no.Click += delegate { Choice = 0; Close(); };
+            buttons.Controls.Add(no);
+            CancelButton = no;
+            var panel = new Panel { Dock = DockStyle.Fill, Padding = new Padding(10) };
+            panel.Controls.Add(message);
+            Controls.Add(panel);
+            Controls.Add(buttons);
+
+            // Nobody answering counts as no, before FreeHand gives up waiting.
+            var timer = new System.Windows.Forms.Timer { Interval = 100000 };
+            timer.Tick += delegate { timer.Stop(); Choice = 0; Close(); };
+            Shown += delegate
+            {
+                timer.Start();
+                Native.Front(Handle);
+                Activate();
+                message.Focus();
+                message.SelectionStart = 0; message.SelectionLength = 0;
+            };
+        }
+    }
+
+    static class Act
+    {
+        // The elements from the last computer_look, so FreeHand can aim at
+        // "#12" even when it has no name.
+        public static readonly List<AutomationElement> Seen = new List<AutomationElement>();
+
+        // Apps FreeHand may never act in: Windows' own security and sign-in
+        // screens. And never FreeHand's own console (so it can't approve
+        // itself) or the Helper (it isn't in the window list at all).
+        static readonly string[] BlockedApps = { "consent", "credentialuibroker", "lockapp", "logonui", "securityhealthui" };
+        static readonly string[] BlockedOpen = { "cmd", "powershell", "pwsh", "wscript", "cscript", "mshta", "regedit", "reg", "rundll32",
+            "msiexec", "bash", "wsl", "diskpart", "format", "bcdedit", "schtasks", "sc", "net", "netsh", "taskkill", "certutil", "bitsadmin" };
+
+        static string Arg(Dictionary<string, object> a, string key)
+        {
+            object v;
+            return a != null && a.TryGetValue(key, out v) && v != null ? v.ToString().Trim() : "";
+        }
+
+        static string ProcessOf(AutomationElement el)
+        {
+            try { return Process.GetProcessById(el.Current.ProcessId).ProcessName; } catch (Exception) { return ""; }
+        }
+
+        static void CheckAllowed(AutomationElement window, string app)
+        {
+            if (Array.IndexOf(BlockedApps, app.ToLowerInvariant()) >= 0)
+                throw new HelperRefusal("FreeHand can't act in Windows' security or sign-in screens. Please do that part yourself.");
+            var title = window.Current.Name ?? "";
+            if (title == "FreeHand" || title.StartsWith("FreeHand - ") || title.StartsWith("FreeHand — "))
+                throw new HelperRefusal("FreeHand can't act in its own console, so it can never approve its own requests.");
+        }
+
+        public static Plan Prepare(string action, Dictionary<string, object> args)
+        {
+            var plan = new Plan { Action = action, Do = Arg(args, "do").ToLowerInvariant(), Text = Arg(args, "text"), Target = Arg(args, "element") };
+            if (action == "open")
+            {
+                var target = Arg(args, "target");
+                bool url = target.StartsWith("https://") || target.StartsWith("http://");
+                if (!url)
+                {
+                    foreach (var ch in target)
+                        if (!(char.IsLetterOrDigit(ch) || ch == ' ' || ch == '.' || ch == '-' || ch == '_'))
+                            throw new HelperRefusal("FreeHand can open a website or an app by name (like notepad or chrome), nothing else.");
+                    var name = target.ToLowerInvariant();
+                    if (name.EndsWith(".exe")) name = name.Substring(0, name.Length - 4);
+                    if (target.Length == 0 || Array.IndexOf(BlockedOpen, name) >= 0)
+                        throw new HelperRefusal("FreeHand can't open \"" + target + "\": command tools come in a later, stricter stage.");
+                }
+                plan.Target = target;
+                plan.Summary = url ? "open the website " + target : "open " + target;
+                return plan;
+            }
+
+            plan.Window = Look.Find(Arg(args, "window"));
+            plan.App = ProcessOf(plan.Window);
+            plan.WindowTitle = plan.Window.Current.Name ?? "";
+            CheckAllowed(plan.Window, plan.App);
+
+            if (action == "window")
+            {
+                var verbs = new Dictionary<string, string> { { "switch", "switch to" }, { "close", "close" }, { "minimise", "minimise" },
+                    { "minimize", "minimise" }, { "maximise", "maximise" }, { "maximize", "maximise" }, { "restore", "restore" } };
+                if (!verbs.ContainsKey(plan.Do)) throw new HelperRefusal("For a window, FreeHand can switch, close, minimise, maximise or restore.");
+                plan.Summary = verbs[plan.Do] + " the window \"" + plan.WindowTitle + "\"";
+                return plan;
+            }
+
+            // act: click, type, keys or focus
+            if (plan.Target.Length > 0) plan.Element = FindElement(plan.Window, plan.Target);
+            var what = plan.Element != null ? Describe(plan.Element) : "";
+            if (plan.Do == "click" || plan.Do == "focus")
+            {
+                if (plan.Element == null) throw new HelperRefusal("Say which element to " + plan.Do + ": its name, or its #number from computer_look.");
+                plan.Summary = (plan.Do == "click" ? "click " : "move to ") + what;
+            }
+            else if (plan.Do == "type")
+            {
+                if (plan.Text.Length == 0) throw new HelperRefusal("Say what to type.");
+                var into = plan.Element ?? Focused();
+                if (into != null && into.Current.IsPassword)
+                    throw new HelperRefusal("That's a password field. FreeHand never types passwords: please type it yourself.");
+                plan.Summary = "type \"" + Clip(plan.Text, 80) + "\"" + (plan.Element != null ? " into " + what : "");
+            }
+            else if (plan.Do == "keys")
+            {
+                Keys.Parse(plan.Text); // check before asking
+                plan.Summary = "press " + plan.Text + (plan.Element != null ? " in " + what : "");
+            }
+            else throw new HelperRefusal("FreeHand can click, type, press keys or move to an element.");
+            return plan;
+        }
+
+        static AutomationElement Focused()
+        {
+            try { return AutomationElement.FocusedElement; } catch (Exception) { return null; }
+        }
+
+        static string Describe(AutomationElement el)
+        {
+            var c = el.Current;
+            var type = c.ControlType.ProgrammaticName.Replace("ControlType.", "").ToLowerInvariant();
+            return string.IsNullOrEmpty(c.Name) ? "the unnamed " + type : "the " + type + " \"" + Clip(c.Name, 80) + "\"";
+        }
+
+        static string Clip(string s, int n) { return s.Length > n ? s.Substring(0, n) + "..." : s; }
+
+        static AutomationElement FindElement(AutomationElement window, string target)
+        {
+            int me = Process.GetCurrentProcess().Id;
+            if (target.StartsWith("#"))
+            {
+                int n;
+                if (!int.TryParse(target.Substring(1), out n) || n < 1 || n > Seen.Count)
+                    throw new HelperRefusal("There's no element " + target + ". Use computer_look again to get fresh numbers.");
+                var el = Seen[n - 1];
+                try
+                {
+                    if (el.Current.ProcessId != window.Current.ProcessId || el.Current.ProcessId == me)
+                        throw new HelperRefusal("Element " + target + " isn't in that window. Use computer_look on it first.");
+                }
+                catch (ElementNotAvailableException) { throw new HelperRefusal("Element " + target + " has gone. Use computer_look again."); }
+                return el;
+            }
+            var exact = window.FindAll(TreeScope.Descendants,
+                new PropertyCondition(AutomationElement.NameProperty, target, PropertyConditionFlags.IgnoreCase));
+            var found = new List<AutomationElement>();
+            foreach (AutomationElement e in exact)
+                try { if (e.Current.IsEnabled && !e.Current.IsOffscreen) found.Add(e); } catch (Exception) { }
+            if (found.Count == 0)
+                foreach (AutomationElement e in exact) found.Add(e);
+            if (found.Count == 1) return found[0];
+            if (found.Count > 1)
+                throw new HelperRefusal("There are " + found.Count + " things called \"" + target + "\" in that window. Use computer_look and say which by its #number.");
+            throw new HelperRefusal("Nothing called \"" + target + "\" in that window. Use computer_look to see what's there.");
+        }
+
+        public static Dictionary<string, object> Run(Plan plan)
+        {
+            if (plan.Action == "open")
+            {
+                Process.Start(new ProcessStartInfo(plan.Target) { UseShellExecute = true });
+                return After("Opened " + plan.Target + ".");
+            }
+            var h = new IntPtr(plan.Window.Current.NativeWindowHandle);
+            if (plan.Action == "window")
+            {
+                object p;
+                var wp = plan.Window.TryGetCurrentPattern(WindowPattern.Pattern, out p) ? (WindowPattern)p : null;
+                if (plan.Do == "switch") Native.Front(h);
+                else if (plan.Do == "restore") { Native.Front(h); if (wp != null) wp.SetWindowVisualState(WindowVisualState.Normal); }
+                else if (plan.Do == "close") { if (wp != null) wp.Close(); else Native.PostMessage(h, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero); }
+                else if (plan.Do.StartsWith("minimi")) { if (wp != null) wp.SetWindowVisualState(WindowVisualState.Minimized); }
+                else if (wp != null) wp.SetWindowVisualState(WindowVisualState.Maximized);
+                return After("Done: " + plan.Summary + ".");
+            }
+
+            Native.Front(h);
+            Thread.Sleep(150);
+            var el = plan.Element;
+            if (plan.Do == "focus") el.SetFocus();
+            else if (plan.Do == "click") Click(el);
+            else if (plan.Do == "type")
+            {
+                object vp;
+                if (el != null && el.TryGetCurrentPattern(ValuePattern.Pattern, out vp) && !((ValuePattern)vp).Current.IsReadOnly)
+                    ((ValuePattern)vp).SetValue(plan.Text);
+                else
+                {
+                    if (el != null) el.SetFocus();
+                    var f = Focused();
+                    if (f != null && f.Current.IsPassword) throw new HelperRefusal("That's a password field. FreeHand never types passwords.");
+                    Keys.Type(plan.Text);
+                }
+            }
+            else if (plan.Do == "keys")
+            {
+                if (el != null) el.SetFocus();
+                Keys.Press(plan.Text);
+            }
+            return After("Done: " + plan.Summary + ".");
+        }
+
+        static void Click(AutomationElement el)
+        {
+            object p;
+            if (el.TryGetCurrentPattern(InvokePattern.Pattern, out p)) { ((InvokePattern)p).Invoke(); return; }
+            if (el.TryGetCurrentPattern(TogglePattern.Pattern, out p)) { ((TogglePattern)p).Toggle(); return; }
+            if (el.TryGetCurrentPattern(SelectionItemPattern.Pattern, out p)) { ((SelectionItemPattern)p).Select(); return; }
+            if (el.TryGetCurrentPattern(ExpandCollapsePattern.Pattern, out p))
+            {
+                var e = (ExpandCollapsePattern)p;
+                if (e.Current.ExpandCollapseState == ExpandCollapseState.Expanded) e.Collapse(); else e.Expand();
+                return;
+            }
+            // No accessible way to press it: click its middle with the mouse.
+            var r = el.Current.BoundingRectangle;
+            if (r.IsEmpty) throw new HelperRefusal("That element can't be pressed, and isn't on screen to click.");
+            Native.SetCursorPos((int)(r.X + r.Width / 2), (int)(r.Y + r.Height / 2));
+            var down = new Native.INPUT { type = 0 }; down.u.mi.dwFlags = 0x0002;
+            var up = new Native.INPUT { type = 0 }; up.u.mi.dwFlags = 0x0004;
+            Native.SendInput(2, new[] { down, up }, Marshal.SizeOf(typeof(Native.INPUT)));
+        }
+
+        // What's in front now, so FreeHand knows what happened.
+        static Dictionary<string, object> After(string message)
+        {
+            Thread.Sleep(600);
+            var d = new Dictionary<string, object> { { "message", message } };
+            try
+            {
+                var fg = Native.GetForegroundWindow();
+                if (fg != IntPtr.Zero) d["window_in_front"] = AutomationElement.FromHandle(fg).Current.Name;
+                var f = Focused();
+                if (f != null) d["focus"] = Describe(f);
+            }
+            catch (Exception) { }
+            Seen.Clear(); // the old numbers may be wrong now
+            return d;
+        }
+    }
+
+    // Typing and key presses, as if from the keyboard.
+    static class Keys
+    {
+        static readonly Dictionary<string, ushort> Named = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase) {
+            { "enter", 0x0D }, { "return", 0x0D }, { "tab", 0x09 }, { "escape", 0x1B }, { "esc", 0x1B }, { "space", 0x20 },
+            { "backspace", 0x08 }, { "delete", 0x2E }, { "del", 0x2E }, { "insert", 0x2D }, { "home", 0x24 }, { "end", 0x23 },
+            { "pageup", 0x21 }, { "pagedown", 0x22 }, { "up", 0x26 }, { "down", 0x28 }, { "left", 0x25 }, { "right", 0x27 },
+            { "f1", 0x70 }, { "f2", 0x71 }, { "f3", 0x72 }, { "f4", 0x73 }, { "f5", 0x74 }, { "f6", 0x75 }, { "f7", 0x76 },
+            { "f8", 0x77 }, { "f9", 0x78 }, { "f10", 0x79 }, { "f11", 0x7A }, { "f12", 0x7B }, { "apps", 0x5D }, { "menu", 0x5D } };
+        static readonly Dictionary<string, ushort> Mods = new Dictionary<string, ushort>(StringComparer.OrdinalIgnoreCase) {
+            { "ctrl", 0x11 }, { "control", 0x11 }, { "alt", 0x12 }, { "shift", 0x10 } };
+
+        // "Ctrl+S", "Down Down Enter", "Alt+F4" -> a list of (modifiers, key).
+        public static List<KeyValuePair<List<ushort>, ushort>> Parse(string spec)
+        {
+            var list = new List<KeyValuePair<List<ushort>, ushort>>();
+            foreach (var combo in spec.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var mods = new List<ushort>();
+                ushort key = 0;
+                foreach (var part in combo.Split('+'))
+                {
+                    ushort v;
+                    if (Mods.TryGetValue(part, out v)) mods.Add(v);
+                    else if (Named.TryGetValue(part, out v)) key = v;
+                    else if (part.Length == 1) key = (ushort)(Native.VkKeyScan(char.ToLowerInvariant(part[0])) & 0xff);
+                    else throw new HelperRefusal("FreeHand doesn't know the key \"" + part + "\".");
+                }
+                if (key == 0) throw new HelperRefusal("\"" + combo + "\" has no key to press.");
+                if (mods.Contains(0x11) && mods.Contains(0x12) && (key == 0x2E || key == 0x1B))
+                    throw new HelperRefusal("FreeHand can't press " + combo + ".");
+                list.Add(new KeyValuePair<List<ushort>, ushort>(mods, key));
+            }
+            if (list.Count == 0 || list.Count > 30) throw new HelperRefusal("Say which keys to press (up to 30).");
+            return list;
+        }
+
+        public static void Press(string spec)
+        {
+            foreach (var combo in Parse(spec))
+            {
+                var inputs = new List<Native.INPUT>();
+                foreach (var m in combo.Key) inputs.Add(Key(m, false));
+                inputs.Add(Key(combo.Value, false));
+                inputs.Add(Key(combo.Value, true));
+                for (int i = combo.Key.Count - 1; i >= 0; i--) inputs.Add(Key(combo.Key[i], true));
+                Send(inputs);
+                Thread.Sleep(60);
+            }
+        }
+
+        public static void Type(string text)
+        {
+            foreach (var ch in text.Replace("\r\n", "\n"))
+            {
+                if (ch == '\n') { Send(new List<Native.INPUT> { Key(0x0D, false), Key(0x0D, true) }); continue; }
+                var down = new Native.INPUT { type = 1 }; down.u.ki.scan = ch; down.u.ki.flags = 0x0004;
+                var up = new Native.INPUT { type = 1 }; up.u.ki.scan = ch; up.u.ki.flags = 0x0004 | 0x0002;
+                Send(new List<Native.INPUT> { down, up });
+                Thread.Sleep(5);
+            }
+        }
+
+        static Native.INPUT Key(ushort vk, bool up)
+        {
+            var i = new Native.INPUT { type = 1 };
+            i.u.ki.vk = vk;
+            i.u.ki.flags = up ? 0x0002u : 0u;
+            return i;
+        }
+
+        static void Send(List<Native.INPUT> inputs)
+        {
+            Native.SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf(typeof(Native.INPUT)));
         }
     }
 }

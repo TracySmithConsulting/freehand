@@ -3,10 +3,12 @@
 A small program that lets FreeHand help on this computer. It works with
 FreeHand on the same computer (in Docker) or on a server.
 
-**Stage 1: it can only look.** FreeHand can list the open windows, read a
-window the way a screen reader does (buttons, fields, menus, and which have
-no names), and take a picture of a window. It can't click, type or change
-anything yet. See [the design](../../docs/design/computer-helper.md).
+**It can look and act.** FreeHand can list the open windows, read a window
+the way a screen reader does (buttons, fields, menus, and which have no
+names), and take a picture of a window. It can also click, type, press
+keys, switch to, close, minimise and maximise windows, and open apps and
+websites, **asking you first every time**. It can't install or change
+settings yet. See [the design](../../docs/design/computer-helper.md).
 
 ## Getting it
 
@@ -34,6 +36,13 @@ The Helper then runs by the clock, and reconnects by itself.
 - **FreeHand asks first.** The first time it wants to look, a Windows dialog
   asks "allow FreeHand to look?". Yes lasts until you stop it or close the
   Helper.
+- **Before it does anything,** a dialog says exactly what, in which window,
+  and why, with three buttons: **Allow once**, **Allow in this app for 30
+  minutes**, and **Don't allow** (Escape). Nobody answering counts as no.
+  Opening an app always asks.
+- **Never:** typing into password fields, acting in Windows' security and
+  sign-in screens, acting in FreeHand's own console (so it can't approve its
+  own requests), or opening command tools like PowerShell.
 - **Ctrl+Alt+Escape stops it** from anywhere, at once. So does the Stop
   button, and Stop in the icon's menu by the clock. Press "Let FreeHand help
   again" to undo.

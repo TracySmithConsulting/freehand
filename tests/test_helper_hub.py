@@ -165,3 +165,35 @@ def test_the_window_list_reaches_the_model(monkeypatch):
     monkeypatch.setattr(helper_hub, "request", fake_request)
     out = asyncio.run(helper_hub.run_tool("computer_windows", {"why": "x"}))
     assert json.loads(out["content"])["windows"][0]["app"] == "OUTLOOK"
+
+
+def test_acting_passes_what_to_do_to_the_helper(monkeypatch):
+    """Stage 2: the Helper gets exactly what to do; it asks the person."""
+    monkeypatch.setattr(helper_hub, "device_now", lambda person=None: "dev1")
+    seen = {}
+
+    async def fake_request(device, action, args=None, why=""):
+        seen.update(action=action, args=args, why=why)
+        return {"ok": True, "data": {"message": "Done: click the button \"Send\".", "focus": "the button \"New\""}}
+    monkeypatch.setattr(helper_hub, "request", fake_request)
+    out = asyncio.run(helper_hub.run_tool("computer_act", {"window": "Outlook", "do": "click", "element": "Send",
+                                                           "why": "to send the reply"}))
+    assert seen == {"action": "act", "args": {"window": "Outlook", "do": "click", "element": "Send"},
+                    "why": "to send the reply"}
+    assert "Done" in json.loads(out["content"])["message"]
+
+
+def test_a_no_on_the_pc_reaches_the_model(monkeypatch):
+    monkeypatch.setattr(helper_hub, "device_now", lambda person=None: "dev1")
+
+    async def fake_request(device, action, args=None, why=""):
+        return {"ok": False, "error": "The person said no to: close the window \"Inbox\"."}
+    monkeypatch.setattr(helper_hub, "request", fake_request)
+    out = asyncio.run(helper_hub.run_tool("computer_window", {"window": "Inbox", "do": "close", "why": "x"}))
+    assert "said no" in json.loads(out["content"])["error"]
+
+
+def test_the_act_tools_are_offered_with_the_look_tools():
+    names = [s["function"]["name"] for s in helper_hub.schemas()]
+    assert names == list(helper_hub.TOOLS)
+    assert helper_hub.wanted(["close the Notepad window"])

@@ -1,7 +1,7 @@
 # The FreeHand Helper: help on your own computer
 
-Status: stage 1 (Look) built in Nov 2026: helper/windows and
-core/helper_hub.py. Later stages are still design.
+Status: stages 1 (Look) and 2 (Act) built in Nov 2026: helper/windows
+and core/helper_hub.py. Stages 3 (Change) and 4 (hosted) are still design.
 
 ## What it's for
 
