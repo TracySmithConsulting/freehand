@@ -44,7 +44,7 @@ ALLOWED_SERVICES = list(CONNECTORS.keys())
 # Connect starts the sign-in in OpenConnector (_open_connector_connect).
 OC_FEATURED_SERVICES = (
     "gmail", "googlecalendar", "googlesheets", "outlook", "outlook_calendar",
-    "zoom", "instagram", "slack",
+    "zoom", "slack",
 )
 
 
@@ -469,11 +469,12 @@ async def get_authorize_url(service: str, label: str = "default", request: Reque
     # Composio hosted Connect Link so FreeHand never needs a Meta app secret.
     # When it is not configured, the existing first-party connector remains
     # available as a fallback for development and self-hosted users.
-    # Instagram now connects through OpenConnector (Nov 2026), so only
-    # Facebook can still use Composio.
+    # Instagram stays on Composio too (Nov 2026): OpenConnector can only
+    # reach Instagram with the user's own Meta developer app, which needs an
+    # https address FreeHand doesn't have on a home computer.
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
-    if service == "facebook" and _composio.is_configured(service):
+    if service in ("facebook", "instagram") and _composio.is_configured(service):
         try:
             callback_url = _get_composio_callback_uri(service, label, request)
             link = await _composio.create_connect_link(service, label, callback_url)
