@@ -109,6 +109,79 @@ In a sensible order:
    - FreeHand only lets each person use their own connections and the shared
      ones.
 6. **Roles and permissions:** what members may do, set per person.
+7. **Families:** the child role, parents' approvals, limits and oversight
+   (see "Families and children" below).
+
+## Families and children
+
+A family is a small office: parents are the administrators, and children
+are members with extra limits. It uses the same people, roles and tags as
+above, plus a **child** role linked to one or more parents.
+
+### Two kinds of control
+
+**1. Hard limits, enforced by FreeHand's code.** These are the dependable
+ones: FreeHand blocks the action itself, so clever asking can't get round them.
+
+- **What FreeHand can do for the child.** Each child has a list of allowed
+  tools and connections. For example: homework help, questions and their own
+  scribble pad are allowed. Sending email, posting to social media, purchases
+  and the family's connections are not.
+- **Anything that reaches outside asks a parent.** If a child asks FreeHand to
+  send or post something, the approval goes to a parent (for example on their
+  phone through Telegram), never to the child.
+- **Time limits:** quiet hours (for example, nothing after 9 pm on school
+  nights) and a daily message limit.
+- **Spending limits:** a daily cap on what the child's messages may cost with
+  the AI model service.
+
+**2. Guidance for the AI.** Answers suited to the child's age, gentler topics
+for young children, helping them think rather than handing over homework
+answers, and never asking for personal details such as an address. This helps,
+but it isn't watertight: AI models can sometimes be talked round, which is why
+the hard limits come first.
+
+### How much parents see
+
+There's a trade-off between oversight and the child's privacy, so this is a
+choice for each child:
+
+- **Full view:** parents can read the chats. This suits young children.
+- **Summaries:** a weekly "what they used FreeHand for". This suits teenagers.
+- **Alerts only:** parents are told only when something worrying comes up. If a
+  child says they're being hurt or are in danger, FreeHand answers kindly, gives
+  helpline numbers, and tells a parent.
+
+Whichever is chosen, FreeHand tells the child honestly what their parents can
+see. Hidden monitoring breaks trust.
+
+### Age rules
+
+- **The AI model service's minimum age.** Most services set one in their terms,
+  often 13 and sometimes 18. That limit comes from the service, not FreeHand,
+  so a family needs a service whose terms allow children.
+- **Privacy law.** Children's personal information has extra protection, such
+  as POPIA in South Africa, where a parent must consent.
+
+Setting up a child is therefore a parent's deliberate choice. FreeHand explains
+these points when a child is added.
+
+### How it fits the code
+
+- The `child` role sits in `people` settings, with `parents: [...]` and a small
+  rulebook:
+  - `allowed_tools` and `allowed_connections`
+  - `quiet_hours` and `daily_message_limit`
+  - `daily_spend_limit`
+  - `oversight`: `full`, `summary` or `alerts`
+  - `age_band`
+- It's enforced in the agent loop. The loop already knows whose message it's
+  handling (`people.current()`), so it:
+  - filters the child's tools before the model sees them;
+  - sends approvals to the parents;
+  - turns messages away during quiet hours, or once a limit is reached, with a
+    friendly explanation.
+- The child's guidance is added to the system prompt for that person only.
 
 ## Questions for the first office
 
