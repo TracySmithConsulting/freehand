@@ -176,3 +176,15 @@ def test_a_missing_model_list_points_at_the_address(monkeypatch):
     monkeypatch.setattr(lp.urllib.request, "urlopen", not_found)
     models, problem = lp.list_models("custom", "k", "https://example.test/api")
     assert models is None and "address" in problem and "/v1" in problem
+
+
+def test_imported_files_dont_bloat_the_system_prompt(monkeypatch):
+    """Economy (Nov 2026): every imported file path used to be listed in
+    the system prompt - 5,000+ lines, ~140,000 tokens on every message."""
+    from core import agent_config, agents
+    fake = [{"agent": "hermes", "file_type": "skill", "vault_path": f"imports/hermes/skill-{i}.md"} for i in range(5000)]
+    monkeypatch.setattr(agents, "list_imported_sources", lambda: fake)
+    prompt = agent_config.build_system_prompt()
+    assert "Hermes: 5000 files imported" in prompt
+    assert "skill-4999.md" not in prompt
+    assert len(prompt) < 20000
