@@ -557,6 +557,12 @@
       margin-top: 0.5rem;
     }
 
+    #voice-speak-btn.recording { outline: 3px solid #b00020; outline-offset: 2px; }
+    .voice-listening { margin-left: 0.5rem; font-weight: bold; color: #b00020; }
+    @media (prefers-color-scheme: dark) {
+      #voice-speak-btn.recording { outline-color: #ff8a80; }
+      .voice-listening { color: #ff8a80; }
+    }
     .runner-alert {
       background: var(--red-tint);
       border: 1.5px dashed var(--red);
@@ -986,6 +992,7 @@
       <div class="voice-controls stack-top" role="group" aria-labelledby="voice-heading">
         <h3 id="voice-heading">Voice</h3>
         <button type="button" id="voice-speak-btn">Speak</button>
+        <span id="voice-listening" class="voice-listening" aria-hidden="true"></span>
         <div class="form-group">
           <label><input type="checkbox" id="voice-read-aloud"> Read replies aloud</label>
         </div>
@@ -994,9 +1001,11 @@
         </div>
         <p id="voice-status" role="status" aria-live="polite"></p>
         <p class="hint">
-          Press Speak, talk, then press it again to put your words in the box. Your voice is turned into text
-          on this computer, not sent anywhere. If you use a screen reader, reading aloud may talk over it;
-          leave it off and your screen reader reads replies as usual.
+          Press Speak and wait for the high beep, then talk. Press Speak again when you've finished: a low beep
+          means FreeHand has stopped listening. Your voice is turned into text on this computer, not sent anywhere.
+          While FreeHand reads replies aloud, your screen reader stays quiet so the two don't talk over each other.
+          If you use a screen reader with speakers, try not to move around the page while it's listening:
+          the microphone can hear your screen reader. Headphones stop that completely.
         </p>
       </div>
       <div id="command-response" aria-live="polite" class="hint" style="margin-top: 0.5rem;"></div>
@@ -1644,6 +1653,11 @@
         .then(function(res) { return res.json(); })
         .then(function(data) {
           var responseEl = document.getElementById('agent-response');
+          // When FreeHand reads the reply aloud itself, the screen reader
+          // stays quiet, so the two voices don't talk over each other (and
+          // the microphone doesn't hear the screen reader in conversation).
+          var voiceReads = voiceReadsReplies();
+          responseEl.setAttribute('aria-live', voiceReads ? 'off' : 'polite');
           if (data.text) {
             responseEl.innerHTML = '<div class="agent-bubble">' + escapeHtml(data.text) + '</div>';
           }
@@ -1658,7 +1672,7 @@
           if (data.error) {
             responseEl.innerHTML += '<div class="js-error-text">Error: ' + escapeHtml(data.error) + '</div>';
           }
-          showStatus('Agent responded.', 'success');
+          if (!voiceReads) showStatus('Agent responded.', 'success');
           input.value = '';
           if (data.text) voiceAfterReply(data.text);
         })
@@ -1680,6 +1694,7 @@
       // again (for example "Listening" a second time) instead of staying silent.
       function voiceStatus(text) {
         var el = voiceEl('voice-status');
+        voice.lastSaid = text; voice.lastSaidAt = Date.now();
         el.textContent = '';
         setTimeout(function() { el.textContent = text; }, 60);
       }
@@ -1719,9 +1734,44 @@
       voicePref('voice-read-aloud');
       voicePref('voice-conversation');
 
+      // The button's name stays "Speak": a screen reader reads out a renamed
+      // button, and the microphone recorded that ("Stop and use what I said"
+      // was once heard as swearing). The beeps say when it's listening; the
+      // visible "Listening" note is hidden from screen readers.
       function setSpeakButton(recording) {
-        var b = voiceEl('voice-speak-btn');
-        b.textContent = recording ? 'Stop and use what I said' : 'Speak';
+        var note = voiceEl('voice-listening');
+        note.textContent = recording ? 'Listening. Press Speak again when you\'ve finished.' : '';
+        voiceEl('voice-speak-btn').classList.toggle('recording', !!recording);
+      }
+
+      // While recording, no part of the page announces anything, so the
+      // screen reader has nothing to say into the microphone.
+      var hushed = [];
+      function hushPage(on) {
+        if (on) {
+          if (hushed.length) return;
+          document.querySelectorAll('[aria-live], [role="status"], [role="alert"]').forEach(function(el) {
+            hushed.push({ el: el, live: el.getAttribute('aria-live') });
+            el.setAttribute('aria-live', 'off');
+          });
+        } else {
+          hushed.forEach(function(h) {
+            if (h.live === null) h.el.removeAttribute('aria-live'); else h.el.setAttribute('aria-live', h.live);
+          });
+          hushed = [];
+        }
+      }
+
+      // Roughly how long until the screen reader has read the last message
+      // (about 15 letters a second, at most 4 seconds), plus the button name.
+      function screenReaderQuietIn() {
+        var left = voice.lastSaid ? voice.lastSaidAt + Math.min(voice.lastSaid.length * 65, 4000) - Date.now() : 0;
+        return Math.max(700, left);
+      }
+
+      function voiceReadsReplies() {
+        return !!window.speechSynthesis &&
+          (voiceEl('voice-read-aloud').checked || voiceEl('voice-conversation').checked);
       }
 
       function stopListeningAids() {
@@ -1762,26 +1812,44 @@
         // that question is easy to miss, and until it's answered nothing
         // else happens.
         voice.asking = true;
-        voiceStatus('Getting the microphone ready. If the browser asks to use your microphone, choose Allow.');
+        var attempt = voice.attempt = (voice.attempt || 0) + 1;
+        // Only the first time: once allowed, there's nothing to explain, and
+        // every extra word is something the microphone could hear.
+        if (!voice.micAllowed) voiceStatus('Getting the microphone ready. If the browser asks to use your microphone, choose Allow.');
         var stillWaiting = setTimeout(function() {
           if (voice.asking) voiceStatus('Still waiting for permission to use the microphone. The browser\'s question ' +
             'is near the address bar. In Chrome, press Alt+Shift+A to reach it, then choose Allow.');
         }, 6000);
-        navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
+        // Echo cancellation removes sound the browser itself plays (FreeHand
+        // reading aloud). It can't remove a screen reader, which is a separate
+        // program, so FreeHand also keeps the page quiet while recording.
+        navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        }).then(function(stream) {
           voice.asking = false; clearTimeout(stillWaiting);
+          voice.micAllowed = true;
           voice.stream = stream;
           voice.chunks = [];
           var type = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : '';
           voice.recorder = type ? new MediaRecorder(stream, { mimeType: type }) : new MediaRecorder(stream);
           voice.recorder.ondataavailable = function(e) { if (e.data && e.data.size) voice.chunks.push(e.data); };
           voice.recorder.onstop = sendRecording;
-          voice.recorder.start();
-          voiceTone(true);
-          setSpeakButton(true);
-          voiceStatus(voiceEl('voice-conversation').checked
-            ? 'Listening. Talk, then pause and I\'ll send it.'
-            : 'Listening. Press the button again when you\'ve finished.');
-          if (voiceEl('voice-conversation').checked) watchForPause(stream);
+          // Let the screen reader finish what it's saying first (the button
+          // name, or the last message), or the microphone hears it.
+          var stillThisOne = function() {
+            return attempt === voice.attempt && voice.recorder && voice.recorder.state === 'inactive';
+          };
+          setTimeout(function() {
+            if (!stillThisOne()) return;
+            hushPage(true);
+            setSpeakButton(true);
+            voiceTone(true);
+            setTimeout(function() {
+              if (!stillThisOne()) return;
+              voice.recorder.start();
+              if (voiceEl('voice-conversation').checked) watchForPause(stream);
+            }, 250);  // after the beep, so it isn't recorded
+          }, screenReaderQuietIn());
         }).catch(function(err) {
           voice.asking = false; clearTimeout(stillWaiting);
           var name = err && err.name;
@@ -1796,8 +1864,16 @@
 
       function stopRecording() {
         stopListeningAids();
-        if (voice.recorder && voice.recorder.state !== 'inactive') { voice.recorder.stop(); voiceTone(false); }
+        if (voice.recorder && voice.recorder.state === 'inactive') {
+          // Stopped before recording began (pressed again during the wait).
+          voice.recorder = null;
+        } else if (voice.recorder) {
+          voice.recorder.stop();
+          voiceTone(false);
+        }
         if (voice.stream) voice.stream.getTracks().forEach(function(t) { t.stop(); });
+        if (!voice.recorder) voice.stream = null;
+        hushPage(false);
         setSpeakButton(false);
       }
 
