@@ -1760,6 +1760,16 @@
           if (data.error) {
             responseEl.innerHTML += '<div class="js-error-text">Error: ' + escapeHtml(data.error) + '</div>';
           }
+          // For tinkerers ("Show all settings and tools" on): what the reply
+          // cost, so the economy principle can be checked, not just hoped for.
+          var u = data.usage, showAll = document.getElementById('show-all-toggle');
+          if (u && u.calls && showAll && showAll.checked) {
+            var total = (u.prompt_tokens || 0) + (u.completion_tokens || 0);
+            responseEl.innerHTML += '<p class="hint">This reply used ' + (u.estimated ? 'roughly ' : 'about ') +
+              total.toLocaleString() + ' tokens (' + (u.prompt_tokens || 0).toLocaleString() + ' sent, ' +
+              (u.completion_tokens || 0).toLocaleString() + ' written), in ' + u.calls +
+              (u.calls === 1 ? ' model call.' : ' model calls.') + '</p>';
+          }
           if (!voiceReads) showStatus('Agent responded.', 'success');
           input.value = '';
           if (data.text) voiceAfterReply(data.text);
