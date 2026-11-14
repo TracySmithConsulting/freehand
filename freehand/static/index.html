@@ -531,6 +531,11 @@
       line-height: 1.55;
     }
 
+    .ask-form fieldset { margin: 0.75rem 0 0.5rem; }
+    .ask-form .ask-option { display: block; margin: 0.35rem 0; }
+    .ask-form .ask-option input { margin-right: 0.5rem; }
+    .ask-form .ask-other { margin-top: 0.5rem; }
+
     .tools-toggle {
       margin-top: 0.5rem;
     }
@@ -1769,7 +1774,13 @@
           // the microphone doesn't hear the screen reader in conversation).
           var voiceReads = voiceReadsReplies();
           responseEl.setAttribute('aria-live', voiceReads ? 'off' : 'polite');
-          if (data.text) {
+          if (data.questions) {
+            // FreeHand is asking: show the choices, and go straight to the
+            // first one, so a screen reader reads the question and options.
+            responseEl.setAttribute('aria-live', 'off');
+            responseEl.innerHTML = '';
+            responseEl.appendChild(buildAskForm(data.questions));
+          } else if (data.text) {
             responseEl.innerHTML = '<div class="agent-bubble">' + escapeHtml(data.text) + '</div>';
           }
           if (data.tools_used && data.tools_used.length > 0) {
@@ -1793,8 +1804,12 @@
               (u.completion_tokens || 0).toLocaleString() + ' written), in ' + u.calls +
               (u.calls === 1 ? ' model call.' : ' model calls.') + '</p>';
           }
-          if (!voiceReads) showStatus('Agent responded.', 'success');
+          if (!voiceReads && !data.questions) showStatus('Agent responded.', 'success');
           input.value = '';
+          if (data.questions) {
+            var first = responseEl.querySelector('.ask-form input');
+            if (first && !voiceReads) first.focus();
+          }
           if (data.text) voiceAfterReply(data.text);
         })
         .catch(function(err) {
@@ -1802,6 +1817,76 @@
           showStatus('Command failed: ' + err.message, 'error');
         });
       });
+
+      // ---- Questions with choices (the agent's ask_user tool) ----
+      // Radio buttons for "choose one", checkboxes for "choose any", and a
+      // "Something else" box. The answers are sent as the next message.
+      var askCount = 0;
+      function buildAskForm(asked) {
+        askCount += 1;
+        var form = document.createElement('form');
+        form.className = 'ask-form agent-bubble';
+        form.setAttribute('role', 'group');
+        form.setAttribute('aria-label', asked.intro || 'FreeHand has a question');
+        if (asked.intro) {
+          var p = document.createElement('p');
+          p.textContent = asked.intro;
+          form.appendChild(p);
+        }
+        asked.questions.forEach(function(q, qi) {
+          var fs = document.createElement('fieldset');
+          var lg = document.createElement('legend');
+          lg.textContent = q.question + (q.multiple ? ' (choose any)' : '');
+          fs.appendChild(lg);
+          q.options.forEach(function(opt, oi) {
+            var label = document.createElement('label');
+            label.className = 'ask-option';
+            var box = document.createElement('input');
+            box.type = q.multiple ? 'checkbox' : 'radio';
+            box.name = 'ask-' + askCount + '-' + qi;
+            box.value = opt;
+            label.appendChild(box);
+            label.appendChild(document.createTextNode(opt));
+            fs.appendChild(label);
+          });
+          var otherLabel = document.createElement('label');
+          otherLabel.className = 'ask-other';
+          otherLabel.textContent = 'Something else (optional) ';
+          var other = document.createElement('input');
+          other.type = 'text';
+          other.className = 'ask-other-text';
+          otherLabel.appendChild(other);
+          fs.appendChild(otherLabel);
+          form.appendChild(fs);
+        });
+        var send = document.createElement('button');
+        send.type = 'submit';
+        send.textContent = 'Send my answers';
+        form.appendChild(send);
+        var err = document.createElement('p');
+        err.className = 'error';
+        err.setAttribute('role', 'alert');
+        form.appendChild(err);
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var lines = [], any = false;
+          asked.questions.forEach(function(q, qi) {
+            var fs = form.querySelectorAll('fieldset')[qi];
+            var chosen = Array.prototype.filter.call(fs.querySelectorAll('input[type=radio], input[type=checkbox]'),
+              function(b) { return b.checked; }).map(function(b) { return b.value; });
+            var extra = fs.querySelector('.ask-other-text').value.trim();
+            if (extra) chosen.push(extra);
+            if (chosen.length) any = true;
+            lines.push(q.question + ' ' + (chosen.length ? chosen.join(', ') : '(no answer)'));
+          });
+          if (!any) { err.textContent = 'Choose at least one answer, or type one.'; return; }
+          Array.prototype.forEach.call(form.elements, function(el) { el.disabled = true; });
+          var box = document.getElementById('command-input');
+          box.value = lines.join('; ');  // one line: the prompt box is a single-line field
+          commandForm.requestSubmit();
+        });
+        return form;
+      }
 
       // ---- Voice ----
       // Speak: record with the microphone, turn it into text on this

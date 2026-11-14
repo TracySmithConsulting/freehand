@@ -482,6 +482,8 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
     # message counts too, so "and post it there" still finds Facebook.
     earlier = [m["content"] for m in history if m.get("role") == "user"][-1:]
     tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
+    from core import ask_user
+    tools = [*tools, ask_user.schema()]
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "estimated": False}
 
     def count(resp: dict) -> None:
@@ -546,6 +548,20 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
         # Execute the tool
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
+
+        if tool_name == ask_user.ASK_USER:
+            # Not a real tool either: the questions are the reply, and the
+            # turn ends here. The user's answer arrives as the next message.
+            asked = ask_user.clean(tool_args)
+            if asked:
+                final_response["text"] = ask_user.as_text(asked)
+                final_response["questions"] = asked
+                final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": "asked"})
+                break
+            work_turns += 1
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": ask_user.refusal()})
+            continue
 
         if tool_name == tool_selection.LOAD_TOOLS and loads < 3:
             # Not a real tool: add a group of tools, and don't count the turn.

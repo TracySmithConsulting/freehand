@@ -410,7 +410,7 @@ class TestCheckpointSerialization:
         async def run():
             return await save_checkpoint(name="test_deny", url="https://example.com")
 
-        result = asyncio.get_event_loop().run_until_complete(run())
+        result = asyncio.run(run())
         assert "error" in result
         assert result["error"] == "Permission denied"
 
