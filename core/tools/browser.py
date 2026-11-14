@@ -120,6 +120,32 @@ def _chrome_extension_bridge_port() -> Optional[int]:
     return None
 
 
+_PLAYWRIGHT: dict = {}
+
+
+async def _playwright():
+    """One running Playwright per event loop.
+
+    This used to be ``async with async_playwright() as p: return browser``,
+    which stopped Playwright as the browser was returned, so every browser
+    tool failed on its first step (Nov 2026).
+    """
+    import asyncio
+    from playwright.async_api import async_playwright
+
+    loop = asyncio.get_running_loop()
+    if _PLAYWRIGHT.get("loop") is not loop:
+        _PLAYWRIGHT.update(loop=loop, pw=await async_playwright().start())
+    return _PLAYWRIGHT["pw"]
+
+
+def _can_show_windows() -> bool:
+    """False in Docker or on a server: there's no screen for a visible browser."""
+    import os
+    import sys
+    return not sys.platform.startswith("linux") or bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+
 async def _launch_browser(headless: bool = True, cdp_overrides: bool = True):
     """Launch a Playwright Chromium browser.
 
@@ -135,33 +161,31 @@ async def _launch_browser(headless: bool = True, cdp_overrides: bool = True):
 
     Returns (browser, strategy_used: str).
     """
-    from playwright.async_api import async_playwright
+    p = await _playwright()
+    # Strategy 1: Chrome Extension bridge
+    if cdp_overrides:
+        ext_port = _chrome_extension_bridge_port()
+        if ext_port:
+            try:
+                ws_url = f"ws://localhost:{ext_port}/devtools/browser/freehand"
+                browser = await p.chromium.connect_over_cdp(ws_url, timeout=5000)
+                return browser, "chrome_extension"
+            except Exception:
+                pass  # Fall through to next strategy
 
-    async with async_playwright() as p:
-        # Strategy 1: Chrome Extension bridge
-        if cdp_overrides:
-            ext_port = _chrome_extension_bridge_port()
-            if ext_port:
-                try:
-                    ws_url = f"ws://localhost:{ext_port}/devtools/browser/freehand"
-                    browser = await p.chromium.connect_over_cdp(ws_url, timeout=5000)
-                    return browser, "chrome_extension"
-                except Exception:
-                    pass  # Fall through to next strategy
+    # Strategy 2: Existing Chrome via DevToolsActivePort
+    if cdp_overrides:
+        ws_url = _get_chrome_cdp_endpoint()
+        if ws_url:
+            try:
+                browser = await p.chromium.connect_over_cdp(ws_url, timeout=5000)
+                return browser, "existing_chrome"
+            except Exception:
+                pass  # Fall through to fallback
 
-        # Strategy 2: Existing Chrome via DevToolsActivePort
-        if cdp_overrides:
-            ws_url = _get_chrome_cdp_endpoint()
-            if ws_url:
-                try:
-                    browser = await p.chromium.connect_over_cdp(ws_url, timeout=5000)
-                    return browser, "existing_chrome"
-                except Exception:
-                    pass  # Fall through to fallback
-
-        # Strategy 3: Fresh sandboxed Chromium
-        browser = await p.chromium.launch(headless=headless)
-        return browser, "sandboxed"
+    # Strategy 3: Fresh sandboxed Chromium
+    browser = await p.chromium.launch(headless=headless)
+    return browser, "sandboxed"
 
 
 # ── Feature 3: Network Request Capture ───────────────────────────────────────
@@ -440,7 +464,7 @@ async def _get_page(url: str, mode: str = "headless", timeout: int = 30000):
     """
     global _CAPTURE_ACTIVE
 
-    headless = mode == "headless"
+    headless = mode == "headless" or not _can_show_windows()
     browser, strategy = await _launch_browser(headless=headless)
 
     # Attach network capture handlers if active

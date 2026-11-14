@@ -48,7 +48,9 @@ COPY pyproject.toml ./
 # the layer small. The package isn't installed editable — the image
 # IS the deploy artifact.
 # [voice]: local speech to text (faster-whisper) for voice notes.
-RUN pip install --no-cache-dir ".[voice]"
+# [browser]: Playwright, for the browser tools (reading and filling in
+# websites). Its Chromium is installed in the runtime stage.
+RUN pip install --no-cache-dir ".[voice,browser]"
 
 # ── Stage 2: runtime ───────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
@@ -71,6 +73,16 @@ RUN groupadd --system --gid ${GID} freehand \
 # Copy the installed Python environment from the builder stage.
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Chromium for the browser tools, with the system libraries it needs,
+# in a shared folder so the freehand user can run it. This is a browser
+# inside the container (no logins of yours); using your own Chrome is
+# the FreeHand Helper's job (docs/design/computer-helper.md).
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
+    && playwright install --with-deps --only-shell chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && chmod -R a+rX /ms-playwright
 
 # Copy the FreeHand source. The vault/ directory is intentionally NOT
 # copied — it's mounted as a volume at runtime so encryption.key,
