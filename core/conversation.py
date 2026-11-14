@@ -35,6 +35,8 @@ def _conn() -> sqlite3.Connection:
         " created_at TEXT NOT NULL)"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_turns ON conversation_turns(conversation, id)")
+    from core import people
+    people.ensure_person_column(conn, "conversation_turns")
     return conn
 
 
@@ -75,16 +77,16 @@ def history(key: str) -> list[dict]:
     return messages
 
 
-def add_turn(key: str, user_text: str, reply_text: str) -> None:
+def add_turn(key: str, user_text: str, reply_text: str, person: str = "owner") -> None:
     if not (user_text or "").strip() or not (reply_text or "").strip():
         return
     try:
         conn = _conn()
         try:
             conn.execute(
-                "INSERT INTO conversation_turns (conversation, user_text, reply_text, created_at) "
-                "VALUES (?, ?, ?, ?)",
-                (key, user_text[:MAX_CHARS], reply_text[:MAX_CHARS], _now().isoformat()),
+                "INSERT INTO conversation_turns (conversation, user_text, reply_text, created_at, person) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (key, user_text[:MAX_CHARS], reply_text[:MAX_CHARS], _now().isoformat(), person or "owner"),
             )
             # Keep the table small: only the newest turns per conversation matter.
             conn.execute(

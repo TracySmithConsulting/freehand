@@ -166,7 +166,12 @@ def retain(text: str, context: str = "", wait: bool = False) -> dict:
         return {"error": "That looks like a password or key, so FreeHand won't keep it in memory."}
     if not _ensure_bank():
         return {"error": "FreeHand's memory (Hindsight) isn't reachable right now."}
-    item = {"content": text[:8000]}
+    # Whose memory this is (core/people.py). Recall doesn't filter on it
+    # yet; it's there so a shared pool and private memories can be told
+    # apart once FreeHand has several people (docs/design/people.md).
+    from core import people
+    item = {"content": text[:8000], "tags": people.memory_tags(),
+            "metadata": {"person": people.current()}}
     if context:
         item["context"] = context[:200]
     code, data = _call(
