@@ -1,7 +1,7 @@
 # The FreeHand Helper: help on your own computer
 
-Status: design, not built yet (Nov 2026). Nothing here is decided until
-Tracy agrees it.
+Status: stage 1 (Look) built in Nov 2026: helper/windows and
+core/helper_hub.py. Later stages are still design.
 
 ## What it's for
 
@@ -131,8 +131,8 @@ and on the PC, where FreeHand can't change them.
    itself**, so nobody can approve it from somewhere else.
 3. **Always visible, always stoppable.** While FreeHand is connected and
    allowed to look or act, a small notice says "FreeHand is helping" and the
-   icon changes. **A Stop button and a keyboard shortcut** cut it off at once;
-   the shortcut is still to be chosen, see the questions below. Stopping
+   icon changes. **A Stop button and Ctrl+Alt+Escape** cut it off at once.
+   Stopping
    ends the session; FreeHand has to ask again.
 4. **Never secrets.** The Helper refuses to type into password fields
    (Windows marks them), never reads them, and screenshots blank them out.
@@ -209,8 +209,9 @@ Each stage is its own pull request, tested on Tracy's computer first.
    FreeHand can click and type in it without asking, until the time runs
    out. Anything on screen that tries to trick FreeHand could act sooner.
    You can stop it any time." Change still always asks.
-2. **Stop shortcut: Tracy to choose from the recommendations below.**
-3. **Signing: free options exist; see below.**
+2. **Stop shortcut: Ctrl+Alt+Escape** (chosen from the options below).
+3. **Signing: SignPath Foundation** for the GitHub download. The
+   Microsoft Store can come later if needed.
 4. **Only FreeHand.** No person sees the PC through the Helper.
 
 ### The Stop shortcut

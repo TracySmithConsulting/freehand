@@ -1236,6 +1236,27 @@
       </div>
     </section>
 
+    <!-- Help on my computer: the FreeHand Helper (docs/design/computer-helper.md) -->
+    <section id="computer-help" data-advanced aria-labelledby="helper-heading">
+      <h2 id="helper-heading">Help on my computer</h2>
+      <p class="hint">
+        The FreeHand Helper is a small program on your computer. With it, FreeHand can see what's on
+        your screen (the way a screen reader does, or as a picture) and tell you about it, for example
+        an app's unlabelled buttons. It always asks on your computer first, it can only look for now,
+        and Ctrl+Alt+Escape stops it at once.
+      </p>
+      <ol class="hint">
+        <li>Get the Helper: in the FreeHand folder, open <code>helper\windows</code>, double-click
+          <code>build.cmd</code> once, then open <code>FreeHandHelper.exe</code>.</li>
+        <li>Press <strong>Add a computer</strong> below, and type the code into the Helper, with this
+          address: <code id="helper-address"></code></li>
+      </ol>
+      <button type="button" id="helper-add-btn">Add a computer</button>
+      <p id="helper-code" aria-live="polite" class="stack-top"></p>
+      <h3>Your computers</h3>
+      <div id="helper-list" aria-live="polite"><p class="empty-state">Loading...</p></div>
+    </section>
+
     <!-- Agents Import Panel -->
     <section id="agents" data-advanced aria-labelledby="agents-heading">
       <h2 id="agents-heading">Agents</h2>
@@ -1766,7 +1787,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: value })
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          // A crash comes back as plain text ("Internal Server Error"), not
+          // JSON: say so plainly instead of showing a JSON parsing error.
+          return res.text().then(function(body) {
+            try { return JSON.parse(body); }
+            catch (e) { throw new Error('FreeHand hit a problem answering that (' + res.status + '). Try again, and if it keeps happening, the details are in FreeHand’s log.'); }
+          });
+        })
         .then(function(data) {
           var responseEl = document.getElementById('agent-response');
           // When FreeHand reads the reply aloud itself, the screen reader
@@ -1817,6 +1845,55 @@
           showStatus('Command failed: ' + err.message, 'error');
         });
       });
+
+      // ---- Help on my computer (the FreeHand Helper) ----
+      (function() {
+        var list = document.getElementById('helper-list');
+        var codeEl = document.getElementById('helper-code');
+        var addBtn = document.getElementById('helper-add-btn');
+        if (!list || !codeEl || !addBtn) return;
+        var addressEl = document.getElementById('helper-address');
+        try { if (addressEl) addressEl.textContent = window.location.origin; } catch (e) {}
+        function loadHelpers() {
+          apiFetch('/api/helpers').then(function(r) { return r.json(); }).then(function(d) {
+            var devices = d.devices || [];
+            if (!devices.length) { list.innerHTML = '<p class="empty-state">No computers paired yet.</p>'; return; }
+            var ul = document.createElement('ul');
+            devices.forEach(function(dev) {
+              var li = document.createElement('li');
+              li.appendChild(document.createTextNode(dev.name + (dev.connected ? ': connected now ' : ': not connected ')));
+              var rm = document.createElement('button');
+              rm.type = 'button';
+              rm.className = 'secondary';
+              rm.textContent = 'Remove ' + dev.name;
+              rm.addEventListener('click', function() {
+                if (!confirm('Remove ' + dev.name + '? FreeHand won’t be able to reach it until it’s paired again.')) return;
+                apiFetch('/api/helpers/' + encodeURIComponent(dev.id), { method: 'DELETE' }).then(function() {
+                  showStatus(dev.name + ' removed.', 'success');
+                  loadHelpers();
+                  document.getElementById('helper-add-btn').focus();
+                });
+              });
+              li.appendChild(rm);
+              ul.appendChild(li);
+            });
+            list.innerHTML = '';
+            list.appendChild(ul);
+          }).catch(function() { list.innerHTML = '<p class="empty-state">Couldn’t load your computers.</p>'; });
+        }
+        addBtn.addEventListener('click', function() {
+          apiFetch('/api/helper/pair-code', { method: 'POST' }).then(function(r) { return r.json(); }).then(function(d) {
+            codeEl.textContent = 'Type this code into the Helper: ' + d.code.split('').join(' ') +
+              '. It works once, for the next ten minutes.';
+            var tries = 0;
+            var poll = setInterval(function() { tries += 1; loadHelpers(); if (tries > 40) clearInterval(poll); }, 15000);
+          }).catch(function() { codeEl.textContent = 'Couldn’t get a code. Is FreeHand running?'; });
+        });
+        var section = document.getElementById('computer-help');
+        if (section && !section.hidden) loadHelpers();
+        var showAllBox = document.getElementById('show-all-toggle');
+        if (showAllBox) showAllBox.addEventListener('change', function() { if (showAllBox.checked) loadHelpers(); });
+      })();
 
       // ---- Questions with choices (the agent's ask_user tool) ----
       // Radio buttons for "choose one", checkboxes for "choose any", and a

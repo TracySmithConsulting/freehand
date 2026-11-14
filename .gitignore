@@ -82,3 +82,7 @@ freehand-*.log
 # they are never part of the repo. Only the shared caddy/Caddyfile is.
 caddy/sites/*
 !caddy/sites/.gitkeep
+
+# The FreeHand Helper is built on each PC (helper/windows/build.cmd), or
+# downloaded signed from a release later; never committed.
+helper/windows/*.exe

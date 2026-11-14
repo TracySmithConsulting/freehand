@@ -4,7 +4,7 @@ import sqlite3
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import sys
@@ -1063,6 +1063,64 @@ async def runner_status():
         "provider": cfg.get("provider") if configured else None,
         "model": cfg.get("model") if configured else None,
     }
+
+
+# ── The FreeHand Helper: help on the user's own computer ──────────────
+# core/helper_hub.py and docs/design/computer-helper.md. Pairing a
+# computer needs the API key (the console asks for a code); the Helper then
+# swaps the code for its own token, and connects with that.
+
+@app.post("/api/helper/pair-code", dependencies=[Depends(require_api_key)])
+async def helper_pair_code():
+    from core import helper_hub
+    return helper_hub.new_code()
+
+
+@app.post("/api/helper/pair")
+async def helper_pair(body: dict):
+    """No API key: the one-use code is the proof."""
+    from core import helper_hub
+    out = helper_hub.pair(body.get("code", ""), body.get("name", ""))
+    if not out.get("ok"):
+        raise HTTPException(status_code=403, detail=out["message"])
+    return out
+
+
+@app.get("/api/helpers", dependencies=[Depends(require_api_key)])
+async def helpers_list():
+    from core import helper_hub
+    return {"devices": helper_hub.list_devices()}
+
+
+@app.delete("/api/helpers/{device_id}", dependencies=[Depends(require_api_key)])
+async def helpers_remove(device_id: str):
+    from core import helper_hub
+    if not helper_hub.remove(device_id):
+        raise HTTPException(status_code=404, detail="No computer with that id.")
+    return {"ok": True}
+
+
+@app.websocket("/api/helper/connect")
+async def helper_connect(ws: WebSocket):
+    from core import helper_hub
+    auth = ws.headers.get("authorization", "")
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    device = helper_hub.device_for_token(token)
+    if not device:
+        await ws.close(code=4401)
+        return
+    await ws.accept()
+    helper_hub.connected(device, ws.send_json, ws.close)
+    await ws.send_json({"type": "welcome", "name": device["name"]})
+    try:
+        while True:
+            message = await ws.receive_json()
+            if isinstance(message, dict):
+                helper_hub.received(device["id"], message)
+    except (WebSocketDisconnect, RuntimeError, ValueError):
+        pass
+    finally:
+        helper_hub.disconnected(device["id"])
 
 
 @app.post("/api/agent/command", dependencies=[Depends(require_api_key)])
