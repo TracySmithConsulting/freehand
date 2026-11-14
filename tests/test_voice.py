@@ -133,3 +133,8 @@ def test_speak_needs_the_api_key():
 def test_empty_and_oversized_recordings_are_refused_before_the_model():
     assert "empty" in voice.transcribe(b"")["error"]
     assert "too long" in voice.transcribe(b"0" * (voice.MAX_AUDIO_BYTES + 1))["error"]
+
+
+def test_the_console_page_is_never_served_stale(client):
+    # Browsers kept the pre-update console, so voice fixes seemed broken.
+    assert client.get("/").headers.get("cache-control") == "no-cache"
