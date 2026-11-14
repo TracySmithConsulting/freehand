@@ -201,14 +201,70 @@ Each stage is its own pull request, tested on Tracy's computer first.
   Helper to clients.
 - **Windows first.** Mac later, if there's demand.
 
-## Questions for Tracy
+## Decisions (Tracy, Nov 2026)
 
-1. Should **Act** start as "ask every time" for everyone, or can the
-   person choose "allow for this app" from day one?
-2. Which **Stop shortcut**? It must not clash with NVDA or JAWS.
-3. **Code signing:** buy a certificate before Shakila gets it, or try it
-   unsigned with people who can click past the warning first?
-4. Should a **person helping remotely** (Tracy, as Shakila's support) ever
-   see her screen through FreeHand, or is the Helper only ever for
-   FreeHand's own use? This design assumes only FreeHand, which is simpler
-   and safer.
+1. **Act: the person chooses.** They can pick "ask every time" or "allow
+   for this app for 30 minutes" from day one. Before they choose, the
+   Helper explains the risk in plain words: "If you allow this app,
+   FreeHand can click and type in it without asking, until the time runs
+   out. Anything on screen that tries to trick FreeHand could act sooner.
+   You can stop it any time." Change still always asks.
+2. **Stop shortcut: Tracy to choose from the recommendations below.**
+3. **Signing: free options exist; see below.**
+4. **Only FreeHand.** No person sees the PC through the Helper.
+
+### The Stop shortcut
+
+Checked against Tracy's JAWS and NVDA comparison list (118 commands),
+plus Windows, Narrator and common apps. To avoid:
+
+- anything with **Insert or Caps Lock**: the screen reader key;
+- **single letters**, with or without Shift: browse-mode quick keys (H, B,
+  F, E ...);
+- **Ctrl+Alt with arrows, Home, End, Page Up or Page Down**: table
+  navigation in both;
+- **Ctrl+Alt+N** and **Ctrl+Alt+J**: the usual shortcuts that start NVDA
+  and JAWS;
+- **Ctrl+Alt+Shift+S**: Word's Styles pane;
+- **Ctrl alone**: stops speech in both, so pressing it must never be
+  needed for anything else.
+
+Recommendations, best first:
+
+1. **Ctrl+Alt+Escape.** Escape already means "stop" to most people. Windows
+   doesn't use it (Ctrl+Shift+Escape is Task Manager, Ctrl+Escape the Start
+   menu), and neither do JAWS or NVDA (NVDA's screen curtain,
+   Insert+Ctrl+Escape, needs the screen reader key, so it's different).
+   Easy to find on any keyboard, including laptops.
+2. **Ctrl+Alt+Shift+F12.** Even less likely to clash with anything, but
+   harder to press, and some laptops need Fn for F12.
+3. **Ctrl+Alt+Pause.** Clear and unused, but many laptops have no Pause key.
+
+Whichever is chosen, the Helper can change it in its settings, and the
+Stop button in its window and its icon menu always work too.
+
+### Signing for free
+
+Windows warns about unsigned programs. Free ways round that:
+
+1. **Microsoft Store (recommended for clients like Shakila).** Registration
+   is free for individual developers since September 2025. Microsoft signs
+   the app itself after it passes its checks, and installing from the Store
+   is the most familiar, least frightening way for a non-technical person,
+   with automatic updates. To check: Store rules for an app that controls
+   other apps (it's allowed as an accessibility tool, but must say so), and
+   whether a brand-new Store app still shows a warning (Microsoft's own pages
+   disagree).
+2. **SignPath Foundation (for the download on GitHub).** Free signing for
+   open-source projects. FreeHand qualifies: MIT licence, public repository.
+   Conditions: the app is built by GitHub from the public code (not on a
+   PC), everyone involved uses two-step sign-in, the project credits
+   SignPath, and the publisher shown is "SignPath Foundation", not Tracy
+   Smith Consulting.
+3. **Not free:** Azure Artifact Signing ($9.99 a month) isn't open to
+   individuals in South Africa; ordinary certificates cost about
+   $150-$300 a year and still show warnings until the app builds a
+   reputation.
+
+So: the Store for clients, SignPath for the GitHub download, and no
+certificate to buy.
