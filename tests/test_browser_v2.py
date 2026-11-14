@@ -575,3 +575,15 @@ class TestToolRegistration:
         assert "get_axtree" in TOOL_SCHEMAS
         assert "extract_text" in TOOL_SCHEMAS
         assert "take_screenshot" in TOOL_SCHEMAS
+
+
+def test_no_visible_browser_without_a_screen(monkeypatch):
+    """In Docker or on a server there's no screen, so a "headed" request
+    still runs headless instead of failing."""
+    from core.tools import browser
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert browser._can_show_windows() is False
+    monkeypatch.setenv("DISPLAY", ":0")
+    assert browser._can_show_windows() is True
