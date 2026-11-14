@@ -176,6 +176,26 @@ hash it later. `provision_tenant.py --list` then reports that tenant as
 - A bare IP address is rejected as a hostname: an IPv4 passes the FQDN
   regex, but Caddy cannot obtain a Let's Encrypt certificate for an IP.
 
+## WhatsApp
+
+Every tenant gets its own WhatsApp bridge (the `whatsapp-bridge` service,
+container `freehand-whatsapp-<customer>`):
+
+- **No host port.** Only that tenant's FreeHand can reach it, and WhatsApp
+  messages never come in through Caddy.
+- **Its own secret.** The script generates one `BRIDGE_SECRET` per tenant and
+  writes it to both the tenant's `.env` (for the bridge) and
+  `vault/settings.json` (`bridge_secret`, for FreeHand). Change both
+  together, or WhatsApp stops working.
+- **Its own link.** The linked-device session lives in the named volume
+  `freehand-whatsapp-<customer>`. Anyone with a copy can read and send that
+  customer's WhatsApp messages, so it's never copied into backups by the
+  script. `--destroy` removes it.
+- **Set up by the customer.** The bridge sits unlinked until the customer
+  pairs a number in their console: Remote Gateways, WhatsApp. That needs
+  their FreeHand API key, as for every other setting. They can switch
+  WhatsApp off and on there too.
+
 ## Destroying a tenant
 
 ```bash
@@ -183,7 +203,7 @@ python scripts/provision_tenant.py --destroy acme-corp --confirm
 ```
 
 This stops the containers **first**, then removes the tenant directory and
-the per-tenant OpenConnector volume. Stopping first matters: deleting the
+the per-tenant OpenConnector, memory and WhatsApp volumes. Stopping first matters: deleting the
 directory out from under a running container leaves Docker to recreate an
 empty vault path, and the customer's data disappears behind a
 `rm` that looked ordinary.
