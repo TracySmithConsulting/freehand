@@ -1408,6 +1408,29 @@
           <button type="button" class="secondary" data-pick="backup">Add as a backup</button>
           <p id="llm-search-pick-result" role="status" aria-live="polite"></p>
         </div>
+
+        <h3 id="ollama-heading" class="stack-top">Models on this computer (Ollama)</h3>
+        <p class="hint">
+          Free and private: the model runs on this computer, so nothing you say leaves it. Local models
+          are slower and less capable than online ones, especially at using tools, so they make a good
+          backup or a model for simple chats.
+        </p>
+        <div id="ollama-panel">
+          <p id="ollama-status" role="status" aria-live="polite">Checking for Ollama...</p>
+          <div id="ollama-setup" class="hint" hidden></div>
+          <p id="ollama-computer" class="hint"></p>
+          <h4 id="ollama-recommended-heading" hidden>Recommended for this computer</h4>
+          <ul id="ollama-recommended" class="model-results" aria-labelledby="ollama-recommended-heading"></ul>
+          <div id="ollama-download" hidden>
+            <label for="ollama-progress" id="ollama-progress-label">Download progress</label>
+            <progress id="ollama-progress" max="100" value="0"></progress>
+            <p id="ollama-progress-text" role="status" aria-live="polite"></p>
+          </div>
+          <h4 id="ollama-installed-heading" hidden>Already on this computer</h4>
+          <ul id="ollama-installed" class="model-results" aria-labelledby="ollama-installed-heading"></ul>
+          <p id="ollama-result" role="status" aria-live="polite"></p>
+          <button type="button" id="ollama-check-btn" class="secondary">Check again</button>
+        </div>
       </fieldset>
 
       <!-- Remote Gateways -->
@@ -3490,6 +3513,168 @@
           })
           .catch(function() { out.textContent = "Couldn't change the bank right now. Try again in a moment."; });
         });
+      })();
+
+      // ---- Models on this computer (Ollama) ----
+      (function() {
+        var panel = document.getElementById('ollama-panel');
+        if (!panel) return;
+        var el = function(id) { return document.getElementById(id); };
+        var pollTimer = null, lastSaid = -1, chatBase = '';
+
+        function button(text, cls, onClick, label) {
+          var b = document.createElement('button');
+          b.type = 'button'; b.textContent = text;
+          if (cls) b.className = cls;
+          if (label) b.setAttribute('aria-label', label);
+          b.addEventListener('click', onClick);
+          return b;
+        }
+        function say(text) { el('ollama-result').textContent = text; }
+
+        function render(s) {
+          chatBase = s.chat_base_url || '';
+          var setup = el('ollama-setup');
+          if (s.running) {
+            el('ollama-status').textContent = 'Ollama is running' + (s.version ? ' (version ' + s.version + ')' : '') + '. ' +
+              (s.models.length ? s.models.length + (s.models.length === 1 ? ' model is' : ' models are') + ' on this computer.' : 'No models downloaded yet.');
+            setup.hidden = true;
+          } else {
+            el('ollama-status').textContent = s.ollama_installed
+              ? "Ollama is installed, but it isn't running."
+              : "Ollama isn't running, or isn't installed yet.";
+            setup.hidden = false;
+            setup.innerHTML = '';
+            var ol = document.createElement('ol');
+            (s.ollama_installed
+              ? ['Open the Start menu, type Ollama, and open it. It runs quietly in the background.',
+                 'Come back here and press Check again.']
+              : ['Download Ollama from ollama.com (the link below opens a new tab) and install it.',
+                 'Open Ollama once from the Start menu.',
+                 'Come back here and press Check again.']
+            ).forEach(function(step) { var li = document.createElement('li'); li.textContent = step; ol.appendChild(li); });
+            setup.appendChild(ol);
+            if (!s.ollama_installed) {
+              var a = document.createElement('a');
+              a.href = 'https://ollama.com/download'; a.target = '_blank'; a.rel = 'noopener noreferrer';
+              a.textContent = 'Download Ollama (opens a new tab)';
+              setup.appendChild(a);
+            }
+          }
+
+          var rec = s.recommended || {};
+          var comp = el('ollama-computer');
+          if (rec.known) {
+            comp.textContent = 'This computer: ' + rec.summary + '.';
+          } else {
+            comp.textContent = 'FreeHand doesn’t know what this computer can run yet. On this computer, open PowerShell in the FreeHand folder and run: ' +
+              'powershell -ExecutionPolicy Bypass -File scripts\\check-computer.ps1 . Then press Check again.';
+          }
+          var ul = el('ollama-recommended');
+          ul.innerHTML = '';
+          el('ollama-recommended-heading').hidden = !(rec.models || []).length;
+          (rec.models || []).forEach(function(m) {
+            var li = document.createElement('li');
+            var text = document.createElement('span');
+            text.textContent = m.model + (m.best ? ' (best fit)' : '') + ': ' + m.download_gb + ' GB download, runs on your ' +
+              m.runs_on + '. ' + m.blurb + ' ';
+            li.appendChild(text);
+            if (m.downloaded) {
+              var done = document.createElement('span'); done.textContent = 'Downloaded.'; li.appendChild(done);
+            } else {
+              li.appendChild(button('Download', 'secondary', function() { download(m.model); },
+                'Download ' + m.model + ', ' + m.download_gb + ' GB'));
+            }
+            ul.appendChild(li);
+          });
+
+          var inst = el('ollama-installed');
+          inst.innerHTML = '';
+          el('ollama-installed-heading').hidden = !(s.models || []).length;
+          (s.models || []).forEach(function(m) {
+            var li = document.createElement('li');
+            var text = document.createElement('span');
+            text.textContent = m.model + ', ' + m.size_gb + ' GB' + (m.tools ? '. ' : '. It can’t use tools, so FreeHand can only chat with it. ');
+            li.appendChild(text);
+            li.appendChild(button('Test it', 'secondary', function() { testModel(m.model); }, 'Test ' + m.model));
+            li.appendChild(button('Make it the main model', '', function() { useModel(m.model, 'main'); }, 'Make ' + m.model + ' the main model'));
+            li.appendChild(button('Add as a backup', 'secondary', function() { useModel(m.model, 'backup'); }, 'Add ' + m.model + ' as a backup'));
+            inst.appendChild(li);
+          });
+        }
+
+        function check() {
+          el('ollama-status').textContent = 'Checking for Ollama...';
+          return apiFetch('/api/ollama/status')
+            .then(function(r) { return r.json(); })
+            .then(render)
+            .catch(function() { el('ollama-status').textContent = 'Couldn’t check right now. Try again in a moment.'; });
+        }
+
+        function download(model) {
+          apiFetch('/api/ollama/pull', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                         body: JSON.stringify({ model: model }) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              say(d.message || '');
+              if (!d.ok) return;
+              lastSaid = -1;
+              el('ollama-download').hidden = false;
+              el('ollama-progress-label').textContent = 'Downloading ' + model;
+              clearInterval(pollTimer);
+              pollTimer = setInterval(progress, 1500);
+            });
+        }
+
+        function progress() {
+          apiFetch('/api/ollama/pull').then(function(r) { return r.json(); }).then(function(p) {
+            var pct = p.total ? Math.floor(100 * p.completed / p.total) : 0;
+            el('ollama-progress').value = pct;
+            // Announce every 10%, not every update, so the screen reader isn't flooded.
+            var step = Math.floor(pct / 10) * 10;
+            if (p.error) {
+              clearInterval(pollTimer);
+              el('ollama-progress-text').textContent = 'The download stopped: ' + p.error;
+            } else if (p.done) {
+              clearInterval(pollTimer);
+              el('ollama-progress').value = 100;
+              el('ollama-progress-text').textContent = p.model + ' is downloaded. Test it, then make it your main model or a backup, below.';
+              check();
+            } else if (step !== lastSaid && p.total) {
+              lastSaid = step;
+              el('ollama-progress-text').textContent = p.model + ': ' + step + ' percent downloaded.';
+            }
+          });
+        }
+
+        function testModel(model) {
+          say('Testing ' + model + '. The first answer can take a minute while it loads...');
+          apiFetch('/api/llm/test', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                      body: JSON.stringify({ provider: 'ollama', model: model, api_key: '', base_url: chatBase }) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) { say(model + ': ' + (d.message || (d.ok ? 'Working.' : 'That didn’t work.'))); });
+        }
+
+        function useModel(model, as) {
+          apiFetch('/api/ollama/use', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ model: model, as: as }) })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              say(d.message || '');
+              if (d.ok) { loadLlm(); if (typeof checkRunnerStatus === 'function') checkRunnerStatus(); }
+            });
+        }
+
+        el('ollama-check-btn').addEventListener('click', check);
+        // Check when the AI model settings are first shown, not on every page load.
+        var heading = el('ollama-heading'), checked = false;
+        function maybeCheck() {
+          if (checked || !heading || heading.closest('[hidden]')) return;
+          checked = true; check();
+        }
+        document.getElementById('show-all-toggle') && document.getElementById('show-all-toggle').addEventListener('change', maybeCheck);
+        window.addEventListener('hashchange', function() { setTimeout(maybeCheck, 50); });
+        setTimeout(maybeCheck, 500);
       })();
 
       // ---- Agents Panel ----

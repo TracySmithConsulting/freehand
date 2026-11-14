@@ -381,6 +381,41 @@ async def llm_models(request: Request):
     return {"models": models or [], "error": problem}
 
 
+@app.get("/api/ollama/status", dependencies=[Depends(require_api_key)])
+async def ollama_status():
+    """Models on this computer: is Ollama running, what's downloaded, and
+    what fits this computer (core/ollama_manager.py)."""
+    from core import ollama_manager
+    return await asyncio.to_thread(ollama_manager.status)
+
+
+@app.post("/api/ollama/pull", dependencies=[Depends(require_api_key)])
+async def ollama_pull(request: Request):
+    from core import ollama_manager
+    body = await request.json() or {}
+    return ollama_manager.start_pull(str(body.get("model", "")))
+
+
+@app.get("/api/ollama/pull", dependencies=[Depends(require_api_key)])
+async def ollama_pull_progress():
+    from core import ollama_manager
+    return ollama_manager.pull_status()
+
+
+@app.post("/api/ollama/use", dependencies=[Depends(require_api_key)])
+async def ollama_use(request: Request):
+    from core import ollama_manager
+    body = await request.json() or {}
+    as_what = str(body.get("as", "main"))
+    if as_what not in ("main", "backup"):
+        raise HTTPException(status_code=400, detail="as must be main or backup")
+    result = await asyncio.to_thread(ollama_manager.use, str(body.get("model", "")).strip(), as_what)
+    if result.get("ok"):
+        from core.scheduler import run_due_tasks
+        asyncio.get_running_loop().create_task(asyncio.to_thread(run_due_tasks))
+    return result
+
+
 @app.get("/api/llm/catalog", dependencies=[Depends(require_api_key)])
 async def llm_catalog_search(q: str = ""):
     """Search models across every service with a saved key, plus
