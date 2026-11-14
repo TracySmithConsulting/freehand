@@ -239,17 +239,13 @@ def _check_allow_from(channel: str, caller_id: str) -> bool:
     Logs a one-shot warning per (channel, process) if the list is empty.
     """
     settings = _load_settings()
-    # Primary key
-    allow = settings.get(f"{channel}_allow_from", [])
-    # Backwards-compat for telegram
-    if not allow and channel == "telegram":
-        allow = settings.get("telegram_chat_whitelist", [])
-    allow = [str(x) for x in allow] if allow else []
-    if channel == "whatsapp":
-        # Numbers may be listed as "+27 82 123 4567" while the bridge sends
-        # the WhatsApp id "27821234567@s.whatsapp.net"; compare digits.
-        allow = [_whatsapp_identity(x) for x in allow]
-        caller_id = _whatsapp_identity(caller_id)
+    # The owner's {channel}_allow_from list (plus the legacy Telegram
+    # whitelist) and every person's own links (core/people.py). WhatsApp
+    # numbers are compared as digits: "+27 82 123 4567" and the bridge's
+    # "27821234567@s.whatsapp.net" are the same person.
+    from core import people
+    allow = people.allowed_ids(channel, settings)
+    caller_id = people.identity(channel, caller_id)
 
     if not allow:
         # Closed-by-default + warn

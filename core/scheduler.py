@@ -432,12 +432,14 @@ def create_task(title: str, cron_schedule: str) -> dict:
     title = (title or "").strip()
     cron = (cron_schedule or "").strip() or DEFAULT_CRON
     next_run = _cron_next(cron)
+    from core import people
     conn = _tasks_conn()
     try:
+        people.ensure_person_column(conn, "tasks")
         cursor = conn.execute(
-            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run) "
-            "VALUES (?, ?, 'pending', ?, NULL)",
-            (title, cron, _iso_utc(next_run) if next_run else None),
+            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person) "
+            "VALUES (?, ?, 'pending', ?, NULL, ?)",
+            (title, cron, _iso_utc(next_run) if next_run else None, people.current()),
         )
         conn.commit()
         task_id = cursor.lastrowid

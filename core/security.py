@@ -145,10 +145,12 @@ def intercept_action(
 
     # SEMI_AUTONOMOUS — or FULL_ACCESS with force_confirm — create pending approval
     payload_json = json.dumps(payload or {})
+    from core import people
     conn = _get_conn()
+    people.ensure_person_column(conn, "approvals")
     cursor = conn.execute(
-        "INSERT INTO approvals (action_type, description, payload, status) VALUES (?, ?, ?, ?)",
-        (action_type, description, payload_json, "pending"),
+        "INSERT INTO approvals (action_type, description, payload, status, person) VALUES (?, ?, ?, ?, ?)",
+        (action_type, description, payload_json, "pending", people.current()),
     )
     approval_id = cursor.lastrowid
     conn.commit()

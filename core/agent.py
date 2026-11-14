@@ -424,7 +424,21 @@ async def execute_tool(name: str, args: dict) -> dict:
 
 
 async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_id: str = "") -> dict:
-    """Run the agent loop: call LLM, execute tools, return final response."""
+    """Run the agent loop: call LLM, execute tools, return final response.
+
+    Everything this run stores (chat history, tasks, approvals, memories)
+    is tagged with whose message it is (core/people.py). The gateways only
+    let known people in, so an unknown caller here is the owner (console,
+    CLI, tests)."""
+    from core import people
+    token = people.set_current(people.person_for(source, caller_id) or people.OWNER_ID)
+    try:
+        return await _run_agent(command, max_turns, source, caller_id)
+    finally:
+        people.reset(token)
+
+
+async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) -> dict:
     tier = get_current_tier()
     system_prompt = build_system_prompt()
     tools = list_available_tools()
@@ -661,7 +675,8 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
 def _remember_turn(conv_key: str, command: str, reply: str, source: str) -> None:
     """Keep this exchange: in the conversation history now, and in long-term
     memory in the background (Hindsight extracts the facts worth keeping)."""
-    conversation.add_turn(conv_key, command, reply)
+    from core import people
+    conversation.add_turn(conv_key, command, reply, person=people.current())
     if long_memory.looks_secret(command) or long_memory.looks_secret(reply):
         return
     if source == "selftest":
