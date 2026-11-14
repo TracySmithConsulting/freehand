@@ -41,7 +41,7 @@ async function main() {
   // load time. Mirrors index.html's static structure for those nodes.
   const skeleton = `<!DOCTYPE html>
 <html><head></head><body>
-  <header><h1>FreeHand</h1><div id="tier-display" aria-live="polite"></div></header>
+  <header><h1>FreeHand</h1><div id="tier-display" aria-live="polite"></div><input type="checkbox" id="show-all-toggle"></header>
   <nav aria-label="Main navigation"><ul></ul></nav>
   <main>
     <section id="command">
@@ -102,11 +102,7 @@ async function main() {
         <p id="llm-last-switch"></p><ol id="llm-backups"></ol>
       </form>
       <button type="button" id="oauth-save-btn">Save OAuth Credentials</button>
-      <input id="google-client-id"><input id="google-client-secret">
-      <input id="microsoft-client-id"><input id="microsoft-client-secret"><input id="microsoft-tenant">
-      <input id="zoom-client-id"><input id="zoom-client-secret">
-      <input id="facebook-app-id"><input id="facebook-app-secret">
-      <input id="instagram-app-id"><input id="instagram-app-secret">
+      <input id="meta-facebook-app-id"><input id="meta-facebook-app-secret">
       <input type="button" value="Remember" id="remember-key-btn">
       <input type="button" value="Forget" id="forget-key-btn">
     </section>
@@ -126,7 +122,7 @@ async function main() {
     <section id="skills"><h2 id="skills-heading">Skills</h2><p id="skills-status"></p><ul id="skills-active"></ul><ul id="skills-draft"></ul><ul id="skills-archived"></ul><div id="skill-viewer"></div></section>
     <button type="button" id="voice-speak-btn">Speak</button><input type="checkbox" id="voice-read-aloud"><input type="checkbox" id="voice-conversation"><p id="voice-status"></p>
     <div id="signin-banner" role="alert" hidden><button type="button" id="signin-banner-settings">Go to Settings</button></div>
-    <div id="approvals-list" aria-live="polite"></div>
+    <section id="approvals-section" hidden><div id="approvals-list"></div></section>
   </main>
 </body></html>`;
 
