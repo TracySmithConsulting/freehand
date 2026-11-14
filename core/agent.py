@@ -486,8 +486,11 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
     tools = [*tools, ask_user.schema()]
     # The user's own computer, through the FreeHand Helper: only while one
     # is connected, and only when the message is about the computer.
-    if helper_hub.device_now() and helper_hub.wanted([command, *earlier]):
-        tools.extend(helper_hub.schemas())
+    if helper_hub.device_now():
+        if helper_hub.wanted([command, *earlier]):
+            tools.extend(helper_hub.schemas())
+        if helper_hub.wanted_change([command, *earlier]):
+            tools.extend(helper_hub.change_schemas())
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "estimated": False}
 
     def count(resp: dict) -> None:

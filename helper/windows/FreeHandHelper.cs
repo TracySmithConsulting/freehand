@@ -1,4 +1,4 @@
-// FreeHand Helper for Windows (stage 1: Look; stage 2: Act).
+// FreeHand Helper for Windows (stage 1: Look; stage 2: Act; stage 3: Change).
 //
 // Lets FreeHand, wherever it runs (Docker on this PC, or a server), see
 // this computer through Windows accessibility (what screen readers use) and
@@ -29,7 +29,7 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("FreeHand Helper")]
 [assembly: System.Reflection.AssemblyProduct("FreeHand")]
-[assembly: System.Reflection.AssemblyVersion("0.2.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.3.0.0")]
 
 namespace FreeHand.Helper
 {
@@ -42,6 +42,8 @@ namespace FreeHand.Helper
                 return SelfTest(args[1]);
             if (args.Length == 3 && args[0] == "--selftest-open")
                 return SelfTestOpen(args[1], args[2]);
+            if (args.Length == 2 && args[0] == "--selftest-change")
+                return SelfTestChange(args[1]);
             bool first;
             using (var mutex = new Mutex(true, "FreeHandHelperSingleInstance", out first))
             {
@@ -91,6 +93,32 @@ namespace FreeHand.Helper
                 result["ok"] = true;
             }
             catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); result["error_ms"] = clock.ElapsedMilliseconds; }
+            File.WriteAllText(outFile, new JavaScriptSerializer().Serialize(result));
+            return result.ContainsKey("error") ? 1 : 0;
+        }
+
+        // FreeHandHelper.exe --selftest-change out.json: this computer's
+        // details, a program search, and what an install and a fix would
+        // say when asking. Nothing is installed or changed.
+        static int SelfTestChange(string outFile)
+        {
+            var result = new Dictionary<string, object>();
+            try
+            {
+                result["about"] = Change.About();
+                result["available"] = Change.Programs("zoom", "available");
+                result["installed"] = Change.Programs("notepad", "installed");
+                var install = Change.Prepare("package", new Dictionary<string, object> { { "do", "install" }, { "id", "Zoom.Zoom" } });
+                result["install_asks"] = install.Summary + " | " + install.Details;
+                var fix = Change.Prepare("fix", new Dictionary<string, object> { { "fix", "sound" } });
+                result["fix_asks"] = fix.Summary + " | admin=" + fix.Admin;
+                try { Change.Prepare("package", new Dictionary<string, object> { { "do", "install" }, { "id", "x; rm -rf" } }); result["bad_id"] = "allowed (wrong)"; }
+                catch (HelperRefusal ex) { result["bad_id"] = ex.Message; }
+                try { Change.Prepare("fix", new Dictionary<string, object> { { "fix", "format the disk" } }); result["bad_fix"] = "allowed (wrong)"; }
+                catch (HelperRefusal ex) { result["bad_fix"] = ex.Message; }
+                result["ok"] = true;
+            }
+            catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); }
             File.WriteAllText(outFile, new JavaScriptSerializer().Serialize(result));
             return result.ContainsKey("error") ? 1 : 0;
         }
@@ -568,7 +596,17 @@ namespace FreeHand.Helper
                 var why = Get(msg, "why");
                 if (stopped) throw new HelperRefusal("The person stopped the FreeHand Helper.");
                 object data;
-                if (action == "act" || action == "window" || action == "open")
+                if (action == "package" || action == "fix")
+                {
+                    // Change: always asked, every time.
+                    var plan = Change.Prepare(action, args);
+                    if (!AskToAct(plan, why)) throw new HelperRefusal("The person said no to: " + plan.Summary + ".");
+                    Log("Started: " + plan.Summary + ". " + why);
+                    var done = Change.Do(plan);
+                    data = done;
+                    Log((done.ContainsKey("ok") && (bool)done["ok"] ? "Finished: " : "Didn't finish: ") + plan.Summary + ".");
+                }
+                else if (action == "act" || action == "window" || action == "open")
                 {
                     // Act: work out exactly what would happen, ask, then do it.
                     var plan = Act.Prepare(action, args);
@@ -580,6 +618,13 @@ namespace FreeHand.Helper
                 {
                     if (!AskToLook(why)) throw new HelperRefusal("The person said no to FreeHand looking at their screen.");
                     if (action == "windows") { data = Look.Windows(); Log("Listed the open windows. " + why); }
+                    else if (action == "about") { data = Change.About(); Log("Checked this computer's details. " + why); }
+                    else if (action == "programs")
+                    {
+                        var where = Get(args, "where") == "available" ? "available" : "installed";
+                        data = Change.Programs(Get(args, "query"), where);
+                        Log((where == "available" ? "Searched for programs: " : "Listed installed programs: ") + Get(args, "query") + ". " + why);
+                    }
                     else if (action == "look") { var d = Look.Window(window); data = d; Log("Read \"" + d["window"] + "\". " + why); }
                     else if (action == "screenshot") { var d = Look.Screenshot(window); data = d; Log("Took a picture of \"" + d["window"] + "\". " + why); }
                     else throw new HelperRefusal("This Helper can't do \"" + action + "\" yet.");
@@ -610,7 +655,7 @@ namespace FreeHand.Helper
                 {
                     DateTime until;
                     // Secret files always ask, even in an allowed app.
-                    if (!plan.Sensitive && key.Length > 0 && appGrants.TryGetValue(key, out until) && until > DateTime.Now) return true;
+                    if (plan.Level != "change" && !plan.Sensitive && key.Length > 0 && appGrants.TryGetValue(key, out until) && until > DateTime.Now) return true;
                 }
                 int choice = 0;
                 Invoke((Action)delegate
@@ -888,6 +933,9 @@ namespace FreeHand.Helper
     {
         public string Action = "", Do = "", Text = "", Target = "", App = "", WindowTitle = "", Summary = "", Into = "";
         public bool Sensitive;
+        // Stage 3: "change" (programs and fixes): always asked, never in advance.
+        public string Level = "act", Details = "";
+        public bool Admin;
         public AutomationElement Window, Element;
     }
 
@@ -906,13 +954,19 @@ namespace FreeHand.Helper
             Font = new Font("Segoe UI", 10f);
             Width = 560; Height = 330;
 
-            var text = (plan.Sensitive
+            bool change = plan.Level == "change";
+            if (change) Text = "FreeHand Helper: allow FreeHand to change your computer?";
+            var text = (change
+                    ? "This changes your computer. FreeHand always asks for changes like this.\r\n\r\n"
+                    : plan.Sensitive
                     ? "CAREFUL: this looks like a file or window with passwords or secret keys. Only allow this if you're sure.\r\n\r\n"
                     : "") +
                 "FreeHand wants to: " + plan.Summary + "." +
                 (plan.WindowTitle.Length > 0 ? "\r\nIn: " + plan.WindowTitle + (plan.App.Length > 0 ? " (" + plan.App + ")" : "") : "") +
                 (why.Length > 0 ? "\r\nWhy: " + why : "") +
-                (plan.App.Length > 0 && plan.Action != "open" && !plan.Sensitive
+                (plan.Details.Length > 0 ? "\r\n\r\n" + plan.Details : "") +
+                (plan.Admin ? "\r\n\r\nWindows will then ask \"Do you want to allow this app to make changes?\". That question is from Windows itself: press Yes if you want this fix." : "") +
+                (plan.App.Length > 0 && plan.Action != "open" && !plan.Sensitive && !change
                     ? "\r\n\r\nIf you allow " + plan.App + " for 30 minutes, FreeHand can click and type in it without asking until then. " +
                       "Something on screen could try to trick it, so only choose that for apps you trust."
                     : "") +
@@ -920,10 +974,10 @@ namespace FreeHand.Helper
             var message = new TextBox { Multiline = true, ReadOnly = true, Text = text, Dock = DockStyle.Fill, TabIndex = 0,
                                         ScrollBars = ScrollBars.Vertical, AccessibleName = "What FreeHand wants to do", BorderStyle = BorderStyle.None };
             var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(6) };
-            var once = new Button { Text = "Allow once", AutoSize = true, TabIndex = 1 };
+            var once = new Button { Text = change ? "Allow" : "Allow once", AutoSize = true, TabIndex = 1 };
             once.Click += delegate { Choice = 1; Close(); };
             buttons.Controls.Add(once);
-            if (plan.App.Length > 0 && plan.Action != "open" && !plan.Sensitive)
+            if (plan.App.Length > 0 && plan.Action != "open" && !plan.Sensitive && !change)
             {
                 var app = new Button { Text = "Allow in " + plan.App + " for 30 minutes", AutoSize = true, TabIndex = 2 };
                 app.Click += delegate { Choice = 2; Close(); };
@@ -1283,6 +1337,247 @@ namespace FreeHand.Helper
         static void Send(List<Native.INPUT> inputs)
         {
             Native.SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf(typeof(Native.INPUT)));
+        }
+    }
+
+    // ── Stage 3: Change. Programs (through winget, Windows' own installer)
+    // and a fixed list of known fixes. Always asked, every time, and never
+    // allowed in advance. Nothing FreeHand sends is run as a command: it
+    // can only pick a package id or a fix by name.
+    static class Change
+    {
+        static readonly System.Text.RegularExpressions.Regex PackageId =
+            new System.Text.RegularExpressions.Regex(@"^[A-Za-z0-9][A-Za-z0-9.\-_+]{0,99}$");
+
+        // name -> (plain description, needs admin, PowerShell script)
+        public static readonly Dictionary<string, string[]> Fixes = new Dictionary<string, string[]> {
+            { "sound", new[] { "restart Windows' sound services (fixes sound that stopped working)", "admin",
+                "Restart-Service -Name AudioEndpointBuilder -Force; Start-Service -Name Audiosrv" } },
+            { "printer", new[] { "clear stuck print jobs and restart printing", "admin",
+                "Stop-Service -Name Spooler -Force; Remove-Item -Path \"$env:SystemRoot\\System32\\spool\\PRINTERS\\*\" -Force -ErrorAction SilentlyContinue; Start-Service -Name Spooler" } },
+            { "network", new[] { "refresh the network connection (the internet drops for a few seconds)", "admin",
+                "ipconfig /flushdns; ipconfig /release; ipconfig /renew" } },
+            { "taskbar", new[] { "restart Windows Explorer (fixes a frozen taskbar or Start menu; open folders close)", "",
+                "Stop-Process -Name explorer -Force; Start-Sleep -Seconds 3; if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }" } },
+        };
+
+        public static string Winget()
+        {
+            var path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Microsoft\WindowsApps\winget.exe");
+            return File.Exists(path) ? path : "winget";
+        }
+
+        public static string Run(string exe, string args, int timeoutMs, out int exit)
+        {
+            var psi = new ProcessStartInfo(exe, args) { UseShellExecute = false, RedirectStandardOutput = true, RedirectStandardError = true,
+                                                        CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8 };
+            using (var p = Process.Start(psi))
+            {
+                var output = p.StandardOutput.ReadToEndAsync();
+                var errors = p.StandardError.ReadToEndAsync();
+                if (!p.WaitForExit(timeoutMs))
+                {
+                    try { p.Kill(); } catch (Exception) { }
+                    throw new HelperRefusal("That took too long, so the Helper stopped waiting.");
+                }
+                exit = p.ExitCode;
+                return output.Result + errors.Result;
+            }
+        }
+
+        static string Clean(string line)
+        {
+            // winget draws a spinner with carriage returns before its output
+            // (and ends each line with one).
+            line = line.TrimEnd('\r', ' ');
+            var i = line.LastIndexOf('\r');
+            return (i >= 0 ? line.Substring(i + 1) : line).TrimEnd();
+        }
+
+        // winget's tables: columns start where the header words start.
+        public static List<object> Table(string text, int max)
+        {
+            var lines = new List<string>();
+            foreach (var l in text.Split('\n')) lines.Add(Clean(l));
+            int head = lines.FindIndex(l => l.Contains(" Id ") && l.Contains("Version"));
+            var rows = new List<object>();
+            if (head < 0) return rows;
+            var header = lines[head];
+            var names = new List<string>(); var starts = new List<int>();
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(header, @"\S+"))
+            { names.Add(m.Value.ToLowerInvariant()); starts.Add(m.Index); }
+            for (int i = head + 2; i < lines.Count && rows.Count < max; i++)
+            {
+                var l = lines[i];
+                if (l.Trim().Length == 0 || l.Length < starts[starts.Count - 1]) continue;
+                var row = new Dictionary<string, object>();
+                for (int c = 0; c < names.Count; c++)
+                {
+                    int s = starts[c], e = c + 1 < starts.Count ? starts[c + 1] : l.Length;
+                    row[names[c]] = s < l.Length ? l.Substring(s, Math.Min(e, l.Length) - s).Trim() : "";
+                }
+                rows.Add(row);
+            }
+            return rows;
+        }
+
+        public static Dictionary<string, object> Programs(string query, string where)
+        {
+            int exit;
+            if (query.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(query, @"^[\w .\-+]{1,60}$"))
+                throw new HelperRefusal("Search with plain words only.");
+            var q = query.Length > 0 ? " --query \"" + query + "\"" : "";
+            if (where == "available")
+            {
+                if (query.Length == 0) throw new HelperRefusal("Say what program to look for.");
+                var text = Run(Winget(), "search" + q + " --accept-source-agreements --disable-interactivity", 120000, out exit);
+                return new Dictionary<string, object> { { "available", Table(text, 15) } };
+            }
+            var installed = Run(Winget(), "list" + q + " --accept-source-agreements --disable-interactivity", 120000, out exit);
+            return new Dictionary<string, object> { { "installed", Table(installed, query.Length > 0 ? 30 : 80) } };
+        }
+
+        public static Dictionary<string, string> Show(string id)
+        {
+            int exit;
+            var text = Run(Winget(), "show --id " + id + " --exact --accept-source-agreements --disable-interactivity", 120000, out exit);
+            var d = new Dictionary<string, string>();
+            foreach (var raw in text.Split('\n'))
+            {
+                var l = Clean(raw);
+                if (l.StartsWith("Found ")) d["found"] = l.Substring(6);
+                int colon = l.IndexOf(": ");
+                if (colon > 0 && !l.StartsWith(" ")) { var k = l.Substring(0, colon).ToLowerInvariant(); if (!d.ContainsKey(k)) d[k] = l.Substring(colon + 2); }
+            }
+            return d;
+        }
+
+        public static Plan Prepare(string action, Dictionary<string, object> args)
+        {
+            var plan = new Plan { Action = action, Level = "change" };
+            Func<string, string> Arg = delegate(string k)
+            {
+                object v;
+                return args != null && args.TryGetValue(k, out v) && v != null ? v.ToString().Trim() : "";
+            };
+            if (action == "package")
+            {
+                plan.Do = Arg("do").ToLowerInvariant();
+                plan.Target = Arg("id");
+                if (plan.Do != "install" && plan.Do != "update" && plan.Do != "remove")
+                    throw new HelperRefusal("For a program, FreeHand can install, update or remove.");
+                if (!PackageId.IsMatch(plan.Target))
+                    throw new HelperRefusal("Give the program's exact id from computer_programs (like Zoom.Zoom).");
+                if (plan.Do == "remove")
+                {
+                    var mine = Programs(plan.Target, "installed")["installed"] as List<object>;
+                    Dictionary<string, object> hit = null;
+                    foreach (Dictionary<string, object> r in mine)
+                        if (string.Equals(r["id"].ToString(), plan.Target, StringComparison.OrdinalIgnoreCase)) hit = r;
+                    if (hit == null) throw new HelperRefusal("No installed program has the id " + plan.Target + ".");
+                    plan.Summary = "remove " + hit["name"] + " (" + plan.Target + ") from this computer";
+                    plan.Details = "Anything saved only inside that program may be lost.";
+                    plan.Sensitive = true;
+                }
+                else
+                {
+                    var info = Show(plan.Target);
+                    if (!info.ContainsKey("found")) throw new HelperRefusal("Windows' installer doesn't know the id " + plan.Target + ".");
+                    plan.Summary = (plan.Do == "install" ? "install " : "update ") + info["found"] +
+                        (info.ContainsKey("version") ? ", version " + info["version"] : "");
+                    var bits = new List<string>();
+                    if (info.ContainsKey("publisher")) bits.Add("Publisher: " + info["publisher"]);
+                    if (info.ContainsKey("description")) bits.Add("What it is: " + (info["description"].Length > 200 ? info["description"].Substring(0, 200) + "..." : info["description"]));
+                    if (info.ContainsKey("homepage")) bits.Add("Website: " + info["homepage"]);
+                    bits.Add("From: winget, Windows' own installer.");
+                    plan.Details = string.Join("\r\n", bits.ToArray());
+                }
+                return plan;
+            }
+            // fix
+            plan.Target = Arg("fix").ToLowerInvariant();
+            if (!Fixes.ContainsKey(plan.Target))
+                throw new HelperRefusal("FreeHand only knows these fixes: " + string.Join(", ", new List<string>(Fixes.Keys).ToArray()) + ".");
+            plan.Summary = Fixes[plan.Target][0];
+            plan.Admin = Fixes[plan.Target][1] == "admin";
+            return plan;
+        }
+
+        public static Dictionary<string, object> Do(Plan plan)
+        {
+            int exit;
+            if (plan.Action == "package")
+            {
+                var verb = plan.Do == "remove" ? "uninstall" : plan.Do == "update" ? "upgrade" : "install";
+                var text = Run(Winget(), verb + " --id " + plan.Target + " --exact --silent --accept-source-agreements" +
+                    (verb == "uninstall" ? "" : " --accept-package-agreements") + " --disable-interactivity", 1100000, out exit);
+                var tail = new List<string>();
+                foreach (var l in text.Split('\n')) { var c = Clean(l); if (c.Trim().Length > 0 && !c.Contains("█") && !c.Contains("▒")) tail.Add(c.Trim()); }
+                var last = tail.Count > 6 ? tail.GetRange(tail.Count - 6, 6) : tail;
+                return new Dictionary<string, object> { { "ok", exit == 0 }, { "exit_code", exit }, { "winget_said", string.Join(" / ", last.ToArray()) } };
+            }
+            var script = Fixes[plan.Target][2];
+            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            var args = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand " + encoded;
+            if (!plan.Admin)
+            {
+                Run("powershell.exe", args, 120000, out exit);
+                return new Dictionary<string, object> { { "ok", exit == 0 }, { "message", exit == 0 ? "Done: " + plan.Summary + "." : "The fix didn't finish (code " + exit + ")." } };
+            }
+            // Needs an administrator: Windows asks the person itself ("Do
+            // you want to allow this app to make changes?"). FreeHand can't
+            // see or press that.
+            try
+            {
+                using (var p = Process.Start(new ProcessStartInfo("powershell.exe", args) { UseShellExecute = true, Verb = "runas", WindowStyle = ProcessWindowStyle.Hidden }))
+                {
+                    if (!p.WaitForExit(180000)) throw new HelperRefusal("The fix took too long.");
+                    return new Dictionary<string, object> { { "ok", p.ExitCode == 0 },
+                        { "message", p.ExitCode == 0 ? "Done: " + plan.Summary + "." : "The fix didn't finish (code " + p.ExitCode + ")." } };
+                }
+            }
+            catch (System.ComponentModel.Win32Exception ex)
+            {
+                if (ex.NativeErrorCode == 1223) throw new HelperRefusal("The person said no at Windows' own prompt, so nothing was changed.");
+                throw;
+            }
+        }
+
+        // About this computer: no changes, so it only needs the Look allowance.
+        [StructLayout(LayoutKind.Sequential)]
+        struct MEMORYSTATUSEX { public uint length, load; public ulong total, avail, totalPage, availPage, totalVirtual, availVirtual, extended; }
+        [DllImport("kernel32.dll")] static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX m);
+
+        public static Dictionary<string, object> About()
+        {
+            var d = new Dictionary<string, object>();
+            try
+            {
+                using (var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
+                {
+                    var build = Convert.ToInt32(k.GetValue("CurrentBuildNumber") ?? "0");
+                    var product = (k.GetValue("ProductName") ?? "Windows").ToString();
+                    if (build >= 22000) product = product.Replace("Windows 10", "Windows 11");
+                    d["windows"] = product + " " + (k.GetValue("DisplayVersion") ?? "") + " (build " + build + ")";
+                }
+            }
+            catch (Exception) { }
+            d["computer_name"] = Environment.MachineName;
+            d["running_for"] = TimeSpan.FromMilliseconds(Environment.TickCount & int.MaxValue).ToString(@"d\ \d\a\y\s\ h\ \h\o\u\r\s");
+            var m = new MEMORYSTATUSEX { length = (uint)Marshal.SizeOf(typeof(MEMORYSTATUSEX)) };
+            if (GlobalMemoryStatusEx(ref m))
+                d["memory"] = Math.Round(m.avail / 1e9, 1) + " GB free of " + Math.Round(m.total / 1e9, 1) + " GB (" + m.load + "% in use)";
+            var disks = new List<object>();
+            foreach (var drive in DriveInfo.GetDrives())
+                try { if (drive.DriveType == DriveType.Fixed && drive.IsReady)
+                        disks.Add(drive.Name + " " + Math.Round(drive.AvailableFreeSpace / 1e9, 1) + " GB free of " + Math.Round(drive.TotalSize / 1e9, 1) + " GB"); }
+                catch (Exception) { }
+            d["disks"] = disks;
+            var power = SystemInformation.PowerStatus;
+            if (power.BatteryChargeStatus != BatteryChargeStatus.NoSystemBattery)
+                d["battery"] = (int)(power.BatteryLifePercent * 100) + "%" + (power.PowerLineStatus == PowerLineStatus.Online ? ", plugged in" : ", on battery");
+            d["internet"] = System.Net.NetworkInformation.NetworkInterface.GetIsNetworkAvailable() ? "connected to a network" : "no network";
+            return d;
         }
     }
 }
