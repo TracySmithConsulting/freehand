@@ -1152,6 +1152,28 @@
       </div>
       <ul id="facts-list" class="facts-list" aria-labelledby="facts-heading"></ul>
 
+      <details id="bank-panel" class="stack-top">
+        <summary>Memory bank: where FreeHand keeps its memories</summary>
+        <p class="hint">
+          FreeHand's memory service (Hindsight) can hold several memory banks, for example one for
+          FreeHand and one for another app such as Hermes. FreeHand normally keeps its own. Choose an
+          existing bank only if you want FreeHand and that app to share what they remember.
+        </p>
+        <p id="bank-current" role="status" aria-live="polite"></p>
+        <div class="form-group">
+          <label for="bank-choice">Memory bank</label>
+          <select id="bank-choice"></select>
+        </div>
+        <div class="form-group" id="bank-new-group" hidden>
+          <label for="bank-new-name">Name for the new bank</label>
+          <input type="text" id="bank-new-name" autocomplete="off" spellcheck="false" placeholder="e.g. freehand-tracy"
+                 aria-describedby="bank-new-hint">
+          <p class="hint" id="bank-new-hint">Letters, numbers, dashes, dots or underscores.</p>
+        </div>
+        <button type="button" id="bank-save-btn">Use this bank</button>
+        <p id="bank-result" role="status" aria-live="polite"></p>
+      </details>
+
       <h3 id="notes-heading" class="stack-top">Search your scribbles and notes</h3>
       <p class="hint">Searches your scribble pad, Journal, topic threads and notes. Type a few words in any order, like "plumber quote".</p>
       <form id="memory-form" novalidate>
@@ -3401,6 +3423,62 @@
             if (typeof loadGatewayStatus === 'function') setTimeout(loadGatewayStatus, 3000);
           })
           .catch(function() { power.checked = !want; out.textContent = "Couldn't reach FreeHand. Try again in a moment."; });
+        });
+      })();
+
+      // ---- Memory bank ----
+      (function() {
+        var panel = document.getElementById('bank-panel');
+        if (!panel) return;
+        var choice = document.getElementById('bank-choice');
+        var loaded = false;
+        function memoriesText(n) { return n === 1 ? '1 memory' : n + ' memories'; }
+        function loadBanks() {
+          apiFetch('/api/memory/banks')
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              loaded = true;
+              choice.innerHTML = '';
+              (d.banks || []).forEach(function(b) {
+                var o = document.createElement('option');
+                o.value = b.bank_id;
+                o.textContent = b.bank_id + (b.new ? ' (new, nothing saved yet)' : ', ' + memoriesText(b.facts)) +
+                  (b.bank_id === d.current ? ', in use now' : '');
+                choice.appendChild(o);
+              });
+              var make = document.createElement('option');
+              make.value = '__new';
+              make.textContent = 'Make a new bank...';
+              choice.appendChild(make);
+              choice.value = d.current;
+              document.getElementById('bank-new-group').hidden = true;
+              var others = (d.banks || []).filter(function(b) { return b.bank_id !== d.current && b.facts > 0; });
+              document.getElementById('bank-current').textContent = d.error ? d.error
+                : 'FreeHand uses the bank "' + d.current + '".' +
+                  (others.length ? ' This memory service also has ' + others.length + (others.length === 1 ? ' other bank.' : ' other banks.') : '');
+            })
+            .catch(function() { document.getElementById('bank-current').textContent = "Couldn't reach FreeHand's memory right now."; });
+        }
+        panel.addEventListener('toggle', function() { if (panel.open && !loaded) loadBanks(); });
+        choice.addEventListener('change', function() {
+          var isNew = choice.value === '__new';
+          document.getElementById('bank-new-group').hidden = !isNew;
+          if (isNew) document.getElementById('bank-new-name').focus();
+        });
+        document.getElementById('bank-save-btn').addEventListener('click', function() {
+          var out = document.getElementById('bank-result');
+          var id = choice.value === '__new' ? document.getElementById('bank-new-name').value.trim() : choice.value;
+          if (!id) { out.textContent = 'Type a name for the new bank first.'; return; }
+          apiFetch('/api/memory/bank', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bank_id: id })
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            out.textContent = d.message || '';
+            if (d.ok) { loadBanks(); if (typeof loadFacts === 'function') loadFacts(); }
+          })
+          .catch(function() { out.textContent = "Couldn't change the bank right now. Try again in a moment."; });
         });
       })();
 

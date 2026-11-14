@@ -228,3 +228,42 @@ def test_only_the_tool_call_that_ran_is_kept_in_the_history(monkeypatch):
     assistant = [m for m in seen[1] if m.get("role") == "assistant" and m.get("tool_calls")][0]
     assert [c["id"] for c in assistant["tool_calls"]] == ["a"]
     assert [m["tool_call_id"] for m in seen[1] if m.get("role") == "tool"] == ["a"]
+
+
+# ── Choosing the memory bank (Nov 2026) ──────────────────────────────
+
+def test_banks_are_listed_with_counts_and_the_current_one_first(monkeypatch):
+    from core import long_memory
+    monkeypatch.setattr(long_memory, "bank_id", lambda: "freehand")
+    monkeypatch.setattr(long_memory, "_call", lambda m, path, body=None, timeout=0: (200, {"banks": [
+        {"bank_id": "tracy-hermes", "fact_count": 133, "last_write_at": "2026-11-14"}]}))
+    out = long_memory.list_banks()
+    assert out["current"] == "freehand"
+    assert out["banks"][0] == {"bank_id": "freehand", "facts": 0, "last_write": "", "new": True}
+    assert out["banks"][1]["bank_id"] == "tracy-hermes" and out["banks"][1]["facts"] == 133
+
+
+def test_choosing_a_bank_saves_it_and_checks_the_name():
+    from core import agent_config, long_memory
+    assert not long_memory.choose_bank("../etc")["ok"]
+    assert not long_memory.choose_bank("")["ok"]
+    out = long_memory.choose_bank("freehand-tracy")
+    assert out["ok"] and "still there" in out["message"]
+    assert agent_config._load_settings()["memory"]["bank_id"] == "freehand-tracy"
+    assert long_memory.bank_id() == "freehand-tracy"
+
+
+def test_setup_offers_a_new_bank_by_default():
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location("setup_env", pathlib.Path(__file__).parent.parent / "scripts" / "setup_env.py")
+    setup_env = importlib.util.module_from_spec(spec); spec.loader.exec_module(setup_env)
+    banks = [{"bank_id": "tracy-hermes", "facts": 133}, {"bank_id": "freehand", "facts": 2}]
+    answers = iter(["", ""])  # Enter, Enter: the recommended choices
+    out = setup_env.memory_choice(banks, ask=lambda prompt: next(answers), say=lambda *a: None)
+    assert out == {"FREEHAND_OWN_MEMORY": "0", "FREEHAND_HINDSIGHT_URL": "http://host.docker.internal:8888",
+                   "FREEHAND_MEMORY_BANK": "freehand-2"}
+    answers = iter(["2", "1"])
+    assert setup_env.memory_choice(banks, ask=lambda p: next(answers), say=lambda *a: None)["FREEHAND_MEMORY_BANK"] == "tracy-hermes"
+    answers = iter(["3"])
+    own = setup_env.memory_choice(banks, ask=lambda p: next(answers), say=lambda *a: None)
+    assert own == {"FREEHAND_OWN_MEMORY": "1", "HINDSIGHT_PORT": "8890", "HINDSIGHT_CONSOLE_PORT": "9990"}

@@ -127,12 +127,90 @@ def write_private(path: Path, text: str) -> None:
         fh.write(text.encode("utf-8"))
 
 
+# ── Memory: is Hindsight already on this computer? (Nov 2026) ─────────
+# FreeHand brings its own memory service (Hindsight, compose "hindsight").
+# Someone who already runs Hindsight, for example for Hermes, would get a
+# port clash, and may want FreeHand to share it. So setup asks once.
+
+HINDSIGHT_PROBE = "http://127.0.0.1:8888"
+MEMORY_DECIDED_KEYS = ("FREEHAND_OWN_MEMORY", "FREEHAND_HINDSIGHT_URL")
+
+
+def _get_json(url: str, timeout: float = 3.0):
+    import json
+    import urllib.request
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8") or "null")
+    except Exception:
+        return None
+
+
+def _is_freehands_own_hindsight() -> bool:
+    import subprocess
+    try:
+        out = subprocess.run(["docker", "ps", "-q", "--filter", "name=^freehand-hindsight$"],
+                             capture_output=True, text=True, timeout=10)
+        return bool(out.stdout.strip())
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def find_other_hindsight() -> list | None:
+    """The banks on a Hindsight that isn't FreeHand's own, or None."""
+    if _get_json(HINDSIGHT_PROBE + "/health") is None or _is_freehands_own_hindsight():
+        return None
+    data = _get_json(HINDSIGHT_PROBE + "/v1/default/banks?limit=100") or {}
+    return [{"bank_id": b.get("bank_id"), "facts": int(b.get("fact_count") or 0)}
+            for b in (data.get("banks") or []) if isinstance(b, dict) and b.get("bank_id")]
+
+
+def memory_choice(banks: list, ask=input, say=print) -> dict:
+    """Ask how FreeHand should keep its memories; return the .env changes."""
+    say("\nThis computer already runs Hindsight, a memory service (perhaps for another app, such as Hermes).")
+    if banks:
+        say("It has these memory banks:")
+        for b in banks:
+            say(f"  - {b['bank_id']} ({b['facts']} memories)")
+    say("\nHow should FreeHand keep its memories?")
+    say("  1. Use that Hindsight, with a new bank just for FreeHand (recommended)")
+    say("  2. Use that Hindsight, sharing an existing bank: FreeHand and the other app will remember the same things")
+    say("  3. Run FreeHand's own Hindsight instead (uses about 1 GB more memory)")
+    while True:
+        answer = (ask("Choose 1, 2 or 3 [1]: ") or "1").strip()
+        if answer in ("1", "2", "3"):
+            break
+        say("Please type 1, 2 or 3.")
+    if answer == "3":
+        # Both can run: FreeHand's own takes other ports.
+        return {"FREEHAND_OWN_MEMORY": "1", "HINDSIGHT_PORT": "8890", "HINDSIGHT_CONSOLE_PORT": "9990"}
+    shared = {"FREEHAND_OWN_MEMORY": "0", "FREEHAND_HINDSIGHT_URL": "http://host.docker.internal:8888"}
+    names = [b["bank_id"] for b in banks]
+    if answer == "2" and names:
+        for i, name in enumerate(names, 1):
+            say(f"  {i}. {name}")
+        while True:
+            pick = (ask(f"Which bank? 1 to {len(names)}: ") or "").strip()
+            if pick.isdigit() and 1 <= int(pick) <= len(names):
+                return {**shared, "FREEHAND_MEMORY_BANK": names[int(pick) - 1]}
+            say(f"Please type a number from 1 to {len(names)}.")
+    new = "freehand"
+    while new in names:
+        new = new + "-2" if not new[-1].isdigit() else new[:-1] + str(int(new[-1]) + 1)
+    name = (ask(f"Name for FreeHand's new bank [{new}]: ") or new).strip()
+    return {**shared, "FREEHAND_MEMORY_BANK": name}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Create or repair FreeHand's .env.")
     parser.add_argument(
         "--new-encryption-key", action="store_true",
         help="Replace a test OC_ENCRYPTION_KEY even if OpenConnector has data "
              "(those connections become unreadable).",
+    )
+    parser.add_argument(
+        "--memory", action="store_true",
+        help="Ask again how FreeHand keeps its memories, if Hindsight is already on this computer.",
     )
     args = parser.parse_args(argv)
 
@@ -146,7 +224,21 @@ def main(argv: list[str] | None = None) -> int:
         lines = read_lines(ENV_PATH)
 
     oc_data = False if created else oc_has_data()
-    changes, notes = plan_changes(current_values(lines), oc_data, args.new_encryption_key)
+    values = current_values(lines)
+    changes, notes = plan_changes(values, oc_data, args.new_encryption_key)
+
+    # Memory: asked once (on a new .env, or with --memory), and only when
+    # another Hindsight is already running here.
+    decided = any(values.get(k) for k in MEMORY_DECIDED_KEYS)
+    if args.memory or (created and not decided):
+        banks = find_other_hindsight()
+        if banks is not None:
+            if sys.stdin.isatty():
+                changes.update(memory_choice(banks))
+            else:
+                notes.append("Hindsight (a memory service) is already running on this computer. Run "
+                             "`python scripts/setup_env.py --memory` in a terminal to choose how FreeHand "
+                             "shares it. Until then FreeHand's own memory service may not start.")
 
     if created or changes:
         write_private(ENV_PATH, "\n".join(apply_changes(lines, changes)) + "\n")
@@ -154,7 +246,13 @@ def main(argv: list[str] | None = None) -> int:
     if created:
         print("Created .env with new random passwords for OpenConnector.")
     elif changes:
-        print("Updated .env: replaced " + ", ".join(sorted(changes)) + " with new random values.")
+        memory_keys = {"FREEHAND_OWN_MEMORY", "FREEHAND_HINDSIGHT_URL", "FREEHAND_MEMORY_BANK",
+                       "HINDSIGHT_PORT", "HINDSIGHT_CONSOLE_PORT"}
+        secrets = sorted(k for k in changes if k not in memory_keys)
+        if secrets:
+            print("Updated .env: replaced " + ", ".join(secrets) + " with new random values.")
+        if any(k in memory_keys for k in changes):
+            print("Updated .env: saved how FreeHand keeps its memories.")
     else:
         print(".env is already set up. Nothing changed.")
     for note in notes:

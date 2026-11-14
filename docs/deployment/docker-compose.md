@@ -109,6 +109,19 @@ in the background, and shows what it remembers on the Memory page.
 - **This computer only.** Ports 8888 and 9999 have no password, so they
   are bound to `127.0.0.1`. Other programs on this computer, such as
   Hermes, can share the same memory at `http://127.0.0.1:8888`.
+- **Hindsight already on this computer** (for example for Hermes)? On a new
+  `.env`, `python scripts/setup_env.py` notices and asks how FreeHand should
+  keep its memories:
+  1. A new bank of its own in that Hindsight (recommended).
+  2. Sharing an existing bank, so both apps remember the same things.
+  3. Running FreeHand's own Hindsight on other ports (8890 and 9990).
+
+  Choices 1 and 2 set `FREEHAND_OWN_MEMORY=0`, so FreeHand's own `hindsight`
+  service doesn't start. Run `python scripts/setup_env.py --memory` to be
+  asked again.
+- **Choosing the bank later:** on the Memory page, open "Memory bank". It
+  lists the banks with how many memories each holds, and can make a new
+  one. Memories in the old bank stay where they are.
 - **Already running Hindsight by hand?** Its memories are in the
   `hindsight-data` volume, which this service reuses. Stop and remove the
   old container (`docker rm -f hindsight`), then `docker compose up -d`.

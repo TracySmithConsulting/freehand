@@ -99,8 +99,12 @@ services:
     # This computer only: the API (8888) and Hindsight's own console (9999)
     # have no password. Other apps on this computer (Hermes) can share it.
     ports:
-      - "127.0.0.1:8888:8888"
-      - "127.0.0.1:9999:9999"
+      - "127.0.0.1:${HINDSIGHT_PORT:-8888}:8888"
+      - "127.0.0.1:${HINDSIGHT_CONSOLE_PORT:-9999}:9999"
+    # FREEHAND_OWN_MEMORY=0 (set by scripts/setup_env.py) skips this service
+    # when FreeHand uses a Hindsight that was already on this computer.
+    deploy:
+      replicas: ${FREEHAND_OWN_MEMORY:-1}
     environment:
       # Hindsight's AI model is FreeHand's: FreeHand passes these requests
       # on to the model set up in Settings (server.py /internal/llm/v1), so

@@ -125,6 +125,47 @@ def clean_text(text: str) -> str:
     return (text or "").split(" | ")[0].strip()
 
 
+# ── Choosing the memory bank (Nov 2026) ─────────────────────────────
+# One Hindsight can hold several banks, for example one for FreeHand and
+# one for Hermes. People choose which FreeHand uses: its own (the safe
+# default) or one they share on purpose.
+
+BANK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
+
+
+def list_banks() -> dict:
+    """The banks on this Hindsight, with how many memories each holds."""
+    code, data = _call("GET", "/v1/default/banks?limit=100", timeout=8.0)
+    if code != 200 or not isinstance(data, dict):
+        return {"error": "FreeHand's memory (Hindsight) isn't reachable right now.", "banks": [], "current": bank_id()}
+    banks = [{
+        "bank_id": str(b.get("bank_id") or ""),
+        "facts": int(b.get("fact_count") or 0),
+        "last_write": b.get("last_write_at") or "",
+    } for b in data.get("banks") or [] if isinstance(b, dict) and b.get("bank_id")]
+    current = bank_id()
+    if not any(b["bank_id"] == current for b in banks):
+        # Not created yet (FreeHand creates its bank on first use).
+        banks.append({"bank_id": current, "facts": 0, "last_write": "", "new": True})
+    banks.sort(key=lambda b: (b["bank_id"] != current, b["bank_id"].lower()))
+    return {"banks": banks, "current": current}
+
+
+def choose_bank(new_bank: str) -> dict:
+    """Make FreeHand use another bank (created on first use if new)."""
+    new_bank = (new_bank or "").strip()
+    if not BANK_ID_RE.match(new_bank):
+        return {"ok": False, "message": "Use letters, numbers, dashes, dots or underscores for the bank's name, up to 64."}
+    from core.agent_config import _load_settings, _save_settings
+    settings = _load_settings()
+    mem = settings.get("memory") if isinstance(settings.get("memory"), dict) else {}
+    mem["bank_id"] = new_bank
+    settings["memory"] = mem
+    _save_settings(settings)
+    return {"ok": True, "bank_id": new_bank,
+            "message": f"FreeHand now uses the memory bank \"{new_bank}\". Memories in the old bank are still there."}
+
+
 def status() -> dict:
     """For the Memory page: is long-term memory working, and where."""
     if not enabled():

@@ -1054,6 +1054,20 @@ async def memory_status():
     return await asyncio.to_thread(long_memory.status)
 
 
+@app.get("/api/memory/banks", dependencies=[Depends(require_api_key)])
+async def memory_banks():
+    """The memory banks on FreeHand's Hindsight, and which one it uses."""
+    from core import long_memory
+    return await asyncio.to_thread(long_memory.list_banks)
+
+
+@app.post("/api/memory/bank", dependencies=[Depends(require_api_key)])
+async def memory_choose_bank(request: Request):
+    from core import long_memory
+    body = await request.json() or {}
+    return await asyncio.to_thread(long_memory.choose_bank, str(body.get("bank_id", "")))
+
+
 @app.get("/api/memory/facts", dependencies=[Depends(require_api_key)])
 async def memory_facts(q: str = "", offset: int = 0, limit: int = 50):
     from core import long_memory
