@@ -1440,6 +1440,14 @@
         <fieldset>
           <legend>WhatsApp</legend>
           <p id="wa-bridge-state" class="hint" aria-live="polite"></p>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="wa-power" aria-describedby="wa-power-hint">
+              WhatsApp on
+            </label>
+            <p class="hint" id="wa-power-hint">Switch off to stop FreeHand reading and answering WhatsApp. Your number stays linked, so switching back on needs no new code.</p>
+            <p id="wa-power-result" class="hint" role="status" aria-live="polite"></p>
+          </div>
 
           <h3 class="wa-step">Step 1: Choose which number FreeHand uses</h3>
           <p class="hint">
@@ -3218,7 +3226,9 @@
             html += '<tr><td>Slack:</td><td>' + (status.slack.configured ? '<span class="badge badge-active">configured</span>' : '<span class="badge badge-pending">not configured</span>') + '</td></tr>';
             var wa = status.whatsapp || {};
             var waBadge;
-            if (wa.connected) {
+            if (wa.paused) {
+              waBadge = '<span class="badge badge-pending">switched off</span>';
+            } else if (wa.connected) {
               waBadge = '<span class="badge badge-active">connected</span>';
             } else if (!wa.bridge_running) {
               waBadge = '<span class="badge badge-pending">bridge not running</span>';
@@ -3230,10 +3240,17 @@
             el.innerHTML = html;
 
             var waState = document.getElementById('wa-bridge-state');
-            if (wa.connected) {
+            var power = document.getElementById('wa-power');
+            if (power) {
+              power.disabled = !wa.bridge_running;
+              power.checked = wa.bridge_running && !wa.paused;
+            }
+            if (wa.paused) {
+              waState.textContent = 'WhatsApp is switched off. Switch it on below when you want FreeHand to answer WhatsApp again.';
+            } else if (wa.connected) {
               waState.textContent = 'WhatsApp is connected and ready.';
             } else if (!wa.bridge_running) {
-              waState.textContent = 'The WhatsApp bridge is not running. On the FreeHand computer, open the freehand/bridge folder and run "npm start", then reload this page.';
+              waState.textContent = 'The WhatsApp bridge is not running. It starts with FreeHand in Docker: check that Docker Desktop is running, then reload this page.';
             } else {
               waState.textContent = 'The bridge is running, but no WhatsApp number is linked yet. Follow the steps below.';
             }
@@ -3303,7 +3320,7 @@
             hint.style.color = 'var(--teal)';
           } else {
             hint.textContent = (data.error === 'Bridge unavailable')
-              ? 'The WhatsApp bridge is not running. On the FreeHand computer, open the freehand/bridge folder and run "npm start", then try again.'
+              ? 'The WhatsApp bridge is not running. It starts with FreeHand in Docker: check that Docker Desktop is running, then try again.'
               : 'Could not get a code: ' + (data.error || 'unknown error');
             hint.style.color = 'var(--red-text)';
           }
@@ -3365,6 +3382,27 @@
         loadApprovals();
         setInterval(loadApprovals, 8000);
       }
+
+      // ---- WhatsApp on/off ----
+      (function() {
+        var power = document.getElementById('wa-power');
+        if (!power) return;
+        power.addEventListener('change', function() {
+          var want = power.checked, out = document.getElementById('wa-power-result');
+          out.textContent = want ? 'Switching WhatsApp on...' : 'Switching WhatsApp off...';
+          apiFetch('/api/gateway/whatsapp/power', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ on: want })
+          })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            out.textContent = d.message || '';
+            if (!d.ok) power.checked = !want;
+            if (typeof loadGatewayStatus === 'function') setTimeout(loadGatewayStatus, 3000);
+          })
+          .catch(function() { power.checked = !want; out.textContent = "Couldn't reach FreeHand. Try again in a moment."; });
+        });
+      })();
 
       // ---- Agents Panel ----
       function loadAgents() {

@@ -39,7 +39,8 @@ function createApp(wa, secret) {
 
     // Unauthenticated liveness only — nothing sensitive.
     app.get('/health', (req, res) => {
-        res.json({ status: 'ok', whatsapp_connected: wa.status().connected });
+        const s = wa.status();
+        res.json({ status: 'ok', whatsapp_connected: s.connected, whatsapp_paused: s.paused === true });
     });
 
     app.use((req, res, next) => {
@@ -47,6 +48,20 @@ function createApp(wa, secret) {
             return res.status(401).json({ error: 'Invalid or missing X-Bridge-Secret' });
         }
         next();
+    });
+
+    // FreeHand's WhatsApp on/off switch.
+    app.post('/pause', async (req, res) => {
+        if (!wa.pause) return res.status(501).json({ error: 'not supported' });
+        res.json(await wa.pause());
+    });
+    app.post('/resume', async (req, res) => {
+        if (!wa.resume) return res.status(501).json({ error: 'not supported' });
+        try {
+            res.json(await wa.resume());
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
     });
 
     app.post('/pair', async (req, res) => {
@@ -112,19 +127,29 @@ function makeForwarder(freehandUrl, secret, fetchImpl = fetch) {
 
 function main() {
     const secret = (process.env.BRIDGE_SECRET || '').trim();
+    const inDocker = process.env.BRIDGE_IN_DOCKER === '1';
     if (secret.length < MIN_SECRET_LENGTH) {
         console.error(
             `BRIDGE_SECRET is missing or shorter than ${MIN_SECRET_LENGTH} characters.\n` +
-            "Run `freehand gateway secret` and put the value it prints in this folder's .env as\n" +
+            "Run `freehand gateway secret` and put the value it prints in freehand/bridge/.env as\n" +
             'BRIDGE_SECRET=<value>. The bridge will not start without it.'
         );
+        if (inDocker) {
+            // In Docker, waiting beats a restart loop: WhatsApp simply stays
+            // off until the secret is set and the container is restarted.
+            console.error('Waiting. After setting the secret, run: docker compose up -d whatsapp-bridge');
+            setInterval(() => {}, 1 << 30);
+            return;
+        }
         process.exit(1);
     }
     const host = process.env.BRIDGE_HOST || '127.0.0.1';
     const port = Number(process.env.BRIDGE_PORT || DEFAULT_PORT);
     const freehandUrl = process.env.FREEHAND_URL || process.env.PYTHON_API_URL || 'http://127.0.0.1:8000';
 
-    if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+    // In Docker the bridge listens on its private network only (compose
+    // publishes no port), so 0.0.0.0 there doesn't reach beyond FreeHand.
+    if (!inDocker && !['127.0.0.1', 'localhost', '::1'].includes(host)) {
         console.warn(
             `WARNING: BRIDGE_HOST=${host} exposes the bridge beyond this computer. Anyone who can reach it ` +
             'and knows BRIDGE_SECRET can send WhatsApp messages from the linked number.'

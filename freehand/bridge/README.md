@@ -24,12 +24,9 @@ chats are never sent to FreeHand.
 The web console walks you through steps 3 and 5, under Remote Gateways,
 WhatsApp.
 
-1. Install the bridge's dependencies. You need Node.js 20.12 or newer:
-
-   ```
-   cd freehand/bridge
-   npm install
-   ```
+1. The bridge runs in Docker with FreeHand (the `whatsapp-bridge` service
+   in `compose.yml`), so there's nothing to install. It starts and stops
+   with FreeHand.
 
 2. Create the shared secret that FreeHand and the bridge use to trust each
    other:
@@ -39,7 +36,11 @@ WhatsApp.
    ```
 
    Copy `.env.example` to `.env` in this folder, and set `BRIDGE_SECRET` to
-   the value that command printed.
+   the value that command printed. Then start (or restart) the bridge:
+
+   ```
+   docker compose up -d whatsapp-bridge
+   ```
 
 3. Say who may talk to FreeHand. In the web console, under Remote
    Gateways, WhatsApp, step 3, list the phone numbers, one per line, with
@@ -51,23 +52,10 @@ WhatsApp.
      the linked number talk to FreeHand" switched on, and use your
      "Message yourself" chat.
 
-4. Start the bridge, and leave it running:
-
-   ```
-   npm start
-   ```
-
-   On Windows, you can have it start by itself instead, with no window,
-   every time you sign in. It also starts again by itself if it ever
-   stops. Run this once from the FreeHand folder (no administrator
-   rights needed):
-
-   ```
-   powershell -ExecutionPolicy Bypass -File scripts\windows-bridge-autostart.ps1
-   ```
-
-   Its messages go to `%LOCALAPPDATA%\FreeHand\whatsapp-bridge.log`. To
-   turn this off again, run the same command with `-Remove` at the end.
+4. Check the bridge is running: in the web console, Remote Gateways,
+   WhatsApp should say the bridge is running. The **WhatsApp on** switch
+   there turns WhatsApp off and on. Off keeps your number linked, so
+   switching back on needs no new code.
 
 5. Link WhatsApp. On the FreeHand computer, run:
 
@@ -116,3 +104,31 @@ npm test
 ```
 
 The tests use a fake WhatsApp connection, so no phone is needed.
+
+## Running the bridge without Docker
+
+If FreeHand itself runs without Docker, run the bridge on the computer
+instead. You need Node.js 20.12 or newer:
+
+```
+cd freehand/bridge
+npm install
+npm start
+```
+
+On Windows it can start by itself, with no window, every time you sign in,
+and start again if it ever stops. Run this once from the FreeHand folder (no
+administrator rights needed):
+
+```
+powershell -ExecutionPolicy Bypass -File scripts\windows-bridge-autostart.ps1
+```
+
+Its messages go to `%LOCALAPPDATA%\FreeHand\whatsapp-bridge.log`. To turn it
+off again, run the same command with `-Remove` at the end.
+
+Never run this and the Docker bridge at the same time: they share the same
+WhatsApp link, and WhatsApp disconnects one of them. Stop the Docker one
+first with `docker compose stop whatsapp-bridge`. Then set
+`FREEHAND_BRIDGE_URL=http://host.docker.internal:8765` for FreeHand, if
+FreeHand is in Docker.

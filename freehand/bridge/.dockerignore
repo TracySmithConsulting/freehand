@@ -1,0 +1,9 @@
+# Never bake the WhatsApp session or the secret into the image.
+auth_info_baileys/
+.env
+.env.*
+node_modules/
+test/
+*.log
+message_queue.json
+response_queue.json

@@ -44,7 +44,7 @@ test('health is open but does not leak the pairing code', async () => {
         const r = await fetch(base + '/health');
         assert.equal(r.status, 200);
         const body = await r.json();
-        assert.deepEqual(body, { status: 'ok', whatsapp_connected: true });
+        assert.deepEqual(body, { status: 'ok', whatsapp_connected: true, whatsapp_paused: false });
     });
 });
 
@@ -224,4 +224,19 @@ test('the forwarder sends the recording to FreeHand', async () => {
         audio: { mimetype: 'audio/ogg', seconds: 3, data: 'T2dnUw==' } });
     assert.equal(calls[0].body.text, '');
     assert.deepEqual(calls[0].body.audio, { mimetype: 'audio/ogg', seconds: 3, data_b64: 'T2dnUw==', too_long: false, failed: false });
+});
+
+// ── WhatsApp on/off from FreeHand (Nov 2026) ───────────────────────────
+
+test('pause and resume need the secret and report the state', async () => {
+    let paused = false;
+    const wa = { ...fakeWa(), pause: async () => { paused = true; return { connected: false, paused }; },
+        resume: async () => { paused = false; return { connected: true, paused }; },
+        status: () => ({ connected: !paused, paused }) };
+    await withServer(createApp(wa, SECRET), async (base) => {
+        assert.equal((await post(base, '/pause', {}, 'wrong-secret')).status, 401);
+        assert.deepEqual(await (await post(base, '/pause', {}, SECRET)).json(), { connected: false, paused: true });
+        assert.deepEqual(await (await fetch(base + '/health')).json(), { status: 'ok', whatsapp_connected: false, whatsapp_paused: true });
+        assert.deepEqual(await (await post(base, '/resume', {}, SECRET)).json(), { connected: true, paused: false });
+    });
 });

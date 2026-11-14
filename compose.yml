@@ -174,9 +174,9 @@ services:
       - COMPOSIO_AUTH_CONFIG_FACEBOOK=${COMPOSIO_AUTH_CONFIG_FACEBOOK:-}
       - COMPOSIO_AUTH_CONFIG_INSTAGRAM=${COMPOSIO_AUTH_CONFIG_INSTAGRAM:-}
       - COMPOSIO_BASE_URL=${COMPOSIO_BASE_URL:-https://backend.composio.dev}
-      # The WhatsApp bridge runs on the host (npm start in freehand/bridge).
-      # Inside this container 127.0.0.1 is the container, so reach the host.
-      - FREEHAND_BRIDGE_URL=${FREEHAND_BRIDGE_URL:-http://host.docker.internal:8765}
+      # The WhatsApp bridge: the whatsapp-bridge service below. (Set
+      # http://host.docker.internal:8765 to use a bridge run on the host.)
+      - FREEHAND_BRIDGE_URL=${FREEHAND_BRIDGE_URL:-http://whatsapp-bridge:8765}
       # Long-term memory: the hindsight service above. When it isn't
       # running, FreeHand still works, without long-term memory.
       - FREEHAND_HINDSIGHT_URL=${FREEHAND_HINDSIGHT_URL:-http://hindsight:8888}
@@ -222,6 +222,31 @@ services:
   # set, one container set per customer) and expects ONE shared Caddy
   # container - named `freehand-caddy` - that imports every tenant's
   # Caddyfile.site. See docs/deployment/tenant-provisioning.md.
+  whatsapp-bridge:
+    # Connects FreeHand to WhatsApp (freehand/bridge). Runs here so it starts
+    # and stops with FreeHand, and FreeHand's WhatsApp switch can turn it on
+    # and off. No port is published: only FreeHand can reach it.
+    build:
+      context: ./freehand/bridge
+    container_name: freehand-whatsapp-bridge
+    restart: unless-stopped
+    env_file:
+      # BRIDGE_SECRET (must equal FreeHand's bridge_secret). Optional so
+      # FreeHand starts even before WhatsApp is set up.
+      - path: ./freehand/bridge/.env
+        required: false
+    environment:
+      - BRIDGE_IN_DOCKER=1
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8765
+      - FREEHAND_URL=http://freehand:8000
+      - WHATSAPP_AUTH_DIR=/data/auth_info_baileys
+    volumes:
+      # The linked-device session: treat this folder like a password.
+      # Shared with `npm start` on the host, so either can use the link
+      # (but never run both at once: WhatsApp disconnects one of them).
+      - ./freehand/bridge/auth_info_baileys:/data/auth_info_baileys
+
   caddy:
     image: caddy:2-alpine
     container_name: freehand-caddy
