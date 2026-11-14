@@ -1,4 +1,4 @@
-"""The FreeHand Helper, FreeHand's side (Nov 2026: stage 1 Look, stage 2 Act).
+"""The FreeHand Helper, FreeHand's side (Nov 2026: stages 1 Look, 2 Act, 3 Change).
 
 The Helper is a small Windows program on the person's PC
 (helper/windows). It calls out to FreeHand over a WebSocket and keeps the
@@ -14,8 +14,10 @@ Here:
 - **Requests.** Send one, wait for the answer.
 - **The agent's tools**: look (computer_windows, computer_look,
   computer_screenshot) and act (computer_act, computer_window,
-  computer_open), offered only while a computer is connected. Acting is
-  approved on the PC itself, by the Helper, never here.
+  computer_open) and change (computer_about, computer_programs,
+  computer_package, computer_fix), offered only while a computer is
+  connected. Acting and changing are approved on the PC itself, by the
+  Helper, never here; changes are asked every time.
 """
 from __future__ import annotations
 
@@ -165,7 +167,8 @@ def device_now(person: Optional[str] = None) -> Optional[str]:
     return max(mine)[1] if mine else None
 
 
-async def request(device_id: str, action: str, args: Optional[dict] = None, why: str = "") -> dict:
+async def request(device_id: str, action: str, args: Optional[dict] = None, why: str = "",
+                  timeout: Optional[float] = None) -> dict:
     conn = _connected.get(device_id)
     if not conn:
         return {"ok": False, "error": "That computer isn't connected."}
@@ -174,7 +177,7 @@ async def request(device_id: str, action: str, args: Optional[dict] = None, why:
     conn["pending"][rid] = fut
     try:
         await conn["send"]({"type": "request", "id": rid, "action": action, "args": args or {}, "why": why[:200]})
-        return await asyncio.wait_for(fut, REQUEST_TIMEOUT)
+        return await asyncio.wait_for(fut, timeout or TIMEOUTS.get(action, REQUEST_TIMEOUT))
     except asyncio.TimeoutError:
         return {"ok": False, "error": "The computer didn't answer in time (maybe nobody pressed Allow)."}
     finally:
@@ -183,10 +186,21 @@ async def request(device_id: str, action: str, args: Optional[dict] = None, why:
 
 # ── The agent's tools ──────────────────────────────────────────────────
 
-TOOLS = ("computer_windows", "computer_look", "computer_screenshot",
-         "computer_act", "computer_window", "computer_open")
+LOOK_ACT_TOOLS = ("computer_windows", "computer_look", "computer_screenshot",
+                  "computer_act", "computer_window", "computer_open")
+CHANGE_TOOLS = ("computer_about", "computer_programs", "computer_package", "computer_fix")
+TOOLS = LOOK_ACT_TOOLS + CHANGE_TOOLS
 ACTIONS = {"computer_windows": "windows", "computer_look": "look", "computer_screenshot": "screenshot",
-           "computer_act": "act", "computer_window": "window", "computer_open": "open"}
+           "computer_act": "act", "computer_window": "window", "computer_open": "open",
+           "computer_about": "about", "computer_programs": "programs", "computer_package": "package",
+           "computer_fix": "fix"}
+# Installs can take many minutes; the person may also be slow to answer.
+TIMEOUTS = {"package": 1200, "fix": 300, "programs": 300}
+# Words that bring in the change tools (economy: only when it's about this).
+CHANGE_KEYWORDS = ("install", "uninstall", "reinstall", "remove", "update", "upgrade", "fix", "broken", "working",
+                   "sound", "audio", "speaker", "speakers", "printer", "print", "printing", "network", "internet",
+                   "wifi", "wi-fi", "taskbar", "start", "frozen", "stuck", "slow", "disk", "space", "storage",
+                   "memory", "battery", "program", "programs", "software", "version", "zoom", "teams")
 KEYWORDS = ("computer", "pc", "laptop", "desktop", "screen", "window", "windows", "app", "apps",
             "program", "button", "buttons", "menu", "dialog", "open", "showing", "see", "focus",
             "close", "click", "press", "type", "minimise", "minimize", "maximise", "switch",
@@ -238,6 +252,40 @@ def schemas() -> list[dict]:
     ]
 
 
+def change_schemas() -> list[dict]:
+    def tool(name, description, props, required=("why",)):
+        return {"type": "function", "function": {"name": name, "description": description,
+                "parameters": {"type": "object", "properties": props, "required": list(required)}}}
+    return [
+        tool("computer_about", "This computer's details: Windows version, free memory and disk space, battery, "
+             "network. Use it to understand a problem before suggesting a fix.", {"why": _WHY}),
+        tool("computer_programs", "Programs on the user's computer: 'installed' (optionally filtered), or "
+             "'available' to search Windows' installer (winget) for one to install. Gives each program's exact id.",
+             {"where": {"type": "string", "enum": ["installed", "available"]},
+              "query": {"type": "string", "description": "A program's name, in plain words"}, "why": _WHY},
+             required=("where", "why")),
+        tool("computer_package", "Install, update or remove a program on the user's computer, by its exact id "
+             "from computer_programs. The user is asked on their computer every time, and the install may show "
+             "Windows' own 'allow changes?' prompt, which only the user can answer. Can take several minutes.",
+             {"do": {"type": "string", "enum": ["install", "update", "remove"]},
+              "id": {"type": "string", "description": "The exact id, like Zoom.Zoom"}, "why": _WHY},
+             required=("do", "id", "why")),
+        tool("computer_fix", "Run one of FreeHand's known fixes on the user's computer: 'sound' (restart the sound "
+             "services), 'printer' (clear stuck print jobs), 'network' (refresh the connection; it drops for a few "
+             "seconds, so the answer may be lost), 'taskbar' (restart Windows Explorer; open folders close). The user "
+             "is asked every time; most fixes also need the user to say yes to Windows' own prompt.",
+             {"fix": {"type": "string", "enum": ["sound", "printer", "network", "taskbar"]}, "why": _WHY},
+             required=("fix", "why")),
+    ]
+
+
+def wanted_change(texts) -> bool:
+    words = set()
+    for t in texts:
+        words.update("".join(ch if ch.isalnum() or ch == "-" else " " for ch in (t or "").lower()).split())
+    return bool(words & set(CHANGE_KEYWORDS))
+
+
 def wanted(texts) -> bool:
     words = set()
     for t in texts:
@@ -253,7 +301,8 @@ async def run_tool(name: str, args: dict) -> dict:
                                                 "running and paired (Settings, Help on my computer)."})}
     action = ACTIONS[name]
     args = args or {}
-    sent = {k: str(args.get(k) or "") for k in ("window", "do", "element", "text", "target") if args.get(k) not in (None, "")}
+    sent = {k: str(args.get(k) or "") for k in ("window", "do", "element", "text", "target", "id", "fix", "where", "query")
+            if args.get(k) not in (None, "")}
     sent.setdefault("window", "")
     res = await request(device, action, sent, str(args.get("why") or ""))
     if not res.get("ok"):

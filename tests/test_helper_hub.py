@@ -195,5 +195,54 @@ def test_a_no_on_the_pc_reaches_the_model(monkeypatch):
 
 def test_the_act_tools_are_offered_with_the_look_tools():
     names = [s["function"]["name"] for s in helper_hub.schemas()]
-    assert names == list(helper_hub.TOOLS)
+    assert names == list(helper_hub.LOOK_ACT_TOOLS)
     assert helper_hub.wanted(["close the Notepad window"])
+
+
+def test_the_change_tools_come_only_for_installs_and_fixes(monkeypatch):
+    """Stage 3. Economy: install and fix tools only when the message is about that."""
+    seen = []
+
+    async def fake_llm(messages, tools=None, config=None):
+        seen.append([x["function"]["name"] for x in tools or []])
+        return {"content": "ok"}
+    monkeypatch.setattr(agent, "call_llm", fake_llm)
+    monkeypatch.setattr(helper_hub, "device_now", lambda person=None: "dev1")
+    asyncio.run(agent.run_agent("please install Zoom for me", source="selftest", caller_id="a"))
+    assert "computer_package" in seen[-1] and "computer_fix" in seen[-1]
+    asyncio.run(agent.run_agent("what's the capital of France?", source="selftest", caller_id="b"))
+    assert "computer_package" not in seen[-1]
+
+
+def test_installs_wait_long_enough(monkeypatch):
+    waited = {}
+
+    async def fake_wait_for(fut, timeout):
+        waited["timeout"] = timeout
+        return {"ok": True, "data": {"ok": True}}
+    monkeypatch.setattr(helper_hub.asyncio, "wait_for", fake_wait_for)
+
+    async def go():
+        async def send(message):
+            pass
+
+        async def close():
+            pass
+        helper_hub.connected({"id": "d3", "name": "PC"}, send, close)
+        return await helper_hub.request("d3", "package", {"do": "install", "id": "Zoom.Zoom"})
+    asyncio.run(go())
+    assert waited["timeout"] == 1200
+
+
+def test_package_ids_and_fixes_reach_the_helper(monkeypatch):
+    monkeypatch.setattr(helper_hub, "device_now", lambda person=None: "dev1")
+    seen = {}
+
+    async def fake_request(device, action, args=None, why=""):
+        seen.update(action=action, args=args)
+        return {"ok": True, "data": {"ok": True, "exit_code": 0}}
+    monkeypatch.setattr(helper_hub, "request", fake_request)
+    asyncio.run(helper_hub.run_tool("computer_package", {"do": "install", "id": "Zoom.Zoom", "why": "for meetings"}))
+    assert seen == {"action": "package", "args": {"do": "install", "id": "Zoom.Zoom", "window": ""}}
+    asyncio.run(helper_hub.run_tool("computer_fix", {"fix": "printer", "why": "stuck job"}))
+    assert seen["args"]["fix"] == "printer"

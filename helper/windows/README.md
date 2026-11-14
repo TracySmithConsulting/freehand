@@ -3,12 +3,23 @@
 A small program that lets FreeHand help on this computer. It works with
 FreeHand on the same computer (in Docker) or on a server.
 
-**It can look and act.** FreeHand can list the open windows, read a window
-the way a screen reader does (buttons, fields, menus, and which have no
-names), and take a picture of a window. It can also click, type, press
-keys, switch to, close, minimise and maximise windows, and open apps and
-websites, **asking you first every time**. It can't install or change
-settings yet. See [the design](../../docs/design/computer-helper.md).
+**It can look, act and change.** FreeHand can:
+
+- **look:** list the open windows, read a window the way a screen reader
+  does (buttons, fields, menus, and which have no names), take a picture of
+  a window, and check this computer's details (Windows version, free memory
+  and disk space, battery, network);
+- **act:** click, type, press keys, switch to, close, minimise and maximise
+  windows, and open apps and websites;
+- **change:** find, install, update and remove programs through winget
+  (Windows' own installer), and run four known fixes: **sound** (restart the
+  sound services), **printer** (clear stuck print jobs), **network** (refresh
+  the connection) and **taskbar** (restart Windows Explorer).
+
+It asks you first for everything except looking, and **changes are asked
+every time**, never "for 30 minutes". FreeHand can't run its own commands:
+it can only pick a program's id or one of the four fixes by name. See
+[the design](../../docs/design/computer-helper.md).
 
 ## Getting it
 
@@ -46,6 +57,9 @@ The Helper then runs by the clock, and reconnects by itself.
 - **Files that look secret** (like `.env`, or with "password", "token" or
   "secret" in the name) get a CAREFUL warning, always ask, and can't be
   allowed for 30 minutes.
+- **Windows' own prompt.** Most fixes, and some installs, then show
+  Windows' "Do you want to allow this app to make changes?". That's Windows
+  itself; only you can answer it, and FreeHand can't see or press it.
 - **Never:** typing into password fields, acting in Windows' security and
   sign-in screens, acting in FreeHand's own console (so it can't approve its
   own requests), or opening command tools like PowerShell.
@@ -65,3 +79,5 @@ key encrypted for your Windows account.
 without connecting or asking, and writes what it saw to `out.json`.
 `--selftest-open notepad out.json` opens an app, reads it straight away and
 works out where typing would go (without typing), with timings.
+`--selftest-change out.json` checks this computer's details, searches for a
+program, and shows what an install and a fix would ask, changing nothing.

@@ -1,7 +1,9 @@
 # The FreeHand Helper: help on your own computer
 
-Status: stages 1 (Look) and 2 (Act) built in Nov 2026: helper/windows
-and core/helper_hub.py. Stages 3 (Change) and 4 (hosted) are still design.
+Status: stages 1 (Look), 2 (Act) and 3 (Change) built in Nov 2026:
+helper/windows and core/helper_hub.py. Stage 3 has programs (winget) and
+four known fixes; approved commands of FreeHand's own are not built.
+Stage 4 (hosted, signed download) is still design.
 
 ## What it's for
 
