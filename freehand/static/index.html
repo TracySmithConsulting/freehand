@@ -563,6 +563,14 @@
       #voice-speak-btn.recording { outline-color: #ff8a80; }
       .voice-listening { color: #ff8a80; }
     }
+    .sr-only {
+      position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+      overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+    }
+    .view-switch { display: inline-flex; align-items: center; gap: 0.4rem; margin-top: 0.5rem; font-size: 0.95rem; }
+    .approvals-waiting { border: 3px solid #b26a00; border-radius: 8px; padding: 1rem; }
+    @media (prefers-color-scheme: dark) { .approvals-waiting { border-color: #ffb74d; } }
+    [data-advanced][hidden] { display: none !important; }
     .runner-alert {
       background: var(--red-tint);
       border: 1.5px dashed var(--red);
@@ -940,6 +948,11 @@
   <header>
     <h1>FreeHand</h1>
     <div id="tier-display" aria-live="polite"></div>
+    <label class="view-switch">
+      <input type="checkbox" id="show-all-toggle" aria-describedby="show-all-hint">
+      Show all settings and tools
+    </label>
+    <span id="show-all-hint" class="sr-only">Off: just talking to FreeHand, your scribble pad and tasks. On: memory, skills, connections, settings and the rest as well.</span>
   </header>
   <a class="skip-link" href="#command">Skip to main content</a>
 
@@ -948,12 +961,12 @@
           <li><a href="#command">Command</a></li>
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Tasks</a></li>
-          <li><a href="#memory">Memory</a></li>
-        <li><a href="#skills">Skills</a></li>
-          <li><a href="#connections">Connections</a></li>
-          <li><a href="#agents">Agents</a></li>
-          <li><a href="#settings">Settings</a></li>
-          <li><a href="#gateways">Gateways</a></li>
+          <li data-advanced><a href="#memory">Memory</a></li>
+        <li data-advanced><a href="#skills">Skills</a></li>
+          <li data-advanced><a href="#connections">Connections</a></li>
+          <li data-advanced><a href="#agents">Agents</a></li>
+          <li data-advanced><a href="#settings">Settings</a></li>
+          <li data-advanced><a href="#gateways">Gateways</a></li>
     </ul>
   </nav>
 
@@ -967,6 +980,15 @@
         "Remember key in this browser".</p>
       <button type="button" id="signin-banner-settings">Go to Settings</button>
     </div>
+
+    <!-- Only shown while something is waiting for the user's OK. -->
+    <section id="approvals-section" class="approvals-waiting" aria-labelledby="approvals-heading" hidden>
+      <h2 id="approvals-heading">Waiting for your approval</h2>
+      <p class="hint">FreeHand asks before doing anything important. Approve or reject each one.</p>
+      <div id="approvals-list">
+        <p class="empty-state">No pending approvals</p>
+      </div>
+    </section>
 
     <!-- Command Box -->
     <section id="command" aria-labelledby="cmd-heading">
@@ -1081,7 +1103,7 @@
     </section>
 
     <!-- Memory Panel -->
-    <section id="memory" aria-labelledby="mem-heading">
+    <section id="memory" data-advanced aria-labelledby="mem-heading">
       <h2 id="mem-heading">Memory</h2>
 
       <h3 id="facts-heading">What FreeHand remembers about you</h3>
@@ -1134,7 +1156,7 @@
     </section>
 
     <!-- Skills: saved instructions that have to earn their place -->
-    <section id="skills" aria-labelledby="skills-heading">
+    <section id="skills" data-advanced aria-labelledby="skills-heading">
       <h2 id="skills-heading" tabindex="-1">Skills</h2>
       <p class="hint">
         Skills are instructions FreeHand saves for tasks you do more than once.
@@ -1153,7 +1175,7 @@
     </section>
 
     <!-- Connections Panel -->
-    <section id="connections" aria-labelledby="conn-heading">
+    <section id="connections" data-advanced aria-labelledby="conn-heading">
       <h2 id="conn-heading">
         Connections
         <span class="hotkey-hint" aria-hidden="true">Alt+K</span>
@@ -1164,7 +1186,7 @@
     </section>
 
     <!-- Agents Import Panel -->
-    <section id="agents" aria-labelledby="agents-heading">
+    <section id="agents" data-advanced aria-labelledby="agents-heading">
       <h2 id="agents-heading">Agents</h2>
       <div id="agents-status" aria-live="polite">
         <p class="empty-state">Loading agent status...</p>
@@ -1173,7 +1195,7 @@
     </section>
 
     <!-- Settings & Approvals -->
-    <section id="settings" aria-labelledby="set-heading">
+    <section id="settings" data-advanced aria-labelledby="set-heading">
       <h2 id="set-heading">
         Settings & Approvals
         <span class="hotkey-hint" aria-hidden="true">Alt+A</span>
@@ -1239,71 +1261,24 @@
         </form>
       </fieldset>
 
-      <!-- OAuth App Credentials -->
+      <!-- Facebook app (only for setups without Composio) -->
       <fieldset>
-        <legend>OAuth App Credentials</legend>
-        <p class="hint" style="margin-bottom: 1rem;">Enter your OAuth app credentials below. You'll need to register apps at each provider's developer console. See the setup guide for instructions.</p>
+        <legend>Facebook app (most people don't need this)</legend>
+        <p class="hint" style="margin-bottom: 1rem;">Facebook and Instagram normally connect through Composio, with nothing
+          to fill in here. Only if this FreeHand has no Composio key, enter your own Facebook app from
+          developers.facebook.com. Gmail, Outlook, Google Calendar, Zoom and the rest need nothing here:
+          they connect from Connections.</p>
         <div class="credential-row">
-          <div class="form-group">
-            <label for="google-client-id">Google Client ID</label>
-            <input type="text" id="google-client-id" placeholder="xxxxx.apps.googleusercontent.com">
-            <p class="hint">Create at console.developers.google.com</p>
-          </div>
-          <div class="form-group">
-            <label for="google-client-secret">Google Client Secret</label>
-            <input type="password" id="google-client-secret" placeholder="GOCSPX-...">
-          </div>
-        </div>
-        <div class="credential-row">
-          <div class="form-group">
-            <label for="microsoft-client-id">Microsoft Client ID</label>
-            <input type="text" id="microsoft-client-id" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-            <p class="hint">Create at entra.microsoft.com</p>
-          </div>
-          <div class="form-group">
-            <label for="microsoft-client-secret">Microsoft Client Secret</label>
-            <input type="password" id="microsoft-client-secret" placeholder="Enter secret...">
-          </div>
-        </div>
-        <div class="credential-row">
-          <div class="form-group">
-            <label for="microsoft-tenant">Microsoft Tenant</label>
-            <input type="text" id="microsoft-tenant" placeholder="common">
-            <p class="hint">Use "common" for personal + work accounts</p>
-          </div>
-          <div class="form-group">
-            <label for="zoom-client-id">Zoom Client ID</label>
-            <input type="text" id="zoom-client-id" placeholder="Enter Zoom client ID">
-            <p class="hint">Create an OAuth App (not Server-to-Server) at zoom.us</p>
-          </div>
-        </div>
-        <div class="credential-row">
-          <div class="form-group">
-            <label for="zoom-client-secret">Zoom Client Secret</label>
-            <input type="password" id="zoom-client-secret" placeholder="Enter Zoom client secret">
-          </div>
           <div class="form-group">
             <label for="meta-facebook-app-id">Facebook App ID</label>
             <input type="text" id="meta-facebook-app-id" placeholder="Enter Facebook App ID">
-            <p class="hint">Create at developers.facebook.com</p>
           </div>
-        </div>
-        <div class="credential-row">
           <div class="form-group">
             <label for="meta-facebook-app-secret">Facebook App Secret</label>
             <input type="password" id="meta-facebook-app-secret" placeholder="Enter Facebook App Secret">
           </div>
-          <div class="form-group">
-            <label for="meta-instagram-app-id">Instagram App ID</label>
-            <input type="text" id="meta-instagram-app-id" placeholder="Enter Instagram App ID">
-            <p class="hint">Separate app from Facebook</p>
-          </div>
         </div>
-        <div class="form-group">
-          <label for="meta-instagram-app-secret">Instagram App Secret</label>
-          <input type="password" id="meta-instagram-app-secret" placeholder="Enter Instagram App Secret">
-        </div>
-        <button type="button" id="oauth-save-btn">Save OAuth Credentials</button>
+        <button type="button" id="oauth-save-btn">Save Facebook app</button>
       </fieldset>
 
       <!-- LLM Settings -->
@@ -1470,12 +1445,6 @@
         <button type="button" id="gateway-save-btn">Save Gateway Settings</button>
       </section>
 
-      <div id="approvals-section">
-        <h3>Pending Approvals</h3>
-        <div id="approvals-list" aria-live="polite">
-          <p class="empty-state">No pending approvals</p>
-        </div>
-      </div>
     </section>
   </main>
 
@@ -1603,6 +1572,38 @@
         }
       }
 
+      // ---- Everyday view ----
+      // Off (the default): talking to FreeHand, the scribble pad and tasks,
+      // plus approvals when there are any. On: every section. Remembered in
+      // this browser. Anything that points at a hidden section (a link,
+      // Alt+A, Alt+K, "Go to Settings") turns everything on first, so no
+      // button ever leads nowhere.
+      var showAllBox = document.getElementById('show-all-toggle');
+      function setShowAll(on, announce) {
+        showAllBox.checked = !!on;
+        document.querySelectorAll('[data-advanced]').forEach(function(el) { el.hidden = !on; });
+        try { localStorage.setItem('freehand_show_all', on ? '1' : '0'); } catch (e) {}
+        if (announce) showStatus(on ? 'Showing all settings and tools.' : 'Showing the everyday view.', 'success');
+      }
+      function revealSection(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var hiddenPart = el.closest('[data-advanced]');
+        if (hiddenPart && hiddenPart.hidden) setShowAll(true, false);
+      }
+      window.revealSection = revealSection;
+      var savedShowAll = false;
+      try { savedShowAll = localStorage.getItem('freehand_show_all') === '1'; } catch (e) {}
+      setShowAll(savedShowAll, false);
+      showAllBox.addEventListener('change', function() { setShowAll(showAllBox.checked, true); });
+      document.addEventListener('click', function(e) {
+        var a = e.target.closest && e.target.closest('a[href^="#"]');
+        if (a && a.getAttribute('href').length > 1) revealSection(a.getAttribute('href').slice(1));
+      }, true);
+      function currentHash() { try { return (window.location && window.location.hash) || ''; } catch (e) { return ''; } }
+      window.addEventListener('hashchange', function() { revealSection(currentHash().slice(1)); });
+      if (currentHash().length > 1) revealSection(currentHash().slice(1));
+
       // ---- Hotkeys ----
       document.addEventListener('keydown', function(e) {
         if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyV' || (e.key || '').toLowerCase() === 'v')) {
@@ -1623,10 +1624,12 @@
             document.getElementById('scribble-content').focus();
           } else if (key === 'a') {
             e.preventDefault();
+            revealSection('settings');
             document.getElementById('settings').scrollIntoView({ behavior: 'smooth' });
             document.getElementById('api-key').focus();
           } else if (key === 'k') {
             e.preventDefault();
+            revealSection('connections');
             document.getElementById('connections').scrollIntoView({ behavior: 'smooth' });
           }
         }
@@ -2182,17 +2185,10 @@
 
       // ---- OAuth Settings ----
       var oauthFields = [
-        { id: 'google-client-id', key: 'google.client_id' },
-        { id: 'google-client-secret', key: 'google.client_secret' },
-        { id: 'microsoft-client-id', key: 'microsoft.client_id' },
-        { id: 'microsoft-client-secret', key: 'microsoft.client_secret' },
-        { id: 'microsoft-tenant', key: 'microsoft.tenant' },
-        { id: 'zoom-client-id', key: 'zoom.client_id' },
-        { id: 'zoom-client-secret', key: 'zoom.client_secret' },
+        // Gmail, Outlook, Zoom and co. connect through OpenConnector, and
+        // Instagram through Composio; only Facebook's own-app fallback is left.
         { id: 'meta-facebook-app-id', key: 'meta.facebook.app_id' },
         { id: 'meta-facebook-app-secret', key: 'meta.facebook.app_secret' },
-        { id: 'meta-instagram-app-id', key: 'meta.instagram.app_id' },
-        { id: 'meta-instagram-app-secret', key: 'meta.instagram.app_secret' },
       ];
 
       // Load OAuth settings
@@ -2921,7 +2917,15 @@
           .then(function(approvals) {
             var sig = JSON.stringify(approvals);
             if (sig === lastApprovals) return;
+            var before = lastApprovals && lastApprovals !== 'failed' ? JSON.parse(lastApprovals).length : 0;
             lastApprovals = sig;
+            var section = document.getElementById('approvals-section');
+            section.hidden = !approvals.length;
+            if (approvals.length > before) {
+              showStatus(approvals.length === 1
+                ? "FreeHand needs your approval for something. It's at the top of the page."
+                : 'FreeHand needs your approval: ' + approvals.length + ' things are waiting at the top of the page.', 'success');
+            }
             if (!approvals.length) {
               listEl.innerHTML = '<p class="empty-state">No pending approvals</p>';
               return;
@@ -3697,6 +3701,7 @@
 
       document.getElementById('signin-banner-settings').addEventListener('click', function() {
         var field = document.getElementById('api-key');
+        if (window.revealSection) window.revealSection('settings');
         var section = document.getElementById('settings');
         if (section && section.scrollIntoView) section.scrollIntoView();
         if (field) field.focus();
