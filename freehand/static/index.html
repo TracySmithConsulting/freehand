@@ -990,17 +990,19 @@
         <button type="submit">Send Command</button>
       </form>
       <div class="voice-controls stack-top" role="group" aria-labelledby="voice-heading">
-        <h3 id="voice-heading">Voice</h3>
-        <button type="button" id="voice-speak-btn">Speak</button>
+        <h3 id="voice-heading">Voice <span class="hotkey-hint" aria-hidden="true">Alt+V</span></h3>
+        <button type="button" id="voice-speak-btn" aria-keyshortcuts="Alt+V">Speak</button>
         <span id="voice-listening" class="voice-listening" aria-hidden="true"></span>
         <div class="form-group">
           <label><input type="checkbox" id="voice-read-aloud"> Read replies aloud</label>
         </div>
         <div class="form-group">
-          <label><input type="checkbox" id="voice-conversation"> Voice conversation: talk, hear the answer, then talk again</label>
+          <label><input type="checkbox" id="voice-conversation" aria-keyshortcuts="Alt+Shift+V"> Voice conversation: talk, hear the answer, then talk again</label>
         </div>
         <p id="voice-status" role="status" aria-live="polite"></p>
         <p class="hint">
+          Shortcuts, from anywhere on the page: Alt+V starts and stops listening, like pressing Speak.
+          Alt+Shift+V turns voice conversation on (it starts listening straight away) or off.
           Press Speak and wait for the high beep, then talk. Press Speak again when you've finished: a low beep
           means FreeHand has stopped listening. Your voice is turned into text on this computer, not sent anywhere.
           While FreeHand reads replies aloud, your screen reader stays quiet so the two don't talk over each other.
@@ -1603,6 +1605,14 @@
 
       // ---- Hotkeys ----
       document.addEventListener('keydown', function(e) {
+        if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === 'KeyV' || (e.key || '').toLowerCase() === 'v')) {
+          // Alt+V: start or stop listening. Alt+Shift+V: voice conversation
+          // on or off. Works from anywhere on the page, and focus doesn't
+          // move, so the screen reader has nothing to read into the microphone.
+          e.preventDefault();
+          if (e.shiftKey) toggleVoiceConversation(); else toggleSpeak();
+          return;
+        }
         if (e.altKey) {
           var key = e.key.toLowerCase();
           if (key === 'c') {
@@ -1867,6 +1877,7 @@
         if (voice.recorder && voice.recorder.state === 'inactive') {
           // Stopped before recording began (pressed again during the wait).
           voice.recorder = null;
+          voice.discard = false;  // nothing was recorded, so nothing to throw away
         } else if (voice.recorder) {
           voice.recorder.stop();
           voiceTone(false);
@@ -1881,6 +1892,7 @@
         var type = (voice.recorder && voice.recorder.mimeType || 'audio/webm').split(';')[0];
         var blob = new Blob(voice.chunks, { type: type });
         voice.recorder = null; voice.stream = null;
+        if (voice.discard) { voice.discard = false; return; }
         if (!blob.size) { voiceStatus('I didn\'t catch anything. Press Speak to try again.'); return; }
         voice.busy = true;
         voiceStatus('Turning your words into text...');
@@ -1915,9 +1927,28 @@
         window.speechSynthesis.speak(u);
       }
 
-      voiceEl('voice-speak-btn').addEventListener('click', function() {
+      function toggleSpeak() {
+        var b = voiceEl('voice-speak-btn');
+        if (b.disabled) { voiceStatus('Speak is unavailable in this FreeHand.'); return; }
         if (voice.recorder) stopRecording(); else startRecording();
-      });
+      }
+      voiceEl('voice-speak-btn').addEventListener('click', toggleSpeak);
+
+      function toggleVoiceConversation() {
+        var box = voiceEl('voice-conversation');
+        box.checked = !box.checked;
+        box.dispatchEvent(new Event('change'));
+        if (box.checked) {
+          // On: start listening straight away (after this is read out).
+          voiceStatus('Voice conversation on. Talk after the beep.');
+          if (!voice.recorder && !voice.busy) startRecording();
+        } else {
+          // Off: stop listening and throw away anything half-said.
+          if (voice.recorder) { voice.discard = true; stopRecording(); }
+          if (window.speechSynthesis) window.speechSynthesis.cancel();
+          voiceStatus('Voice conversation off.');
+        }
+      }
 
       function loadVoiceStatus() {
         return apiFetch('/api/voice/status')
