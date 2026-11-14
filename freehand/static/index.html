@@ -1021,6 +1021,28 @@
         <div class="form-group">
           <label><input type="checkbox" id="voice-conversation" aria-keyshortcuts="Alt+Shift+V"> Voice conversation: talk, hear the answer, then talk again</label>
         </div>
+        <details class="voice-choice">
+          <summary>FreeHand's voice and speed</summary>
+          <div class="form-group">
+            <label for="voice-choice">Voice</label>
+            <select id="voice-choice" aria-describedby="voice-choice-hint">
+              <option value="">The browser's usual voice</option>
+            </select>
+            <p class="hint" id="voice-choice-hint">These are the voices this browser has. Voices marked "online" sound more natural but need the internet. More voices can be added in Windows: Settings, Time and language, Speech.</p>
+          </div>
+          <div class="form-group">
+            <label for="voice-rate">Speed</label>
+            <select id="voice-rate">
+              <option value="0.8">Slower</option>
+              <option value="1" selected>Normal</option>
+              <option value="1.25">A bit faster</option>
+              <option value="1.5">Faster</option>
+              <option value="2">Much faster</option>
+            </select>
+          </div>
+          <button type="button" id="voice-test-btn" class="secondary">Test voice</button>
+          <p class="hint">FreeHand remembers your choice in this browser.</p>
+        </details>
         <p id="voice-status" role="status" aria-live="polite"></p>
         <p class="hint">
           Shortcuts, from anywhere on the page: Alt+V starts and stops listening, like pressing Speak.
@@ -1924,11 +1946,90 @@
           if (conversation) startRecording();
           return;
         }
-        var u = new SpeechSynthesisUtterance(text);
+        var u = voiceUtterance(text);
         u.onend = function() { if (voiceEl('voice-conversation').checked) startRecording(); };
         window.speechSynthesis.cancel();
         window.speechSynthesis.speak(u);
       }
+
+      // ---- FreeHand's voice and speed ----
+      // The browser's own voices (speechSynthesis.getVoices). Remembered per
+      // browser, because each browser and computer has different voices.
+      function voiceSetting(name, fallback) {
+        try { var v = localStorage.getItem('freehand_' + name); return v === null ? fallback : v; } catch (e) { return fallback; }
+      }
+      function saveVoiceSetting(name, value) {
+        try { localStorage.setItem('freehand_' + name, value); } catch (e) {}
+      }
+      function chosenVoice() {
+        if (!window.speechSynthesis) return null;
+        var want = voiceSetting('voice_name', '');
+        if (!want) return null;
+        return window.speechSynthesis.getVoices().filter(function(v) { return v.voiceURI === want || v.name === want; })[0] || null;
+      }
+      function voiceUtterance(text) {
+        var u = new SpeechSynthesisUtterance(text);
+        var v = chosenVoice();
+        if (v) { u.voice = v; u.lang = v.lang; }
+        var rate = parseFloat(voiceSetting('voice_rate', '1'));
+        if (rate > 0) u.rate = rate;
+        return u;
+      }
+      function languageName(code) {
+        try { return new Intl.DisplayNames([navigator.language || 'en'], { type: 'language' }).of(code) || code; }
+        catch (e) { return code; }
+      }
+      function fillVoiceChoice() {
+        var select = voiceEl('voice-choice');
+        if (!select || !window.speechSynthesis) return;
+        var voices = window.speechSynthesis.getVoices();
+        if (!voices.length) return;  // Chrome lists them a moment later (voiceschanged)
+        var mine = (navigator.language || 'en').split('-')[0].toLowerCase();
+        var groups = {};
+        voices.forEach(function(v) {
+          var lang = (v.lang || 'und').split('-')[0].toLowerCase();
+          (groups[lang] = groups[lang] || []).push(v);
+        });
+        // Your own language first, then the rest alphabetically.
+        var langs = Object.keys(groups).sort(function(a, b) {
+          if (a === mine) return -1; if (b === mine) return 1;
+          return languageName(a).localeCompare(languageName(b));
+        });
+        while (select.options.length > 1) select.remove(1);
+        while (select.querySelector('optgroup')) select.removeChild(select.querySelector('optgroup'));
+        langs.forEach(function(lang) {
+          var group = document.createElement('optgroup');
+          group.label = languageName(lang);
+          groups[lang].sort(function(a, b) { return a.name.localeCompare(b.name); }).forEach(function(v) {
+            var o = document.createElement('option');
+            o.value = v.voiceURI || v.name;
+            o.textContent = v.name + (v.lang ? ' (' + v.lang + ')' : '') + (v.localService === false ? ', online' : '');
+            group.appendChild(o);
+          });
+          select.appendChild(group);
+        });
+        select.value = voiceSetting('voice_name', '');
+        if (select.value !== voiceSetting('voice_name', '')) select.value = '';
+      }
+      (function setUpVoiceChoice() {
+        var select = voiceEl('voice-choice'), rate = voiceEl('voice-rate');
+        if (!select) return;
+        if (!window.speechSynthesis) {
+          select.disabled = rate.disabled = voiceEl('voice-test-btn').disabled = true;
+          voiceEl('voice-choice-hint').textContent = "This browser can't read replies aloud.";
+          return;
+        }
+        rate.value = voiceSetting('voice_rate', '1');
+        if (rate.value !== voiceSetting('voice_rate', '1')) rate.value = '1';
+        fillVoiceChoice();
+        if (window.speechSynthesis.addEventListener) window.speechSynthesis.addEventListener('voiceschanged', fillVoiceChoice);
+        select.addEventListener('change', function() { saveVoiceSetting('voice_name', select.value); });
+        rate.addEventListener('change', function() { saveVoiceSetting('voice_rate', rate.value); });
+        voiceEl('voice-test-btn').addEventListener('click', function() {
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(voiceUtterance('Hello! This is how FreeHand will sound when it reads its replies to you.'));
+        });
+      })();
 
       function toggleSpeak() {
         var b = voiceEl('voice-speak-btn');
