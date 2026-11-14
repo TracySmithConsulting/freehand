@@ -731,6 +731,18 @@ https://{hostname} {{
 \t\treverse_proxy host.docker.internal:{freehand_port}
 \t}}
 
+\t# The FreeHand Helper (docs/design/computer-helper.md) on the client's
+\t# PC can't send the site password either. FreeHand checks both itself:
+\t# pairing needs a one-use code from the (password-protected) console,
+\t# and the connection needs the computer's own token. The connection is
+\t# a WebSocket that stays open, so no proxy timeouts here.
+\t@freehand_helper {{
+\t\tpath /api/helper/pair /api/helper/connect
+\t}}
+\thandle @freehand_helper {{
+\t\treverse_proxy host.docker.internal:{freehand_port}
+\t}}
+
 \thandle {{
 \t\t# Auth: bcrypt hash only. Never a plaintext password.
 \t\tbasic_auth {{

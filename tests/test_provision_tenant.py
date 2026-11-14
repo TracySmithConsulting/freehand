@@ -421,9 +421,19 @@ class TestBuildCaddySite:
         assert "@chat_webhooks {" in site
         assert "method POST" in site
         paths = [line.strip() for line in site.splitlines() if line.strip().startswith("path ")]
-        assert paths == ["path /api/gateway/telegram /api/gateway/slack"]
+        assert paths[0] == "path /api/gateway/telegram /api/gateway/slack"
         assert "/api/gateway/*" not in site
         assert "whatsapp" not in site
+
+    def test_the_helper_bypasses_basic_auth_on_two_exact_paths(self, site):
+        """The FreeHand Helper can't send the site password; FreeHand checks
+        the one-use pairing code and the computer's token itself."""
+        paths = [line.strip() for line in site.splitlines() if line.strip().startswith("path ")]
+        assert paths == ["path /api/gateway/telegram /api/gateway/slack",
+                         "path /api/helper/pair /api/helper/connect"]
+        helper_block = site.split("handle @freehand_helper {", 1)[1].split("}", 1)[0]
+        assert "basic_auth" not in helper_block and "reverse_proxy" in helper_block
+        assert "/api/helper/*" not in site  # pair-code and the list stay behind the password
 
     def test_everything_else_stays_behind_basic_auth(self, site):
         # Exactly one basic_auth, inside the catch-all `handle {` — never at

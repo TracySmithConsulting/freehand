@@ -196,6 +196,29 @@ container `freehand-whatsapp-<customer>`):
   their FreeHand API key, as for every other setting. They can switch
   WhatsApp off and on there too.
 
+## The FreeHand Helper (help on the customer's own PC)
+
+The [Helper](../../helper/windows/README.md) on a customer's PC calls out
+to their FreeHand at `https://<their hostname>`, so nothing on the PC is
+opened to the internet:
+
+- **Two paths skip the site password,** because a program on the PC can't
+  type it: `/api/helper/pair` (needs a one-use, ten-minute code from the
+  password-protected console; wrong codes are limited for everyone) and
+  `/api/helper/connect` (the WebSocket, which needs the computer's own
+  token). Everything else, including making a code and listing computers,
+  still needs the password. Checked against a real Caddy: the console, the
+  code and the list gave 401 without the password; pairing and a 40-second
+  connection worked through it; a wrong token was turned away.
+- **Each customer's computers are their own.** Pairings live in that
+  tenant's `vault/helpers.json`; another tenant's token means nothing there.
+- **Older tenants:** tenants made before this change need the
+  `@freehand_helper` block in their Caddy site file. Run the script again,
+  or copy the block from a new site file, then reload Caddy.
+- **Setting up a customer:** send them the download link, sign in to their
+  console with them, open Help on my computer, Add a computer, and read
+  them the code and address.
+
 ## Destroying a tenant
 
 ```bash

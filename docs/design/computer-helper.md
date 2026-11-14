@@ -3,7 +3,10 @@
 Status: stages 1 (Look), 2 (Act) and 3 (Change) built in Nov 2026:
 helper/windows and core/helper_hub.py. Stage 3 has programs (winget) and
 four known fixes; approved commands of FreeHand's own are not built.
-Stage 4 (hosted, signed download) is still design.
+Stage 4 (hosted, signed download): the hosted path is built and tested
+through Caddy; GitHub builds and publishes the Helper
+(.github/workflows/helper.yml), and signing switches on once SignPath has
+approved the project (docs/code-signing-policy.md).
 
 ## What it's for
 

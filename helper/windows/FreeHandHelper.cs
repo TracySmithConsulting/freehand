@@ -29,7 +29,7 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("FreeHand Helper")]
 [assembly: System.Reflection.AssemblyProduct("FreeHand")]
-[assembly: System.Reflection.AssemblyVersion("0.3.1.0")]
+[assembly: System.Reflection.AssemblyVersion("0.4.0.0")]
 
 namespace FreeHand.Helper
 {
@@ -441,6 +441,15 @@ namespace FreeHand.Helper
         {
             var server = serverBox.Text.Trim().TrimEnd('/');
             if (!server.StartsWith("http://") && !server.StartsWith("https://")) server = "http://" + server;
+            if (server.StartsWith("http://") && !IsLocal(server))
+            {
+                // Over the internet the pairing code and the computer's key
+                // must be encrypted on the way.
+                Native.MessageBoxW(Handle, "For a FreeHand on the internet, the address must start with https:// (for example https://yourname.example.com).",
+                    "Pairing didn't work", Native.MB_OK | Native.MB_ICONINFORMATION);
+                serverBox.Focus();
+                return;
+            }
             var body = json.Serialize(new Dictionary<string, object> { { "code", codeBox.Text.Trim() }, { "name", nameBox.Text.Trim() } });
             pairButton.Enabled = false;
             try
@@ -486,6 +495,19 @@ namespace FreeHand.Helper
                 codeBox.Focus();
             }
             finally { pairButton.Enabled = true; }
+        }
+
+        // This computer or the local network: plain http is fine there.
+        static bool IsLocal(string url)
+        {
+            Uri u;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out u)) return false;
+            var h = u.Host.ToLowerInvariant();
+            if (h == "localhost" || h == "127.0.0.1" || h == "[::1]" || h == "::1" || h.EndsWith(".local") || h.EndsWith(".localhost")) return true;
+            IPAddress ip;
+            if (!IPAddress.TryParse(h, out ip)) return false;
+            var b = ip.GetAddressBytes();
+            return b.Length == 4 && (b[0] == 10 || (b[0] == 192 && b[1] == 168) || (b[0] == 172 && b[1] >= 16 && b[1] <= 31));
         }
 
         void Unpair()
@@ -543,6 +565,8 @@ namespace FreeHand.Helper
                 using (var ws = new ClientWebSocket())
                 {
                     ws.Options.SetRequestHeader("Authorization", "Bearer " + settings.Token);
+                    // Proxies close quiet connections; keep this one alive.
+                    ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(25);
                     try
                     {
                         await ws.ConnectAsync(new Uri(url), stop);
