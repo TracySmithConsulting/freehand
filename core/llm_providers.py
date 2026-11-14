@@ -217,7 +217,8 @@ def _headers(api_key: str) -> dict:
     return h
 
 
-def list_models(provider_id: str, api_key: str, base_url: str = "", timeout: float = 8.0) -> tuple[Optional[list], str]:
+def list_models(provider_id: str, api_key: str, base_url: str = "", timeout: float = 8.0,
+                limit: int = 300) -> tuple[Optional[list], str]:
     """(model ids, "") or (None, plain-language problem)."""
     base = base_url_for(provider_id, base_url)
     if not base:
@@ -239,7 +240,7 @@ def list_models(provider_id: str, api_key: str, base_url: str = "", timeout: flo
     ids = sorted({str(m.get("id")) for m in (items or []) if isinstance(m, dict) and m.get("id")})
     # Google lists names as "models/gemini-..."; the chat API wants the bare name.
     ids = [i.split("/", 1)[1] if i.startswith("models/") else i for i in ids]
-    return ids[:300], ""
+    return ids[:limit], ""
 
 
 def detect(api_key: str, selected: str = "") -> dict:

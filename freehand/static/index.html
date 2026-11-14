@@ -571,6 +571,8 @@
     .approvals-waiting { border: 3px solid #b26a00; border-radius: 8px; padding: 1rem; }
     @media (prefers-color-scheme: dark) { .approvals-waiting { border-color: #ffb74d; } }
     [data-advanced][hidden] { display: none !important; }
+    .model-results { list-style: none; padding-left: 0; margin: 0.25rem 0 0.75rem; }
+    .model-results li { margin: 0.15rem 0; }
     .runner-alert {
       background: var(--red-tint);
       border: 1.5px dashed var(--red);
@@ -1363,6 +1365,27 @@
         </p>
         <p id="llm-last-switch" role="status" aria-live="polite"></p>
         <ol id="llm-backups" class="facts-list" aria-labelledby="llm-backups-heading"></ol>
+
+        <h3 id="llm-search-heading" class="stack-top">Search all models</h3>
+        <p class="hint" id="llm-search-hint">
+          Looks through every service you've added a key for, plus OpenRouter's whole list.
+          Type part of a name, such as "claude" or "qwen". Then press Escape or Down arrow to go
+          to the results, which are grouped by service. Press Enter on a model to choose it.
+        </p>
+        <div class="form-group">
+          <label for="llm-search">Search models</label>
+          <input type="text" role="searchbox" id="llm-search" autocomplete="off" spellcheck="false"
+                 aria-describedby="llm-search-hint" aria-controls="llm-search-results">
+        </div>
+        <p id="llm-search-status" role="status" aria-live="polite"></p>
+        <div id="llm-search-results" aria-labelledby="llm-search-heading"></div>
+        <div id="llm-search-chosen" hidden>
+          <p id="llm-search-chosen-text" tabindex="-1"></p>
+          <button type="button" class="secondary" data-pick="test">Test it</button>
+          <button type="button" data-pick="main">Make it the main model</button>
+          <button type="button" class="secondary" data-pick="backup">Add as a backup</button>
+          <p id="llm-search-pick-result" role="status" aria-live="polite"></p>
+        </div>
       </fieldset>
 
       <!-- Remote Gateways -->
@@ -2600,6 +2623,107 @@
         return apiFetch('/api/llm/backups/' + i + '/' + action, {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {})
         }).then(function(r) { return r.json(); }).then(renderBackups);
+      }
+
+      // ---- Search all models ----
+      // GET /api/llm/catalog groups matches by service; POST /api/llm/pick
+      // tests or saves a choice with the key already saved for that service.
+      var modelSearch = { timer: null, chosen: null, seq: 0 };
+      function searchButtons() {
+        return Array.prototype.slice.call(document.querySelectorAll('#llm-search-results button'));
+      }
+      function renderModelSearch(data) {
+        var box = llmEl('llm-search-results');
+        box.innerHTML = '';
+        var found = 0, services = 0;
+        (data.groups || []).forEach(function(g) {
+          if (!g.matches) return;
+          found += g.matches; services += 1;
+          var h = document.createElement('h4');
+          h.textContent = g.name + ': ' + g.matches + (g.matches === 1 ? ' model' : ' models') +
+            (g.ready ? '' : ' (sign in to OpenRouter to use these)');
+          box.appendChild(h);
+          var ul = document.createElement('ul');
+          ul.className = 'model-results';
+          g.models.forEach(function(m) {
+            var li = document.createElement('li');
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'link-button';
+            b.textContent = m;
+            b.setAttribute('aria-label', m + ', from ' + g.name);
+            b.addEventListener('click', function() { chooseSearchedModel(g, m); });
+            li.appendChild(b);
+            ul.appendChild(li);
+          });
+          if (g.matches > g.models.length) {
+            var more = document.createElement('li');
+            more.className = 'hint';
+            more.textContent = 'And ' + (g.matches - g.models.length) + ' more. Type more of the name to narrow it down.';
+            ul.appendChild(more);
+          }
+          box.appendChild(ul);
+        });
+        var q = (data.query || '').trim();
+        llmEl('llm-search-status').textContent = !q ? ''
+          : found ? found + (found === 1 ? ' model' : ' models') + ' found, from ' + services +
+              (services === 1 ? ' service.' : ' services.') + ' Press Escape to go to them.'
+          : 'No models match "' + q + '". Try fewer letters.';
+      }
+      function runModelSearch() {
+        var q = llmEl('llm-search').value.trim();
+        var seq = ++modelSearch.seq;
+        if (q.length < 2) { renderModelSearch({ query: '', groups: [] }); return; }
+        llmEl('llm-search-status').textContent = 'Searching...';
+        apiFetch('/api/llm/catalog?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.ok ? r.json() : { query: q, groups: [] }; })
+          .then(function(data) { if (seq === modelSearch.seq) renderModelSearch(data); })
+          .catch(function() { llmEl('llm-search-status').textContent = "Couldn't search right now. Try again in a moment."; });
+      }
+      function chooseSearchedModel(group, model) {
+        modelSearch.chosen = { provider: group.provider, base_url: group.base_url, model: model, name: group.name };
+        llmEl('llm-search-chosen').hidden = false;
+        llmEl('llm-search-pick-result').textContent = '';
+        var text = llmEl('llm-search-chosen-text');
+        text.textContent = 'Chosen: ' + model + ', from ' + group.name + '. What would you like to do with it?';
+        text.focus();
+      }
+      if (llmEl('llm-search')) {
+        llmEl('llm-search').addEventListener('input', function() {
+          clearTimeout(modelSearch.timer);
+          modelSearch.timer = setTimeout(runModelSearch, 400);
+        });
+        llmEl('llm-search').addEventListener('keydown', function(e) {
+          if ((e.key === 'Escape' || e.key === 'ArrowDown') && searchButtons().length) {
+            e.preventDefault();
+            searchButtons()[0].focus();
+          }
+        });
+        llmEl('llm-search-results').addEventListener('keydown', function(e) {
+          var buttons = searchButtons(), i = buttons.indexOf(document.activeElement);
+          if (i < 0) return;
+          if (e.key === 'ArrowDown' && i < buttons.length - 1) { e.preventDefault(); buttons[i + 1].focus(); }
+          else if (e.key === 'ArrowUp') { e.preventDefault(); (i > 0 ? buttons[i - 1] : llmEl('llm-search')).focus(); }
+          else if (e.key === 'Escape') { e.preventDefault(); llmEl('llm-search').focus(); }
+        });
+        Array.prototype.forEach.call(document.querySelectorAll('#llm-search-chosen [data-pick]'), function(b) {
+          b.addEventListener('click', function() {
+            var c = modelSearch.chosen, out = llmEl('llm-search-pick-result');
+            if (!c) return;
+            var action = b.getAttribute('data-pick');
+            out.textContent = action === 'test' ? 'Testing...' : 'Saving...';
+            apiFetch('/api/llm/pick', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ provider: c.provider, base_url: c.base_url, model: c.model, action: action })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+              out.textContent = d.message || (d.ok ? 'Done.' : "That didn't work.");
+              if (d.ok && action !== 'test') { loadLlm(); if (typeof checkRunnerStatus === 'function') checkRunnerStatus(); }
+            })
+            .catch(function() { out.textContent = "Couldn't do that right now. Try again in a moment."; });
+          });
+        });
       }
 
       function loadBackups() {
