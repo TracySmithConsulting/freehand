@@ -698,7 +698,10 @@ async def startup_event():
 async def root():
     try:
         static_path = importlib_resources.files("freehand").joinpath("static", "index.html")
-        return FileResponse(str(static_path))
+        # "no-cache" = check with FreeHand each time (cheap: unchanged pages
+        # come back as 304). Without it, browsers kept showing the console
+        # from before an update, so fixes seemed not to work.
+        return FileResponse(str(static_path), headers={"Cache-Control": "no-cache"})
     except Exception:
         raise HTTPException(status_code=404, detail="Static files not found")
 
