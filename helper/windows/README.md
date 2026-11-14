@@ -11,7 +11,8 @@ FreeHand on the same computer (in Docker) or on a server.
   and disk space, battery, network);
 - **act:** click, type, press keys, switch to, close, minimise and maximise
   windows, and open apps and websites;
-- **change:** find, install, update and remove programs through winget
+- **change:** find, install, update (one, or everything that has an update,
+  in one question that lists them all) and remove programs through winget
   (Windows' own installer), and run four known fixes: **sound** (restart the
   sound services), **printer** (clear stuck print jobs), **network** (refresh
   the connection) and **taskbar** (restart Windows Explorer).
