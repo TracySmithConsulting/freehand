@@ -2877,13 +2877,20 @@
       };
 
       // ---- Approvals ----
+      // This runs every 8 seconds, and the list is announced by screen
+      // readers. So only change it when the approvals actually change:
+      // rewriting it each time made NVDA say "Loading... No pending
+      // approvals" over and over. Now it speaks only when one arrives.
+      var lastApprovals = '[]';  // the page starts showing "No pending approvals"
       function loadApprovals() {
         var listEl = document.getElementById('approvals-list');
-        listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
         apiFetch('/api/approvals')
           .then(function(res) { return res.json(); })
           .then(function(approvals) {
+            var sig = JSON.stringify(approvals);
+            if (sig === lastApprovals) return;
+            lastApprovals = sig;
             if (!approvals.length) {
               listEl.innerHTML = '<p class="empty-state">No pending approvals</p>';
               return;
@@ -2904,7 +2911,9 @@
             });
           })
           .catch(function() {
-            listEl.innerHTML = '<p class="empty-state">Failed to load approvals</p>';
+            if (lastApprovals === 'failed') return;
+            lastApprovals = 'failed';
+            listEl.innerHTML = '<p class="empty-state">Couldn\'t check for approvals. FreeHand will keep trying.</p>';
           });
       }
 
