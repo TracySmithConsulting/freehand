@@ -1244,10 +1244,12 @@ async def whatsapp_webhook(request: Request):
         return {"error": "Invalid JSON"}
     remote_jid = data.get("remote_jid", "")
     text = data.get("text", "")
-    if not remote_jid or not text:
-        return {"error": "remote_jid and text required"}
+    audio = data.get("audio") if isinstance(data.get("audio"), dict) else None
+    if not remote_jid or not (text or audio):
+        return {"error": "remote_jid and text (or audio) required"}
     result = await handle_whatsapp_message(
-        remote_jid, text, data.get("message_id"), from_self=data.get("from_self") is True
+        remote_jid, text, data.get("message_id"), from_self=data.get("from_self") is True,
+        audio=audio,
     )
     return result
 

@@ -175,3 +175,53 @@ test('forwarder marks self-chat messages', async () => {
     await makeForwarder('http://x', SECRET, fakeFetch)({ jid: '98765432@lid', text: 'hi', id: '9', fromSelf: true });
     assert.equal(body.from_self, true);
 });
+
+// ── Voice notes (Nov 2026) ─────────────────────────────────────────────
+
+const VME = { id: '27820000000:3@s.whatsapp.net', lid: '111:3@lid' };
+
+test('a voice note from someone is forwarded as audio', () => {
+    const msg = { key: { remoteJid: '27821234567@s.whatsapp.net', id: 'v1', fromMe: false },
+        message: { audioMessage: { ptt: true, seconds: 4, mimetype: 'audio/ogg; codecs=opus', fileLength: 9000 } } };
+    const out = classifyMessage(msg, VME, new Set());
+    assert.equal(out.text, '');
+    assert.equal(out.audio.voiceNote, true);
+    assert.equal(out.audio.tooLong, false);
+    assert.equal(out.audio.mimetype, 'audio/ogg; codecs=opus');
+});
+
+test('a disappearing voice note is unwrapped', () => {
+    const msg = { key: { remoteJid: '27821234567@s.whatsapp.net', id: 'v2', fromMe: false },
+        message: { ephemeralMessage: { message: { audioMessage: { ptt: true, seconds: 2 } } } } };
+    assert.ok(classifyMessage(msg, VME, new Set()).audio);
+});
+
+test('a very long recording is marked too long, not downloaded', () => {
+    const msg = { key: { remoteJid: '27821234567@s.whatsapp.net', id: 'v3', fromMe: false },
+        message: { audioMessage: { seconds: 3600 } } };
+    assert.equal(classifyMessage(msg, VME, new Set()).audio.tooLong, true);
+});
+
+test('voice notes in group chats and other people\'s chats are not forwarded', () => {
+    const group = { key: { remoteJid: '123@g.us', id: 'v4', fromMe: false }, message: { audioMessage: { ptt: true } } };
+    const mine = { key: { remoteJid: '27821234567@s.whatsapp.net', id: 'v5', fromMe: true }, message: { audioMessage: { ptt: true } } };
+    assert.equal(classifyMessage(group, VME, new Set()), null);
+    assert.equal(classifyMessage(mine, VME, new Set()), null);
+});
+
+test('a voice note in "Message yourself" is forwarded from the owner', () => {
+    const msg = { key: { remoteJid: '27820000000@s.whatsapp.net', id: 'v6', fromMe: true }, message: { audioMessage: { ptt: true } } };
+    const out = classifyMessage(msg, VME, new Set());
+    assert.equal(out.fromSelf, true);
+    assert.ok(out.audio);
+});
+
+test('the forwarder sends the recording to FreeHand', async () => {
+    const calls = [];
+    const fakeFetch = async (url, opts) => { calls.push({ url, body: JSON.parse(opts.body) }); return { ok: true }; };
+    const forward = makeForwarder('http://freehand:8000', SECRET, fakeFetch);
+    await forward({ jid: '27821234567@s.whatsapp.net', text: '', id: 'v7',
+        audio: { mimetype: 'audio/ogg', seconds: 3, data: 'T2dnUw==' } });
+    assert.equal(calls[0].body.text, '');
+    assert.deepEqual(calls[0].body.audio, { mimetype: 'audio/ogg', seconds: 3, data_b64: 'T2dnUw==', too_long: false, failed: false });
+});
