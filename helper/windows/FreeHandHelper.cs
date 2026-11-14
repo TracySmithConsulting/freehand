@@ -29,7 +29,7 @@ using System.Windows.Forms;
 
 [assembly: System.Reflection.AssemblyTitle("FreeHand Helper")]
 [assembly: System.Reflection.AssemblyProduct("FreeHand")]
-[assembly: System.Reflection.AssemblyVersion("0.2.0.0")]
+[assembly: System.Reflection.AssemblyVersion("0.2.1.0")]
 
 namespace FreeHand.Helper
 {
@@ -40,6 +40,8 @@ namespace FreeHand.Helper
         {
             if (args.Length == 2 && args[0] == "--selftest")
                 return SelfTest(args[1]);
+            if (args.Length == 3 && args[0] == "--selftest-open")
+                return SelfTestOpen(args[1], args[2]);
             bool first;
             using (var mutex = new Mutex(true, "FreeHandHelperSingleInstance", out first))
             {
@@ -62,6 +64,37 @@ namespace FreeHand.Helper
         // FreeHandHelper.exe --selftest out.json: look at this computer
         // without connecting or asking, and write what was seen. For
         // checking a build; the person runs it themselves, so it's allowed.
+        // FreeHandHelper.exe --selftest-open notepad out.json: open an app
+        // and read it straight away, timing each step.
+        static int SelfTestOpen(string app, string outFile)
+        {
+            Native.SetProcessDPIAware();
+            var result = new Dictionary<string, object>();
+            var clock = Stopwatch.StartNew();
+            try
+            {
+                var plan = Act.Prepare("open", new Dictionary<string, object> { { "target", app } });
+                result["opened"] = Act.Run(plan);
+                result["open_ms"] = clock.ElapsedMilliseconds;
+                var typing = new Dictionary<string, object> { { "do", "type" }, { "text", "x" } };
+                try { Act.Prepare("act", typing); result["type_before_look"] = "allowed (wrong)"; }
+                catch (HelperRefusal ex) { result["type_before_look"] = ex.Message; }
+                clock.Restart();
+                var look = Look.Window("");
+                // Only works out what would happen; nothing is typed.
+                var planned = Act.Prepare("act", typing);
+                result["type_after_look"] = planned.Summary;
+                result["sensitive"] = planned.Sensitive;
+                result["look_ms"] = clock.ElapsedMilliseconds;
+                result["window"] = look["window"];
+                result["tree_start"] = look["tree"].ToString().Substring(0, Math.Min(400, look["tree"].ToString().Length));
+                result["ok"] = true;
+            }
+            catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); result["error_ms"] = clock.ElapsedMilliseconds; }
+            File.WriteAllText(outFile, new JavaScriptSerializer().Serialize(result));
+            return result.ContainsKey("error") ? 1 : 0;
+        }
+
         static int SelfTest(string outFile)
         {
             Native.SetProcessDPIAware();
@@ -124,15 +157,31 @@ namespace FreeHand.Helper
         [StructLayout(LayoutKind.Sequential)]
         public struct KEYBDINPUT { public ushort vk, scan; public uint flags, time; public IntPtr extra; }
 
+        [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+        [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+
         // Bring a window to the front. Windows only lets the program in
-        // front do that, so tap Alt first (a well-known, harmless trick).
+        // front do that, so briefly share input with it. (Tapping Alt, the
+        // usual trick, opens the menu bar in many apps, and then typing
+        // would go into the menu.)
         public static void Front(IntPtr h)
         {
             if (h == IntPtr.Zero) return;
             if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-            keybd_event(0x12, 0, 0, UIntPtr.Zero);
-            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            if (GetForegroundWindow() == h) return;
+            uint pid;
+            uint front = GetWindowThreadProcessId(GetForegroundWindow(), out pid);
+            uint me = GetCurrentThreadId();
+            bool joined = front != 0 && front != me && AttachThreadInput(me, front, true);
             SetForegroundWindow(h);
+            if (joined) AttachThreadInput(me, front, false);
+            if (GetForegroundWindow() != h)
+            {
+                // Last resort: F24, a key no keyboard has and apps ignore.
+                keybd_event(0x87, 0, 0, UIntPtr.Zero);
+                keybd_event(0x87, 0, 2, UIntPtr.Zero);
+                SetForegroundWindow(h);
+            }
         }
         public static readonly uint ShowMessage = RegisterWindowMessage("FreeHandHelperShowWindow");
     }
@@ -560,7 +609,8 @@ namespace FreeHand.Helper
                 lock (appGrants)
                 {
                     DateTime until;
-                    if (key.Length > 0 && appGrants.TryGetValue(key, out until) && until > DateTime.Now) return true;
+                    // Secret files always ask, even in an allowed app.
+                    if (!plan.Sensitive && key.Length > 0 && appGrants.TryGetValue(key, out until) && until > DateTime.Now) return true;
                 }
                 int choice = 0;
                 Invoke((Action)delegate
@@ -647,7 +697,38 @@ namespace FreeHand.Helper
 
         // The window whose title contains `title`, or the one in front
         // (skipping the Helper's own window).
+        // Windows' accessibility calls time out while an app is starting
+        // or busy (Notepad just after opening, for example). Try again a
+        // few times before giving up.
+        public static T Retry<T>(Func<T> work)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try { return work(); }
+                catch (Exception ex)
+                {
+                    bool busy = ex is TimeoutException || ex is ElementNotAvailableException || ex is COMException;
+                    if (!busy || attempt >= 4) throw;
+                    Thread.Sleep(700 * attempt);
+                }
+            }
+        }
+
+        // A named window may take a moment to appear (just opened).
         public static AutomationElement Find(string title)
+        {
+            for (int attempt = 0; ; attempt++)
+            {
+                try { return Retry(delegate { return FindOnce(title); }); }
+                catch (HelperRefusal)
+                {
+                    if (attempt >= 5 || string.IsNullOrEmpty(title)) throw;
+                    Thread.Sleep(600);
+                }
+            }
+        }
+
+        static AutomationElement FindOnce(string title)
         {
             int me = Process.GetCurrentProcess().Id;
             if (string.IsNullOrEmpty(title))
@@ -681,7 +762,14 @@ namespace FreeHand.Helper
             var sb = new StringBuilder();
             int count = 0;
             Act.Seen.Clear();
-            Walk(w, 0, sb, ref count);
+            Act.SeenWindow = IntPtr.Zero;
+            Retry(delegate
+            {
+                sb.Clear(); count = 0; Act.Seen.Clear();
+                Walk(w, 0, sb, ref count, true);
+                return 0;
+            });
+            Act.SeenWindow = new IntPtr(w.Current.NativeWindowHandle);
             var text = sb.ToString();
             bool cut = text.Length > MaxChars || count >= MaxNodes;
             if (text.Length > MaxChars) text = text.Substring(0, MaxChars);
@@ -690,11 +778,11 @@ namespace FreeHand.Helper
             return d;
         }
 
-        static void Walk(AutomationElement el, int depth, StringBuilder sb, ref int count)
+        static void Walk(AutomationElement el, int depth, StringBuilder sb, ref int count, bool top = false)
         {
             if (count >= MaxNodes || depth > MaxDepth || sb.Length > MaxChars) return;
             AutomationElement.AutomationElementInformation c;
-            try { c = el.Current; } catch (Exception) { return; }
+            try { c = el.Current; } catch (Exception) { if (top) throw; return; }
             var type = c.ControlType.ProgrammaticName.Replace("ControlType.", "").ToLowerInvariant();
             var name = c.Name ?? "";
             bool container = name.Length == 0 && (type == "pane" || type == "group" || type == "custom" || type == "document" && depth > 0);
@@ -711,7 +799,7 @@ namespace FreeHand.Helper
             }
             var walker = TreeWalker.ControlViewWalker;
             AutomationElement child;
-            try { child = walker.GetFirstChild(el); } catch (Exception) { return; }
+            try { child = walker.GetFirstChild(el); } catch (Exception) { if (top) throw; return; }
             while (child != null && count < MaxNodes && sb.Length <= MaxChars)
             {
                 Walk(child, next, sb, ref count);
@@ -798,7 +886,8 @@ namespace FreeHand.Helper
     // What FreeHand wants to do, worked out before asking.
     class Plan
     {
-        public string Action = "", Do = "", Text = "", Target = "", App = "", WindowTitle = "", Summary = "";
+        public string Action = "", Do = "", Text = "", Target = "", App = "", WindowTitle = "", Summary = "", Into = "";
+        public bool Sensitive;
         public AutomationElement Window, Element;
     }
 
@@ -817,10 +906,13 @@ namespace FreeHand.Helper
             Font = new Font("Segoe UI", 10f);
             Width = 560; Height = 330;
 
-            var text = "FreeHand wants to: " + plan.Summary + "." +
+            var text = (plan.Sensitive
+                    ? "CAREFUL: this looks like a file or window with passwords or secret keys. Only allow this if you're sure.\r\n\r\n"
+                    : "") +
+                "FreeHand wants to: " + plan.Summary + "." +
                 (plan.WindowTitle.Length > 0 ? "\r\nIn: " + plan.WindowTitle + (plan.App.Length > 0 ? " (" + plan.App + ")" : "") : "") +
                 (why.Length > 0 ? "\r\nWhy: " + why : "") +
-                (plan.App.Length > 0 && plan.Action != "open"
+                (plan.App.Length > 0 && plan.Action != "open" && !plan.Sensitive
                     ? "\r\n\r\nIf you allow " + plan.App + " for 30 minutes, FreeHand can click and type in it without asking until then. " +
                       "Something on screen could try to trick it, so only choose that for apps you trust."
                     : "") +
@@ -831,7 +923,7 @@ namespace FreeHand.Helper
             var once = new Button { Text = "Allow once", AutoSize = true, TabIndex = 1 };
             once.Click += delegate { Choice = 1; Close(); };
             buttons.Controls.Add(once);
-            if (plan.App.Length > 0 && plan.Action != "open")
+            if (plan.App.Length > 0 && plan.Action != "open" && !plan.Sensitive)
             {
                 var app = new Button { Text = "Allow in " + plan.App + " for 30 minutes", AutoSize = true, TabIndex = 2 };
                 app.Click += delegate { Choice = 2; Close(); };
@@ -865,6 +957,8 @@ namespace FreeHand.Helper
         // The elements from the last computer_look, so FreeHand can aim at
         // "#12" even when it has no name.
         public static readonly List<AutomationElement> Seen = new List<AutomationElement>();
+        // The window that last look was of: typing needs a fresh look at it.
+        public static IntPtr SeenWindow = IntPtr.Zero;
 
         // Apps FreeHand may never act in: Windows' own security and sign-in
         // screens. And never FreeHand's own console (so it can't approve
@@ -937,21 +1031,48 @@ namespace FreeHand.Helper
                 if (plan.Element == null) throw new HelperRefusal("Say which element to " + plan.Do + ": its name, or its #number from computer_look.");
                 plan.Summary = (plan.Do == "click" ? "click " : "move to ") + what;
             }
-            else if (plan.Do == "type")
+            else if (plan.Do == "type" || plan.Do == "keys")
             {
-                if (plan.Text.Length == 0) throw new HelperRefusal("Say what to type.");
-                var into = plan.Element ?? Focused();
-                if (into != null && into.Current.IsPassword)
+                if (plan.Text.Length == 0) throw new HelperRefusal(plan.Do == "type" ? "Say what to type." : "Say which keys to press.");
+                if (plan.Do == "keys") Keys.Parse(plan.Text); // check before asking
+                // Typing goes wherever the cursor is, so FreeHand must have
+                // looked at this window since its last action (an app can
+                // open something unexpected, like a file from last time).
+                if (SeenWindow == IntPtr.Zero || SeenWindow != new IntPtr(plan.Window.Current.NativeWindowHandle))
+                    throw new HelperRefusal("Look at this window first (computer_look), so you know what's open and where the cursor is. Then try again.");
+                if (plan.Element == null)
+                {
+                    // Find out exactly where the text would go: bring the
+                    // window to the front, and see what has the focus there.
+                    Native.Front(new IntPtr(plan.Window.Current.NativeWindowHandle));
+                    Thread.Sleep(300);
+                    var f = Focused();
+                    if (f == null || f.Current.ProcessId != plan.Window.Current.ProcessId)
+                        throw new HelperRefusal("Couldn't tell where the cursor is in that window. Say which element to type into.");
+                    plan.Element = f;
+                    what = Describe(f);
+                }
+                if (plan.Element.Current.IsPassword)
                     throw new HelperRefusal("That's a password field. FreeHand never types passwords: please type it yourself.");
-                plan.Summary = "type \"" + Clip(plan.Text, 80) + "\"" + (plan.Element != null ? " into " + what : "");
-            }
-            else if (plan.Do == "keys")
-            {
-                Keys.Parse(plan.Text); // check before asking
-                plan.Summary = "press " + plan.Text + (plan.Element != null ? " in " + what : "");
+                plan.Into = what + " in \"" + plan.WindowTitle + "\"";
+                plan.Summary = plan.Do == "type"
+                    ? "type \"" + Clip(plan.Text, 80) + "\" into " + plan.Into
+                    : "press " + plan.Text + " in " + plan.Into;
             }
             else throw new HelperRefusal("FreeHand can click, type, press keys or move to an element.");
+            plan.Sensitive = LooksSecret(plan.WindowTitle) || (plan.Element != null && LooksSecret(plan.Element.Current.Name ?? ""));
             return plan;
+        }
+
+        // Files and windows that usually hold passwords or secret keys.
+        static readonly string[] SecretWords = { ".env", "password", "passwd", "secret", "credential", "token", "api key", "apikey",
+            "api_key", ".pem", ".key", "id_rsa", "id_ed25519", "wallet", "keystore", "vault", "2fa", "recovery code", "backup code" };
+
+        public static bool LooksSecret(string s)
+        {
+            s = (s ?? "").ToLowerInvariant();
+            foreach (var w in SecretWords) if (s.Contains(w)) return true;
+            return false;
         }
 
         static AutomationElement Focused()
@@ -1002,8 +1123,11 @@ namespace FreeHand.Helper
         {
             if (plan.Action == "open")
             {
+                var before = Native.GetForegroundWindow();
                 Process.Start(new ProcessStartInfo(plan.Target) { UseShellExecute = true });
-                return After("Opened " + plan.Target + ".");
+                for (int i = 0; i < 20 && Native.GetForegroundWindow() == before; i++) Thread.Sleep(300);
+                Thread.Sleep(800); // let it finish drawing
+                return After("Opened " + plan.Target + ". Look at the window before typing: apps can open something from last time.");
             }
             var h = new IntPtr(plan.Window.Current.NativeWindowHandle);
             if (plan.Action == "window")
@@ -1030,9 +1154,10 @@ namespace FreeHand.Helper
                     ((ValuePattern)vp).SetValue(plan.Text);
                 else
                 {
-                    if (el != null) el.SetFocus();
+                    try { el.SetFocus(); } catch (Exception) { }
                     var f = Focused();
-                    if (f != null && f.Current.IsPassword) throw new HelperRefusal("That's a password field. FreeHand never types passwords.");
+                    if (f == null || f.Current.IsPassword || f.Current.ProcessId != plan.Window.Current.ProcessId)
+                        throw new HelperRefusal("The cursor moved before FreeHand could type, so it didn't. Look again and retry.");
                     Keys.Type(plan.Text);
                 }
             }
@@ -1079,6 +1204,7 @@ namespace FreeHand.Helper
             }
             catch (Exception) { }
             Seen.Clear(); // the old numbers may be wrong now
+            SeenWindow = IntPtr.Zero;
             return d;
         }
     }
