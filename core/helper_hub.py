@@ -232,4 +232,6 @@ async def run_tool(name: str, args: dict) -> dict:
         return {"content": json.dumps({"ok": True, "window": data.get("window", ""),
                                        "note": "The screenshot follows as an image."}),
                 "image": image if isinstance(image, str) and image.startswith("data:image/") else None}
+    if not isinstance(data, dict):
+        data = {"windows": data} if action == "windows" else {"result": data}
     return {"content": json.dumps({"ok": True, **data})[:8000]}

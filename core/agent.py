@@ -595,7 +595,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
             # The Helper asks the person on their PC itself, so no
             # approval here. A screenshot comes back as an image for the
             # model to look at.
-            out = await helper_hub.run_tool(tool_name, tool_args)
+            try:
+                out = await helper_hub.run_tool(tool_name, tool_args)
+            except Exception as e:  # a bad answer must not crash the whole reply
+                out = {"content": json.dumps({"error": f"The Helper's answer couldn't be read: {str(e)[:150]}"})}
             messages.append(llm_resp)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out["content"]})
             if out.get("image"):

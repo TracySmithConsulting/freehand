@@ -1787,7 +1787,14 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: value })
         })
-        .then(function(res) { return res.json(); })
+        .then(function(res) {
+          // A crash comes back as plain text ("Internal Server Error"), not
+          // JSON: say so plainly instead of showing a JSON parsing error.
+          return res.text().then(function(body) {
+            try { return JSON.parse(body); }
+            catch (e) { throw new Error('FreeHand hit a problem answering that (' + res.status + '). Try again, and if it keeps happening, the details are in FreeHand’s log.'); }
+          });
+        })
         .then(function(data) {
           var responseEl = document.getElementById('agent-response');
           // When FreeHand reads the reply aloud itself, the screen reader

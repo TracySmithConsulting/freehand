@@ -153,3 +153,15 @@ def test_a_screenshot_goes_to_the_model_as_an_image(monkeypatch):
 def test_no_computer_means_a_clear_message():
     out = asyncio.run(helper_hub.run_tool("computer_look", {"why": "x"}))
     assert "No computer is connected" in out["content"]
+
+
+def test_the_window_list_reaches_the_model(monkeypatch):
+    """The Helper answers "windows" with a list, not a dict (this crashed
+    FreeHand the first time Tracy tried it)."""
+    monkeypatch.setattr(helper_hub, "device_now", lambda person=None: "dev1")
+
+    async def fake_request(device, action, args=None, why=""):
+        return {"ok": True, "data": [{"title": "Inbox - Outlook", "app": "OUTLOOK"}]}
+    monkeypatch.setattr(helper_hub, "request", fake_request)
+    out = asyncio.run(helper_hub.run_tool("computer_windows", {"why": "x"}))
+    assert json.loads(out["content"])["windows"][0]["app"] == "OUTLOOK"
