@@ -34,7 +34,25 @@ const state = {
     connected: false,
     pairingCode: null,
     pairingPhone: null,
+    paused: false,
 };
+
+// "WhatsApp off" in FreeHand pauses the bridge: it disconnects but stays
+// linked, so turning it back on needs no pairing. Remembered across
+// restarts by a small file inside the session folder.
+const PAUSED_FILE = path.join(AUTH_DIR, '.freehand-whatsapp-paused');
+function readPaused() {
+    try { return fs.existsSync(PAUSED_FILE); } catch (e) { return false; }
+}
+function writePaused(on) {
+    try {
+        if (on) {
+            fs.mkdirSync(AUTH_DIR, { recursive: true });
+            fs.writeFileSync(PAUSED_FILE, 'paused by FreeHand\n');
+        }
+        else fs.rmSync(PAUSED_FILE, { force: true });
+    } catch (e) { console.error(`Couldn't save the on/off setting: ${e.message}`); }
+}
 let messageHandler = null;
 
 // Only one-to-one chats reach the agent. Groups (@g.us), broadcast lists,
@@ -132,6 +150,11 @@ function classifyMessage(msg, me, sent = sentIds) {
 }
 
 async function start() {
+    state.paused = readPaused();
+    if (state.paused) {
+        console.log('WhatsApp is switched off in FreeHand; not connecting.');
+        return;
+    }
     const { state: authState, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
     const { version } = await fetchLatestBaileysVersion();
 
@@ -165,6 +188,7 @@ async function start() {
             } else {
                 console.log(`WhatsApp connection closed (${code}); reconnecting in ${RECONNECT_DELAY_MS / 1000}s.`);
             }
+            if (state.paused || state.sock !== sock) return; // switched off, or replaced
             // Always start a fresh socket: after a logout this yields a new,
             // unregistered session that can be paired again.
             setTimeout(() => start().catch((e) => console.error(`Reconnect failed: ${e.message}`)), RECONNECT_DELAY_MS);
@@ -232,10 +256,32 @@ function status() {
         connected: state.connected,
         pairingPhone: state.pairingPhone,
         pairingCode: state.pairingCode,
+        paused: state.paused,
     };
 }
 
+// Switch WhatsApp off: disconnect, but keep the link (no logout).
+async function pause() {
+    writePaused(true);
+    state.paused = true;
+    const sock = state.sock;
+    state.sock = null;
+    state.connected = false;
+    if (sock) {
+        try { sock.end(undefined); } catch (e) { /* already closed */ }
+    }
+    return status();
+}
+
+// Switch WhatsApp back on, using the saved link.
+async function resume() {
+    writePaused(false);
+    state.paused = false;
+    if (!state.sock) await start();
+    return status();
+}
+
 module.exports = {
-    start, onMessage, sendText, requestPairingCode, status,
+    start, onMessage, sendText, requestPairingCode, status, pause, resume,
     isDirectChat, isSelfChat, classifyMessage, audioOf, AUTH_DIR,
 };

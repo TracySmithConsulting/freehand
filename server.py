@@ -1294,6 +1294,14 @@ async def gateway_status():
     return get_gateway_status()
 
 
+@app.post("/api/gateway/whatsapp/power", dependencies=[Depends(require_api_key)])
+async def whatsapp_power(request: Request):
+    """The console's WhatsApp on/off switch (pauses or resumes the bridge)."""
+    from core.gateway import set_whatsapp_power
+    body = await request.json() or {}
+    return await set_whatsapp_power(body.get("on") is True)
+
+
 @app.post("/api/gateway/settings", dependencies=[Depends(require_api_key)])
 async def gateway_settings(body: dict):
     try:

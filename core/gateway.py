@@ -695,9 +695,25 @@ def _bridge_health() -> dict:
     try:
         with urllib.request.urlopen(_get_bridge_url() + "/health", timeout=1.5) as resp:
             data = json.loads(resp.read().decode("utf-8") or "{}")
-        return {"running": True, "connected": bool(data.get("whatsapp_connected"))}
+        return {"running": True, "connected": bool(data.get("whatsapp_connected")),
+                "paused": bool(data.get("whatsapp_paused"))}
     except (OSError, ValueError, AttributeError):  # URLError/timeouts are OSError
-        return {"running": False, "connected": False}
+        return {"running": False, "connected": False, "paused": False}
+
+
+async def set_whatsapp_power(on: bool) -> dict:
+    """FreeHand's WhatsApp switch: pause or resume the bridge.
+
+    Off disconnects WhatsApp but keeps the link, so switching back on
+    needs no pairing. The bridge remembers the choice across restarts.
+    """
+    result = await _send_to_bridge("/resume" if on else "/pause")
+    if result.get("error"):
+        return {"ok": False, "message": (
+            "FreeHand couldn't reach the WhatsApp bridge. Check that Docker is running, "
+            "then try again." if "unavailable" in str(result["error"]).lower() else str(result["error"]))}
+    return {"ok": True, "on": not result.get("paused", not on),
+            "message": "WhatsApp is on." if on else "WhatsApp is off. Your number stays linked."}
 
 
 def get_gateway_status() -> dict:
@@ -730,6 +746,7 @@ def get_gateway_status() -> dict:
             "auth_exists": bridge["connected"] or session_saved,
             "bridge_running": bridge["running"],
             "connected": bridge["connected"],
+            "paused": bridge.get("paused", False),
             "bridge_secret_set": bool(str(settings.get("bridge_secret", "")).strip()),
             "allow_from": list(settings.get("whatsapp_allow_from", []) or []),
             "allow_self": settings.get("whatsapp_allow_self", True) is not False,

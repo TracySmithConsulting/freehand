@@ -262,7 +262,7 @@ def test_status_asks_the_bridge_when_the_session_folder_is_out_of_sight(tmp_path
 
 def test_bridge_health_reports_a_stopped_bridge(monkeypatch):
     monkeypatch.setenv("FREEHAND_BRIDGE_URL", "http://127.0.0.1:9")  # nothing listens
-    assert gateway._bridge_health() == {"running": False, "connected": False}
+    assert gateway._bridge_health() == {"running": False, "connected": False, "paused": False}
 
 
 # ── Self chat ("Message yourself") ─────────────────────────────────────
@@ -376,3 +376,38 @@ def test_bridge_node_suite_passes():
         ["node", "--test"], cwd=BRIDGE_DIR, capture_output=True, text=True, timeout=180, check=False,
     )
     assert result.returncode == 0, result.stdout[-3000:] + result.stderr[-2000:]
+
+
+# ── WhatsApp on/off switch (Nov 2026) ─────────────────────────────────
+
+def test_the_switch_pauses_and_resumes_the_bridge(monkeypatch):
+    import asyncio
+    from core import gateway
+    calls = []
+
+    async def fake_send(path, data=None):
+        calls.append(path)
+        return {"paused": path == "/pause", "connected": path == "/resume"}
+    monkeypatch.setattr(gateway, "_send_to_bridge", fake_send)
+    off = asyncio.run(gateway.set_whatsapp_power(False))
+    on = asyncio.run(gateway.set_whatsapp_power(True))
+    assert calls == ["/pause", "/resume"]
+    assert off["ok"] and off["on"] is False and "stays linked" in off["message"]
+    assert on["ok"] and on["on"] is True
+
+
+def test_the_switch_explains_when_the_bridge_is_unreachable(monkeypatch):
+    import asyncio
+    from core import gateway
+
+    async def down(path, data=None):
+        return {"error": "Bridge unavailable"}
+    monkeypatch.setattr(gateway, "_send_to_bridge", down)
+    out = asyncio.run(gateway.set_whatsapp_power(True))
+    assert not out["ok"] and "Docker" in out["message"]
+
+
+def test_the_switch_endpoint_needs_the_api_key(monkeypatch):
+    from fastapi.testclient import TestClient
+    import server
+    assert TestClient(server.app).post("/api/gateway/whatsapp/power", json={"on": False}).status_code == 401
