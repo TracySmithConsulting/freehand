@@ -365,12 +365,47 @@ async def llm_models(request: Request):
     from core import llm_providers
     from core.agent_config import get_llm_config
     body = await request.json() or {}
+    provider, base_url = str(body.get("provider", "")), str(body.get("base_url", ""))
     key = str(body.get("api_key", ""))
-    if not key:  # the page doesn't have to resend a saved key
-        key = get_llm_config().get("api_key", "")
-    models, problem = await asyncio.to_thread(
-        llm_providers.list_models, str(body.get("provider", "")), key, str(body.get("base_url", "")))
+    if not key:
+        # The page doesn't have to resend a saved key - but only the key
+        # saved for THIS service. (It used to send the main model's key to
+        # whichever service was chosen.)
+        main = get_llm_config()
+        same = (llm_providers.identify(main.get("provider", ""), main.get("base_url", ""))
+                == llm_providers.identify(provider, base_url)
+                and llm_providers.base_url_for(main.get("provider", ""), main.get("base_url", ""))
+                == llm_providers.base_url_for(provider, base_url))
+        key = main.get("api_key", "") if same else ""
+    models, problem = await asyncio.to_thread(llm_providers.list_models, provider, key, base_url)
     return {"models": models or [], "error": problem}
+
+
+@app.get("/api/llm/catalog", dependencies=[Depends(require_api_key)])
+async def llm_catalog_search(q: str = ""):
+    """Search models across every service with a saved key, plus
+    OpenRouter's public list, grouped by service (core/llm_catalog.py)."""
+    from core import llm_catalog
+    return await asyncio.to_thread(llm_catalog.search, q[:100])
+
+
+@app.post("/api/llm/pick", dependencies=[Depends(require_api_key)])
+async def llm_catalog_pick(request: Request):
+    """Test a model chosen in the search, or make it the main model or a
+    backup, reusing the key saved for its service."""
+    from core import llm_catalog
+    body = await request.json() or {}
+    action = str(body.get("action", "test"))
+    if action not in ("test", "main", "backup"):
+        raise HTTPException(status_code=400, detail="action must be test, main or backup")
+    result = await asyncio.to_thread(
+        llm_catalog.pick, str(body.get("provider", "")), str(body.get("model", "")),
+        str(body.get("base_url", "")), action)
+    if action in ("main", "backup") and result.get("ok"):
+        # Like saving a key in Settings: wake the task runner now.
+        from core.scheduler import run_due_tasks
+        asyncio.get_running_loop().create_task(asyncio.to_thread(run_due_tasks))
+    return result
 
 
 @app.post("/api/llm/test", dependencies=[Depends(require_api_key)])
