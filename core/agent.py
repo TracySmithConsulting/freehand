@@ -482,8 +482,12 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
     # message counts too, so "and post it there" still finds Facebook.
     earlier = [m["content"] for m in history if m.get("role") == "user"][-1:]
     tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
-    from core import ask_user
+    from core import ask_user, helper_hub
     tools = [*tools, ask_user.schema()]
+    # The user's own computer, through the FreeHand Helper: only while one
+    # is connected, and only when the message is about the computer.
+    if helper_hub.device_now() and helper_hub.wanted([command, *earlier]):
+        tools.extend(helper_hub.schemas())
     usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "estimated": False}
 
     def count(resp: dict) -> None:
@@ -586,6 +590,22 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
                 f"with identical arguments. Aborting to avoid wasted tokens."
             )
             break
+
+        if tool_name in helper_hub.TOOLS:
+            # The Helper asks the person on their PC itself, so no
+            # approval here. A screenshot comes back as an image for the
+            # model to look at.
+            out = await helper_hub.run_tool(tool_name, tool_args)
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out["content"]})
+            if out.get("image"):
+                messages.append({"role": "user", "content": [
+                    {"type": "text", "text": "Here is the screenshot from my computer."},
+                    {"type": "image_url", "image_url": {"url": out["image"]}},
+                ]})
+            final_response["tools_used"].append({"name": tool_name, "args": tool_args,
+                                                 "result": out["content"][:200]})
+            continue
 
         # ── Permission check via central registry (C2 fix) ──────────────
         # Unknown tools are treated as 'unknown' permission — fail closed,
