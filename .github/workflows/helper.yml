@@ -1,0 +1,111 @@
+# The FreeHand Helper for Windows (helper/windows): build it on every
+# change, sign it through SignPath when that's set up, and publish it when
+# a helper-v* tag is pushed (for example helper-v0.4.0).
+#
+# Signing (free for open source, from SignPath Foundation) switches on by
+# itself once these repository secrets exist:
+#   SIGNPATH_API_TOKEN, SIGNPATH_ORGANIZATION_ID
+# and these repository variables (Settings, Secrets and variables, Variables):
+#   SIGNPATH_PROJECT_SLUG, SIGNPATH_POLICY_SLUG
+# Until then the Helper is built and published unsigned, and Windows warns
+# about it. See docs/code-signing-policy.md.
+name: FreeHand Helper
+
+on:
+  push:
+    branches: [main]
+    paths: ["helper/**", ".github/workflows/helper.yml"]
+    tags: ["helper-v*"]
+  pull_request:
+    paths: ["helper/**", ".github/workflows/helper.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      SIGNING: ${{ secrets.SIGNPATH_API_TOKEN != '' && vars.SIGNPATH_PROJECT_SLUG != '' }}
+    outputs:
+      signed: ${{ steps.sign.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with the C# compiler that comes with Windows
+        shell: cmd
+        run: helper\windows\build.cmd
+
+      - name: Check the build looks at windows without crashing
+        shell: pwsh
+        run: |
+          $p = Start-Process helper\windows\FreeHandHelper.exe -ArgumentList '--selftest', 'selftest.json' -Wait -PassThru
+          # A runner may have no window in front, so a refusal is fine;
+          # what matters is that it ran and wrote its answer.
+          if (-not (Test-Path selftest.json)) { throw "The Helper didn't run" }
+          Get-Content selftest.json -Raw | ConvertFrom-Json | Select-Object ok, error | Format-List
+
+      - name: Keep the unsigned build
+        id: unsigned
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeHandHelper-unsigned
+          path: helper/windows/FreeHandHelper.exe
+          if-no-files-found: error
+
+      - name: Sign through SignPath
+        id: sign
+        if: env.SIGNING == 'true' && github.event_name != 'pull_request'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG }}
+          github-artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Keep the signed build
+        if: steps.sign.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeHandHelper-signed
+          path: signed/FreeHandHelper.exe
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/helper-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.build.outputs.signed == 'true' && 'FreeHandHelper-signed' || 'FreeHandHelper-unsigned' }}
+          path: out
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SIGNED: ${{ needs.build.outputs.signed }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if [ "$SIGNED" = "true" ]; then
+            note="Signed by SignPath Foundation."
+          else
+            note="Not signed yet, so Windows may warn that it's from an unknown publisher."
+          fi
+          body="The FreeHand Helper for Windows: lets FreeHand look, act and make changes on this computer, asking first. Download FreeHandHelper.exe and open it. ${note}"
+          # This version, without taking "Latest" from FreeHand's own releases.
+          gh release create "$tag" out/FreeHandHelper.exe --repo "$GITHUB_REPOSITORY" \
+            --title "FreeHand Helper ${tag#helper-v}" --notes "$body" --latest=false
+          # And a fixed address the FreeHand console links to.
+          if ! gh release view helper-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create helper-latest --repo "$GITHUB_REPOSITORY" --title "FreeHand Helper (latest)" \
+              --notes "Always the newest FreeHand Helper. ${note}" --latest=false --target "$GITHUB_SHA"
+          fi
+          gh release edit helper-latest --repo "$GITHUB_REPOSITORY" --notes "Always the newest FreeHand Helper (${tag}). ${note}"
+          gh release upload helper-latest out/FreeHandHelper.exe --repo "$GITHUB_REPOSITORY" --clobber

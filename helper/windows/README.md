@@ -24,15 +24,15 @@ it can only pick a program's id or one of the four fixes by name. See
 
 ## Getting it
 
-There's no download yet: signed copies will come from FreeHand's releases,
-signed through SignPath. For now, build it on the computer:
+**Download** [FreeHandHelper.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHandHelper.exe)
+and open it. GitHub builds it from the code here, and it will be signed
+through [SignPath](../../docs/code-signing-policy.md) once that's set up.
+Until then, Windows may say "Windows protected your PC": choose **More
+info**, then **Run anyway**.
 
-1. Open this folder (`helper\windows` in the FreeHand folder).
-2. Double-click `build.cmd`. It uses the C# compiler that comes with
-   Windows 10 and 11, so there's nothing to install. It makes
-   `FreeHandHelper.exe`.
-3. Open `FreeHandHelper.exe`. Windows may warn that it's from an unknown
-   publisher, because this copy isn't signed.
+**Or build it** on the computer: open this folder, and double-click
+`build.cmd`. It uses the C# compiler that comes with Windows 10 and 11, so
+there's nothing to install, and it makes `FreeHandHelper.exe`.
 
 ## Pairing
 
@@ -40,6 +40,9 @@ signed through SignPath. For now, build it on the computer:
    on my computer**, then **Add a computer**. It shows a six-digit code and
    FreeHand's address.
 2. In the Helper, type the address and the code, then press **Pair**.
+   A FreeHand on the internet (hosted) needs an address starting with
+   `https://`; the Helper won't send the code or its key without encryption.
+   The site password isn't needed: the code is the proof.
 
 The Helper then runs by the clock, and reconnects by itself.
 
