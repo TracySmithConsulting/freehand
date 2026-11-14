@@ -99,10 +99,9 @@ OC_APPS = {
     ("google", "sheets"): "googlesheets",
     ("microsoft", "email"): "outlook",
     ("microsoft", "calendar"): "outlook_calendar",
-    # Nov 2026: Zoom and Instagram moved too ("if OpenConnector has it, it
-    # comes out of the broker").
+    # Nov 2026: Zoom moved too ("if OpenConnector has it, it comes out of
+    # the broker"). Instagram stays on Composio: see _composio_run.
     ("zoom", "meetings"): "zoom",
-    ("instagram", "posts"): "instagram",
 }
 OC_APP_NAMES = {
     "gmail": "Gmail",
@@ -111,7 +110,6 @@ OC_APP_NAMES = {
     "outlook": "Outlook",
     "outlook_calendar": "Outlook Calendar",
     "zoom": "Zoom",
-    "instagram": "Instagram",
 }
 OC_SERVICES = frozenset(service for service, _ in OC_APPS)
 
@@ -311,8 +309,48 @@ async def post_to_facebook(service: str = "facebook", label: str = "default", pa
     return await _call_api(token_data, "POST", url)
 
 
+async def _composio_run(service: str, slug: str, args: dict, label: str):
+    """Run one Composio action on the connected account.
+
+    Returns (data, None) or (None, error dict). Instagram goes through
+    Composio: OpenConnector would need the user's own Meta developer app,
+    which won't accept a home computer's http://localhost address."""
+    from core.oauth import composio
+
+    label = label or "default"
+    name = service.capitalize()
+    account = composio.get_account(service, label)
+    if not account or not account.get("connected_account_id"):
+        import urllib.parse
+        return None, {
+            "error": (f"No {name} account called '{label}' is connected yet. In FreeHand, open "
+                      f"Connections, choose Connect {name} and name the account '{label}'."),
+            "connect_url": f"/api/integrations/{service}/authorize?label={urllib.parse.quote(label)}",
+        }
+    args = {k: v for k, v in (args or {}).items() if v not in (None, "", [])}
+    try:
+        response = await composio.execute_tool(slug, account["connected_account_id"], args,
+                                               user_id=account.get("user_id", ""))
+    except composio.ComposioError as exc:
+        return None, {"error": f"{name}: {exc}"}
+    if response.get("successful") is False or response.get("error"):
+        return None, {"error": f"{name}: {response.get('error') or 'request failed'}"}
+    return response.get("data", response) or {}, None
+
+
+def _first_id(data) -> str:
+    """The id in a Composio/Graph reply ({"id"} or {"data": {"id"}})."""
+    if isinstance(data, dict):
+        if data.get("id"):
+            return str(data["id"])
+        for key in ("data", "response_data", "result"):
+            if isinstance(data.get(key), dict) and data[key].get("id"):
+                return str(data[key]["id"])
+    return ""
+
+
 async def list_instagram_accounts(service: str = "instagram", label: str = "default") -> dict:
-    data, err = await _oc_run("instagram", "posts", "get_current_user", {}, label)
+    data, err = await _composio_run("instagram", "INSTAGRAM_GET_USER_INFO", {}, label)
     if err:
         return err
     return [data]
@@ -324,11 +362,24 @@ async def post_to_instagram(service: str = "instagram", label: str = "default", 
         return {"error": "Approval required to post to Instagram", "approval": check}
     if not media_url:
         return {"error": "Instagram posts need a picture: media_url must be a public https image address"}
-    data, err = await _oc_run(
-        "instagram", "posts", "publish_media",
-        {"kind": "image", "imageUrl": media_url, "caption": content}, label,
-    )
-    return err or data
+    # Instagram publishes in two steps: upload the picture as a "container",
+    # then publish that container.
+    user, err = await _composio_run("instagram", "INSTAGRAM_GET_USER_INFO", {}, label)
+    if err:
+        return err
+    ig_user_id = _first_id(user)
+    container, err = await _composio_run("instagram", "INSTAGRAM_CREATE_MEDIA_CONTAINER", {
+        "ig_user_id": ig_user_id, "image_url": media_url, "caption": content,
+    }, label)
+    if err:
+        return err
+    creation_id = _first_id(container)
+    if not creation_id:
+        return {"error": "Instagram didn't accept the picture. Check the image address is public and ends in .jpg."}
+    published, err = await _composio_run("instagram", "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH", {
+        "ig_user_id": ig_user_id, "creation_id": creation_id,
+    }, label)
+    return err or published
 
 
 async def list_zoom_meetings(service: str = "zoom", label: str = "default", page_size: int = 30) -> dict:
@@ -366,7 +417,7 @@ def get_connections_summary() -> List[Dict]:
             "Connected in OpenConnector. Use the connection name chosen there as the "
             f"label ('default' unless renamed). Manage accounts at {_oc_console_url()}."
         ),
-    } for family in ("google", "microsoft", "zoom", "instagram")]
+    } for family in ("google", "microsoft", "zoom")]
     for svc in ["facebook", "github", "email"]:
         conns = list_connections(svc)
         for c in conns:
