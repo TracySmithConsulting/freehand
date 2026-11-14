@@ -320,12 +320,19 @@ def write_secret_file(path: Path, content: str) -> None:
         )
 
 
-def build_settings(provider: str, model: str, base_url: str) -> dict:
-    """A minimal settings.json. The customer fills in their own API key."""
+def build_settings(provider: str, model: str, base_url: str, bridge_secret: str = "") -> dict:
+    """A minimal settings.json. The customer fills in their own API key.
+
+    ``bridge_secret`` is shared with this tenant's WhatsApp bridge (its
+    .env BRIDGE_SECRET), so the two trust each other and nobody else.
+    """
     llm: dict = {"provider": provider, "model": model}
     if base_url:
         llm["base_url"] = base_url
-    return {"llm": llm}
+    settings: dict = {"llm": llm}
+    if bridge_secret:
+        settings["bridge_secret"] = bridge_secret
+    return settings
 
 
 def build_compose(
@@ -410,6 +417,28 @@ services:
       retries: 5
       start_period: 180s
 
+  whatsapp-bridge:
+    # This customer's WhatsApp link (freehand/bridge). No host ports: only
+    # this tenant's FreeHand can reach it, and WhatsApp messages never come
+    # in through Caddy. It sits unlinked until the customer pairs a number
+    # in their console (Remote Gateways, WhatsApp).
+    build:
+      context: "{context}/freehand/bridge"
+    container_name: freehand-whatsapp-{safe}
+    restart: unless-stopped
+    environment:
+      - BRIDGE_IN_DOCKER=1
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8765
+      # Shared only with this tenant's FreeHand (vault/settings.json).
+      - BRIDGE_SECRET=${{BRIDGE_SECRET}}
+      - FREEHAND_URL=http://freehand:8000
+      - WHATSAPP_AUTH_DIR=/data/auth_info_baileys
+    volumes:
+      # The linked-device session: anyone with a copy can read and send
+      # this customer's WhatsApp messages. Named so --destroy removes it.
+      - whatsapp-session:/data/auth_info_baileys
+
   freehand:
     build:
       # The image is built from the repo checkout; the vault below is
@@ -446,6 +475,8 @@ services:
       # FreeHand's model.
       - FREEHAND_HINDSIGHT_URL=http://hindsight:8888
       - FREEHAND_LLM_PROXY_TOKEN=${{FREEHAND_LLM_PROXY_TOKEN}}
+      # This tenant's WhatsApp bridge.
+      - FREEHAND_BRIDGE_URL=http://whatsapp-bridge:8765
       # Public https address behind Caddy; OAuth callbacks are built from it.
       - FREEHAND_PUBLIC_BASE_URL=${{FREEHAND_PUBLIC_BASE_URL:-}}
     # Composio settings come from this tenant's own composio.env, read
@@ -472,10 +503,14 @@ volumes:
   hindsight-data:
     # Per-tenant memory. Named so --destroy can find and remove it.
     name: freehand-hindsight-data-{safe}
+  whatsapp-session:
+    # Per-tenant WhatsApp link. Named so --destroy can find and remove it.
+    name: freehand-whatsapp-{safe}
 """
 
 
-def build_env(customer: str, oc_port: int, console_url: str, public_url: str = "") -> str:
+def build_env(customer: str, oc_port: int, console_url: str, public_url: str = "",
+              bridge_secret: str = "") -> str:
     """Per-customer secrets. Each gets its own runtime token and OC key."""
     runtime_token = secrets.token_urlsafe(32)
     oc_admin = secrets.token_urlsafe(24)
@@ -505,6 +540,10 @@ OC_ENCRYPTION_KEY={oc_encryption}
 
 # Memory: lets this tenant's Hindsight use its FreeHand model.
 FREEHAND_LLM_PROXY_TOKEN={llm_proxy_token}
+
+# WhatsApp: shared by this tenant's bridge and FreeHand (settings.json
+# bridge_secret). Change both together, or WhatsApp stops working.
+BRIDGE_SECRET={bridge_secret or secrets.token_urlsafe(32)}
 
 # FreeHand
 OOMOL_CONNECT_CONSOLE_URL={console_url}
@@ -906,12 +945,14 @@ def provision(
     write_secret_file(backup / "encryption.key", key)
 
     # 3. Settings skeleton. The customer supplies their own LLM key.
-    settings = build_settings("openai", "gpt-4o-mini", "")
+    # One secret, shared by this tenant's FreeHand and WhatsApp bridge.
+    bridge_secret = secrets.token_urlsafe(32)
+    settings = build_settings("openai", "gpt-4o-mini", "", bridge_secret)
     write_secret_file(vault / "settings.json", json.dumps(settings, indent=2))
 
     # 4. Per-customer secrets.
     public_url = f"https://{hostname}" if hostname else ""
-    write_secret_file(base / ".env", build_env(customer, oc_port, console_url, public_url))
+    write_secret_file(base / ".env", build_env(customer, oc_port, console_url, public_url, bridge_secret))
     write_secret_file(base / "composio.env", build_composio_env(customer))
 
     # 5. Self-contained compose file. See build_compose() for why this is
@@ -1047,11 +1088,12 @@ def destroy(customer: str, confirm: bool) -> int:
     stop_containers(customer)
     shutil.rmtree(base)
 
-    # Remove the per-tenant OC and memory volumes too; they hold that
-    # customer's OpenConnector state and memories, outside the tenant
-    # directory.
+    # Remove the per-tenant OC, memory and WhatsApp volumes too; they hold
+    # that customer's OpenConnector state, memories and WhatsApp link,
+    # outside the tenant directory.
     safe = container_suffix(customer)
-    for volume in (f"freehand-oc-data-{safe}", f"freehand-hindsight-data-{safe}"):
+    for volume in (f"freehand-oc-data-{safe}", f"freehand-hindsight-data-{safe}",
+                   f"freehand-whatsapp-{safe}"):
         try:
             subprocess.run(
                 ["docker", "volume", "rm", "-f", volume],

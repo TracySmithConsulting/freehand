@@ -656,3 +656,32 @@ def test_each_tenant_gets_its_own_locked_down_memory():
     assert "FREEHAND_HINDSIGHT_URL=http://hindsight:8888" in env
     assert "FREEHAND_CONSOLE_AUTO_KEY=0" in env
     assert any(line.startswith("FREEHAND_LLM_PROXY_TOKEN=") for line in pt.build_env("acme", 3100, "https://c").splitlines())
+
+
+def test_each_tenant_gets_its_own_whatsapp_bridge():
+    """Nov 2026: every customer has their own WhatsApp bridge and session
+    volume, with no host ports, reachable only by their own FreeHand."""
+    import yaml
+    from pathlib import Path
+    from scripts import provision_tenant as pt
+    doc = yaml.safe_load(pt.build_compose("acme", 8100, 3100, Path("/repo")))
+    wa = doc["services"]["whatsapp-bridge"]
+    assert "ports" not in wa
+    assert wa["build"]["context"] == "/repo/freehand/bridge"
+    assert wa["container_name"] == "freehand-whatsapp-acme"
+    assert "BRIDGE_SECRET=${BRIDGE_SECRET}" in wa["environment"]
+    assert "FREEHAND_URL=http://freehand:8000" in wa["environment"]
+    assert "whatsapp-session:/data/auth_info_baileys" in wa["volumes"]
+    assert doc["volumes"]["whatsapp-session"]["name"] == "freehand-whatsapp-acme"
+    assert "FREEHAND_BRIDGE_URL=http://whatsapp-bridge:8765" in doc["services"]["freehand"]["environment"]
+
+
+def test_freehand_and_its_bridge_share_one_secret_per_tenant():
+    from scripts import provision_tenant as pt
+    env = pt.build_env("acme", 3100, "https://c", bridge_secret="s3cret-for-acme-only")
+    assert "BRIDGE_SECRET=s3cret-for-acme-only" in env.splitlines()
+    assert pt.build_settings("openai", "m", "", "s3cret-for-acme-only")["bridge_secret"] == "s3cret-for-acme-only"
+    # Two tenants never share one by accident.
+    a = [l for l in pt.build_env("a", 1, "x").splitlines() if l.startswith("BRIDGE_SECRET=")]
+    b = [l for l in pt.build_env("b", 1, "x").splitlines() if l.startswith("BRIDGE_SECRET=")]
+    assert a and b and a != b
