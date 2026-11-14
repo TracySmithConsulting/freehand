@@ -384,7 +384,33 @@ def start_oauth_connection(service: str, connection_name: str) -> tuple[Optional
     url = data.get("authorizationUrl") if isinstance(data, dict) else None
     if not isinstance(url, str) or not url.startswith("https://"):
         return None, "bad_response"
-    return url, None
+    return ask_which_account(url), None
+
+
+# Sign-in pages that quietly reuse whoever is already signed in to the
+# browser. Adding a second account ("Work") then connected the first one
+# again, so FreeHand asks the provider to show its account chooser.
+_ACCOUNT_CHOOSER_HOSTS = {"login.microsoftonline.com", "login.live.com", "accounts.google.com"}
+
+
+def ask_which_account(url: str) -> str:
+    """The sign-in URL, set to let the person choose (or add) an account."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(url)
+    if parts.hostname not in _ACCOUNT_CHOOSER_HOSTS:
+        return url
+    query = parse_qsl(parts.query, keep_blank_values=True)
+    prompt = next((v for k, v in query if k == "prompt"), None)
+    if prompt is None:
+        query.append(("prompt", "select_account"))
+    elif parts.hostname == "accounts.google.com" and "select_account" not in prompt.split():
+        # Google accepts several values ("consent select_account").
+        query = [(k, f"{v} select_account" if k == "prompt" else v) for k, v in query]
+    else:
+        # Microsoft takes one value; an existing one (e.g. consent) is kept.
+        return url
+    return urlunsplit(parts._replace(query=urlencode(query)))
 
 
 def _admin_request(method: str, path: str, body: Optional[dict] = None, timeout: float = 10.0):

@@ -281,3 +281,26 @@ class TestOpenConnectorAccountsInPanel:
         ):
             r = client.get("/api/integrations")
         assert r.status_code == 200
+
+class TestSignInAsksWhichAccount:
+    """Adding a second Outlook/Gmail account used to reconnect whoever was
+    already signed in to the browser."""
+
+    def test_microsoft_shows_its_account_chooser(self):
+        from urllib.parse import parse_qs, urlsplit
+        from core.oauth.open_connector import ask_which_account
+        url = ask_which_account("https://login.microsoftonline.com/common/oauth2/v2.0/authorize?client_id=x&state=s")
+        q = parse_qs(urlsplit(url).query)
+        assert q["prompt"] == ["select_account"] and q["state"] == ["s"] and q["client_id"] == ["x"]
+
+    def test_google_keeps_consent_and_adds_the_chooser(self):
+        from urllib.parse import parse_qs, urlsplit
+        from core.oauth.open_connector import ask_which_account
+        url = ask_which_account("https://accounts.google.com/o/oauth2/v2/auth?prompt=consent&state=s")
+        assert parse_qs(urlsplit(url).query)["prompt"] == ["consent select_account"]
+
+    def test_an_existing_microsoft_prompt_and_other_sites_are_left_alone(self):
+        from core.oauth.open_connector import ask_which_account
+        ms = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?prompt=consent"
+        zoom = "https://zoom.us/oauth/authorize?state=s"
+        assert ask_which_account(ms) == ms and ask_which_account(zoom) == zoom
