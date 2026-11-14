@@ -57,6 +57,18 @@ WhatsApp.
    npm start
    ```
 
+   On Windows, you can have it start by itself instead, with no window,
+   every time you sign in. It also starts again by itself if it ever
+   stops. Run this once from the FreeHand folder (no administrator
+   rights needed):
+
+   ```
+   powershell -ExecutionPolicy Bypass -File scripts\windows-bridge-autostart.ps1
+   ```
+
+   Its messages go to `%LOCALAPPDATA%\FreeHand\whatsapp-bridge.log`. To
+   turn this off again, run the same command with `-Remove` at the end.
+
 5. Link WhatsApp. On the FreeHand computer, run:
 
    ```
