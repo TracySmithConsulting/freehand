@@ -87,12 +87,20 @@ function createApp(wa, secret) {
 
 function makeForwarder(freehandUrl, secret, fetchImpl = fetch) {
     const url = `${freehandUrl.replace(/\/+$/, '')}/api/gateway/whatsapp`;
-    return async ({ jid, text, id, fromSelf = false }) => {
+    return async ({ jid, text, id, fromSelf = false, audio = null }) => {
+        const body = { remote_jid: jid, text, message_id: id, from_self: fromSelf === true };
+        if (audio) {
+            // A voice note: the recording itself (base64), or why there isn't one.
+            body.audio = {
+                mimetype: audio.mimetype, seconds: audio.seconds,
+                data_b64: audio.data || '', too_long: audio.tooLong === true, failed: audio.failed === true,
+            };
+        }
         const resp = await fetchImpl(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Bridge-Secret': secret },
-            body: JSON.stringify({ remote_jid: jid, text, message_id: id, from_self: fromSelf === true }),
-            signal: AbortSignal.timeout(15000),
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(30000),
         });
         if (!resp.ok) {
             // FreeHand replies through /reply, so the body is not needed;

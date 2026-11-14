@@ -138,3 +138,91 @@ def test_empty_and_oversized_recordings_are_refused_before_the_model():
 def test_the_console_page_is_never_served_stale(client):
     # Browsers kept the pre-update console, so voice fixes seemed broken.
     assert client.get("/").headers.get("cache-control") == "no-cache"
+
+
+# ── WhatsApp voice notes (Nov 2026) ───────────────────────────────────
+
+import base64
+
+
+@pytest.fixture
+def whatsapp(monkeypatch):
+    sent, routed = [], []
+
+    async def fake_send(jid, text):
+        sent.append((jid, text))
+        return True
+
+    async def fake_route(text, source, caller_id):
+        routed.append((text, source, caller_id))
+        return "Rain this afternoon."
+
+    monkeypatch.setattr(gateway, "_whatsapp_send_message", fake_send)
+    monkeypatch.setattr(gateway, "_route_to_agent", fake_route)
+    return sent, routed
+
+
+def run_wa(**kw):
+    async def go():
+        out = await gateway.handle_whatsapp_message(**kw)
+        await asyncio.gather(*list(gateway._background_tasks))
+        return out
+    return asyncio.run(go())
+
+
+JID = "27821234567@s.whatsapp.net"
+
+
+def test_a_whatsapp_voice_note_is_heard_answered_and_echoed(whatsapp, monkeypatch):
+    sent, routed = whatsapp
+    save_settings(whatsapp_allow_from=["+27 82 123 4567"])
+    seen = []
+    monkeypatch.setattr(voice, "transcribe", lambda data, suffix: seen.append((data, suffix)) or {"text": "Will it rain?"})
+    audio = {"data_b64": base64.b64encode(b"OggS-voice").decode(), "mimetype": "audio/ogg; codecs=opus", "seconds": 3}
+    out = run_wa(remote_jid=JID, text="", message_id="wa-1", audio=audio)
+    assert out["voice"]
+    assert seen == [(b"OggS-voice", ".ogg")]
+    assert routed == [("Will it rain?", "whatsapp", JID)]
+    assert sent[0][1].startswith("You said: “Will it rain?”") and "Rain this afternoon." in sent[0][1]
+
+
+def test_whatsapp_voice_notes_from_strangers_are_ignored(whatsapp, monkeypatch):
+    sent, routed = whatsapp
+    save_settings(whatsapp_allow_from=["+27 11 000 0000"], whatsapp_allow_self=True)
+    called = []
+    monkeypatch.setattr(voice, "transcribe", lambda d, s: called.append(1) or {"text": "x"})
+    audio = {"data_b64": base64.b64encode(b"x").decode()}
+    assert run_wa(remote_jid=JID, text="", message_id="wa-2", audio=audio)["skipped"] == "allow_from"
+    assert sent == [] and called == []
+
+
+def test_whatsapp_voice_note_problems_get_a_kind_reply(whatsapp, monkeypatch):
+    sent, _ = whatsapp
+    save_settings(whatsapp_allow_from=["+27 82 123 4567"])
+    monkeypatch.setattr(voice, "transcribe", lambda d, s: {"text": "never"})
+    assert run_wa(remote_jid=JID, text="", message_id="wa-3", audio={"too_long": True})["skipped"] == "too_long"
+    assert run_wa(remote_jid=JID, text="", message_id="wa-4", audio={"failed": True})["skipped"] == "no_audio"
+    assert run_wa(remote_jid=JID, text="", message_id="wa-5", audio={"data_b64": "not base64!!"})["skipped"] == "bad_audio"
+    assert "under 10 minutes" in sent[0][1] and "couldn't fetch" in sent[1][1] and "couldn't fetch" in sent[2][1]
+
+
+def test_the_message_yourself_chat_can_send_voice_notes(whatsapp, monkeypatch):
+    sent, routed = whatsapp
+    save_settings(whatsapp_allow_from=[], whatsapp_allow_self=True)
+    monkeypatch.setattr(voice, "transcribe", lambda d, s: {"text": "Remind me to call Mum"})
+    run_wa(remote_jid=JID, text="", message_id="wa-6", from_self=True,
+           audio={"data_b64": base64.b64encode(b"v").decode(), "mimetype": "audio/ogg"})
+    assert routed and routed[0][0] == "Remind me to call Mum"
+
+
+def test_the_whatsapp_endpoint_accepts_a_voice_note_without_text(monkeypatch):
+    save_settings(bridge_secret="s" * 32)
+    got = []
+
+    async def fake_handle(remote_jid, text, message_id=None, from_self=False, audio=None):
+        got.append((remote_jid, text, audio))
+        return {"ok": True, "queued": True}
+    monkeypatch.setattr(server, "handle_whatsapp_message", fake_handle)
+    r = TestClient(server.app).post("/api/gateway/whatsapp", headers={"X-Bridge-Secret": "s" * 32},
+                                    json={"remote_jid": JID, "text": "", "audio": {"data_b64": "AAAA"}})
+    assert r.json()["queued"] and got[0][2] == {"data_b64": "AAAA"}

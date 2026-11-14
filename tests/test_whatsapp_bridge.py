@@ -106,7 +106,7 @@ def test_unlisted_number_is_skipped(chat):
 def test_endpoint_requires_secret_and_passes_message_id(monkeypatch):
     seen = {}
 
-    async def fake_handle(remote_jid, text, message_id=None, from_self=False):
+    async def fake_handle(remote_jid, text, message_id=None, from_self=False, audio=None):
         seen.update(jid=remote_jid, text=text, id=message_id)
         return {"ok": True, "queued": True}
 
@@ -307,7 +307,7 @@ def test_from_self_must_be_exactly_true(chat):
 def test_endpoint_passes_from_self(monkeypatch):
     seen = {}
 
-    async def fake_handle(remote_jid, text, message_id=None, from_self=False):
+    async def fake_handle(remote_jid, text, message_id=None, from_self=False, audio=None):
         seen.update(jid=remote_jid, from_self=from_self)
         return {"ok": True, "queued": True}
 

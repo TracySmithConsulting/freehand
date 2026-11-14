@@ -613,8 +613,14 @@ async def handle_whatsapp_message(
     text: str,
     message_id: Optional[str] = None,
     from_self: bool = False,
+    audio: Optional[dict] = None,
 ) -> dict:
     """Accept a WhatsApp message from the bridge and answer it in the background.
+
+    ``audio`` is a voice note the bridge has already fetched from WhatsApp:
+    ``{"data_b64", "mimetype", "seconds", "too_long", "failed"}``. It's
+    turned into text on this computer and answered like a Telegram voice
+    note, starting with what was heard.
 
     The caller (server.py) has already checked X-Bridge-Secret. The reply
     goes out through the bridge's /reply; the bridge ignores this response
@@ -637,8 +643,45 @@ async def handle_whatsapp_message(
     if message_id and not _first_delivery(f"whatsapp:{message_id}"):
         return {"ok": True, "duplicate": True}
 
+    if audio is not None and not text:
+        return _whatsapp_voice_note(remote_jid, audio)
+
     _spawn(_reply_in_background("whatsapp", remote_jid, text, _whatsapp_send_message))
     return {"ok": True, "queued": True}
+
+
+def _whatsapp_voice_note(remote_jid: str, audio: dict) -> dict:
+    """Answer a WhatsApp voice note (already allowed and de-duplicated)."""
+    import base64
+    import binascii
+    from core import voice
+
+    async def tell(message: str) -> None:
+        await _whatsapp_send_message(remote_jid, message)
+
+    if audio.get("too_long"):
+        _spawn(tell("That voice note is too long for me. Please keep it under 10 minutes, or type your message."))
+        return {"ok": True, "skipped": "too_long"}
+    raw = str(audio.get("data_b64") or "")
+    # Base64 is a third bigger than the recording; refuse before decoding.
+    if audio.get("failed") or not raw or len(raw) > voice.MAX_AUDIO_BYTES * 4 // 3 + 4:
+        _spawn(tell("Sorry, I couldn't fetch that voice note. Please try again, or type your message."))
+        return {"ok": True, "skipped": "no_audio"}
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        _spawn(tell("Sorry, I couldn't fetch that voice note. Please try again, or type your message."))
+        return {"ok": True, "skipped": "bad_audio"}
+
+    async def already_here(_file_id):
+        return data
+
+    mimetype = str(audio.get("mimetype") or "audio/ogg").lower()
+    suffix = ".ogg" if "ogg" in mimetype or "opus" in mimetype else ".m4a" if "mp4" in mimetype or "aac" in mimetype else ".audio"
+    _spawn(_reply_to_voice_in_background(
+        "whatsapp", remote_jid, {"file_id": "", "suffix": suffix}, already_here, _whatsapp_send_message,
+    ))
+    return {"ok": True, "queued": True, "voice": True}
 
 
 def _bridge_health() -> dict:

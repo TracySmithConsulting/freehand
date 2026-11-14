@@ -19,6 +19,7 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
+    downloadMediaMessage,
 } = require('@whiskeysockets/baileys');
 
 // The linked-device session. Treat this folder like a password: anyone
@@ -42,9 +43,39 @@ function isDirectChat(jid) {
     return typeof jid === 'string' && (jid.endsWith('@s.whatsapp.net') || jid.endsWith('@lid'));
 }
 
+// Disappearing and view-once messages wrap the real message one level down.
+function unwrap(message) {
+    let m = message;
+    for (let i = 0; i < 3 && m; i++) {
+        const inner = m.ephemeralMessage?.message || m.viewOnceMessage?.message
+            || m.viewOnceMessageV2?.message || m.documentWithCaptionMessage?.message;
+        if (!inner) break;
+        m = inner;
+    }
+    return m;
+}
+
 function textOf(message) {
-    if (!message) return '';
-    return message.conversation || message.extendedTextMessage?.text || '';
+    const m = unwrap(message);
+    if (!m) return '';
+    return m.conversation || m.extendedTextMessage?.text || '';
+}
+
+// Voice notes (and other audio), up to about 10 minutes. FreeHand turns
+// them into text on its own computer, like Telegram voice notes.
+const MAX_AUDIO_SECONDS = 600;
+const MAX_AUDIO_BYTES = 20 * 1024 * 1024;
+function audioOf(message) {
+    const a = unwrap(message)?.audioMessage;
+    if (!a) return null;
+    const seconds = Number(a.seconds || 0);
+    const bytes = Number(a.fileLength || 0);
+    return {
+        mimetype: a.mimetype || 'audio/ogg; codecs=opus',
+        seconds,
+        voiceNote: a.ptt === true,
+        tooLong: seconds > MAX_AUDIO_SECONDS || bytes > MAX_AUDIO_BYTES,
+    };
 }
 
 // "27821234567:12@s.whatsapp.net" -> { user: "27821234567", server: "s.whatsapp.net" }
@@ -87,14 +118,17 @@ function classifyMessage(msg, me, sent = sentIds) {
     const jid = msg.key.remoteJid;
     if (!isDirectChat(jid)) return null;
     const text = textOf(msg.message).trim();
-    if (!text) return null;
+    const audio = text ? null : audioOf(msg.message);
+    if (!text && !audio) return null;
     const id = msg.key.id;
+    const out = { jid, text, id, fromSelf: false };
+    if (audio) out.audio = audio;
     if (msg.key.fromMe) {
         if (!isSelfChat(jid, me)) return null;
         if (id && sent.has(id)) return null; // our own reply
-        return { jid, text, id, fromSelf: true };
+        out.fromSelf = true;
     }
-    return { jid, text, id, fromSelf: false };
+    return out;
 }
 
 async function start() {
@@ -142,6 +176,18 @@ async function start() {
         for (const msg of messages) {
             const incoming = classifyMessage(msg, sock.user);
             if (!incoming || !messageHandler) continue;
+            if (incoming.audio && !incoming.audio.tooLong) {
+                // Fetch the recording from WhatsApp now; FreeHand can't.
+                try {
+                    const data = await downloadMediaMessage(msg, 'buffer', {}, {
+                        logger, reuploadRequest: sock.updateMediaMessage,
+                    });
+                    incoming.audio.data = Buffer.from(data).toString('base64');
+                } catch (e) {
+                    console.error(`Couldn't download a voice note: ${e.message}`);
+                    incoming.audio.failed = true;
+                }
+            }
             try {
                 await messageHandler(incoming);
             } catch (e) {
@@ -191,5 +237,5 @@ function status() {
 
 module.exports = {
     start, onMessage, sendText, requestPairingCode, status,
-    isDirectChat, isSelfChat, classifyMessage, AUTH_DIR,
+    isDirectChat, isSelfChat, classifyMessage, audioOf, AUTH_DIR,
 };
