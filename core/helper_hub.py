@@ -216,7 +216,9 @@ def schemas() -> list[dict]:
             "Do something in a window on the user's computer: click an element, type text, press keys "
             "(like 'Ctrl+S' or 'Down Down Enter'), or move to an element. Aim at an element by its exact "
             "name, or by its #number from your latest computer_look (numbers change after each action, "
-            "so look again). The user is asked on their computer first. Never for passwords."),
+            "so look again). Typing and keys need a fresh computer_look of that window first, because "
+            "apps can open something unexpected (like a file from last time); tell the user what's open "
+            "before typing into it. The user is asked on their computer first. Never for passwords."),
             {"window": _WINDOW,
              "do": {"type": "string", "enum": ["click", "type", "keys", "focus"]},
              "element": {"type": "string", "description": "The element's name, or #number from computer_look"},
@@ -230,7 +232,7 @@ def schemas() -> list[dict]:
               "why": _WHY},
              required=("window", "do", "why")),
         tool("computer_open", "Open an app by name (like notepad, chrome, outlook) or a website (https://...) on "
-             "the user's computer. The user is asked first.",
+             "the user's computer. The user is asked first. Then use computer_look to see what opened.",
              {"target": {"type": "string", "description": "An app's name, or a web address"}, "why": _WHY},
              required=("target", "why")),
     ]

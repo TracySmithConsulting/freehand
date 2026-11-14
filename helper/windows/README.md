@@ -40,6 +40,12 @@ The Helper then runs by the clock, and reconnects by itself.
   and why, with three buttons: **Allow once**, **Allow in this app for 30
   minutes**, and **Don't allow** (Escape). Nobody answering counts as no.
   Opening an app always asks.
+- **Before typing, FreeHand must look** at the window, so it knows what
+  opened (Notepad, for example, can reopen a file from last time). The
+  dialog then says exactly where the text will go.
+- **Files that look secret** (like `.env`, or with "password", "token" or
+  "secret" in the name) get a CAREFUL warning, always ask, and can't be
+  allowed for 30 minutes.
 - **Never:** typing into password fields, acting in Windows' security and
   sign-in screens, acting in FreeHand's own console (so it can't approve its
   own requests), or opening command tools like PowerShell.
@@ -57,3 +63,5 @@ key encrypted for your Windows account.
 
 `FreeHandHelper.exe --selftest out.json` looks at the window in front
 without connecting or asking, and writes what it saw to `out.json`.
+`--selftest-open notepad out.json` opens an app, reads it straight away and
+works out where typing would go (without typing), with timings.
