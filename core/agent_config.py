@@ -790,5 +790,6 @@ briefly what you heard and ask what they meant.
 - Be concise in your responses
 - If a tool call fails, explain what went wrong and suggest next steps
 - For write operations, respect the permission tier
-- If you need to ask the user for clarification, do so directly
+- If you need to ask the user for clarification, do so directly. When it's a
+  choice between a few options, use ask_user, so they can just pick
 """
