@@ -45,8 +45,9 @@ namespace FreeHand.Helper
             {
                 if (!first)
                 {
-                    Native.MessageBoxW(IntPtr.Zero, "The FreeHand Helper is already running. Look for its icon by the clock.",
-                        "FreeHand Helper", Native.MB_OK | Native.MB_ICONINFORMATION | Native.MB_TOPMOST);
+                    // Already running (perhaps hidden by the clock): bring
+                    // its window back instead of starting a second one.
+                    Native.PostMessage(Native.HWND_BROADCAST, Native.ShowMessage, IntPtr.Zero, IntPtr.Zero);
                     return 0;
                 }
                 Native.SetProcessDPIAware();
@@ -101,6 +102,11 @@ namespace FreeHand.Helper
         [DllImport("user32.dll")] public static extern int GetWindowTextLength(IntPtr hWnd);
         [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
         [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern uint RegisterWindowMessage(string name);
+        [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+        public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xffff);
+        public static readonly uint ShowMessage = RegisterWindowMessage("FreeHandHelperShowWindow");
     }
 
     // Settings in %APPDATA%\FreeHand Helper\settings.json. The token is
@@ -246,6 +252,7 @@ namespace FreeHand.Helper
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == Native.WM_HOTKEY) StopHelping("You pressed Ctrl+Alt+Escape.");
+            if (m.Msg == (int)Native.ShowMessage) ShowMe();
             base.WndProc(ref m);
         }
 
@@ -264,7 +271,7 @@ namespace FreeHand.Helper
             trayIcon.Visible = false;
         }
 
-        void ShowMe() { Show(); WindowState = FormWindowState.Normal; Activate(); }
+        void ShowMe() { Show(); WindowState = FormWindowState.Normal; Activate(); Native.SetForegroundWindow(Handle); }
 
         void Ui(Action a)
         {
@@ -421,7 +428,12 @@ namespace FreeHand.Helper
                     catch (Exception) { }
                     if (ws.CloseStatus.HasValue && (int)ws.CloseStatus.Value == 4401)
                     {
-                        SetConnectionState("FreeHand doesn't recognise this computer any more. Unpair it and pair again.");
+                        // Removed in FreeHand: go back to pairing.
+                        settings.Token = ""; settings.DeviceId = "";
+                        settings.Save();
+                        lookAllowed = false;
+                        Log("FreeHand no longer knows this computer (it was removed there). Pair it again.");
+                        Ui(delegate { UpdateView(); ShowMe(); codeBox.Focus(); });
                         return;
                     }
                 }
