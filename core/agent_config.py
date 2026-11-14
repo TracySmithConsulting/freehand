@@ -656,7 +656,27 @@ def get_tool_permission(name: str) -> str:
     return TOOL_REGISTRY.get(name, "unknown")
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(lean: bool = False) -> str:
+    """FreeHand's instructions to the model.
+
+    ``lean`` (small and local models, core/tool_selection.py) leaves out
+    what the tool descriptions already say and the lists a small model
+    doesn't need, so more of its limited context is left for the chat.
+    """
+    prompt = _build_system_prompt()
+    if not lean:
+        return prompt
+    import re as _re
+    # Sections a small model can do without: the tool catalogue (each tool
+    # describes itself), imported-file counts, and the tier explanations.
+    for heading in ("### Office Tools", "### Browser Tools", "### Email & Calendar",
+                    "## Imported Memories (from other agents):"):
+        prompt = _re.sub(_re.escape(heading) + r".*?(?=\n#{2,3} |\Z)", "", prompt, flags=_re.S)
+    prompt = _re.sub(r"(## Current Tier: [^\n]*\n)(?:- [^\n]*\n)+", r"\1", prompt)
+    return _re.sub(r"\n{3,}", "\n\n", prompt).strip() + "\n"
+
+
+def _build_system_prompt() -> str:
     settings = _load_settings()
     tier = settings.get("tier", "semi_autonomous")
     connected = []

@@ -172,7 +172,16 @@ async def _call_one(messages: List[Dict], tools: Optional[List[Dict]], config: d
                     status = resp.status
                     if resp.status == 200:
                         data = await resp.json()
-                        return data.get("choices", [{}])[0].get("message", {}), 200, False
+                        msg = dict(data.get("choices", [{}])[0].get("message", {}) or {})
+                        # Token counts, for the "this reply used about ..." note.
+                        # Removed before the message goes back to the model.
+                        usage = data.get("usage")
+                        msg["_usage"] = usage if isinstance(usage, dict) else {
+                            "estimated": True,
+                            "prompt_tokens": len(json.dumps(payload)) // 4,
+                            "completion_tokens": len(str(msg.get("content") or "")) // 4,
+                        }
+                        return msg, 200, False
                     # Read error body for context
                     try:
                         body_text = (await resp.text())[:200]
@@ -440,8 +449,10 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
 
 async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) -> dict:
     tier = get_current_tier()
-    system_prompt = build_system_prompt()
-    tools = list_available_tools()
+    from core import tool_selection
+    from core.agent_config import get_llm_config
+    lean = tool_selection.lean_mode(get_llm_config())
+    system_prompt = build_system_prompt(lean=lean)
 
     # Memory (Nov 2026). Long-term: the few facts that matter for this
     # message, from Hindsight. Short-term: the last few exchanges in this
@@ -453,15 +464,33 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
         system_prompt += (
             "\n## What you remember about the user\n"
             "Use these when they help; don't recite them unprompted.\n"
-            + "\n".join(f"- {line}" for line in remembered[:15])
+            + "\n".join(f"- {line}" for line in remembered[:5 if lean else 15])
             + "\n"
         )
 
+    history = conversation.history(conv_key)
+    if lean:
+        history = history[-4:]  # the last two exchanges are enough for a small model
     messages = [
         {"role": "system", "content": system_prompt},
-        *conversation.history(conv_key),
+        *history,
         {"role": "user", "content": command},
     ]
+
+    # Economy (Nov 2026): only the tools this message needs, plus
+    # load_tools for the rest (core/tool_selection.py). The previous user
+    # message counts too, so "and post it there" still finds Facebook.
+    earlier = [m["content"] for m in history if m.get("role") == "user"][-1:]
+    tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
+    usage = {"prompt_tokens": 0, "completion_tokens": 0, "calls": 0, "estimated": False}
+
+    def count(resp: dict) -> None:
+        u = resp.pop("_usage", None)
+        if isinstance(u, dict):
+            usage["prompt_tokens"] += int(u.get("prompt_tokens") or 0)
+            usage["completion_tokens"] += int(u.get("completion_tokens") or 0)
+            usage["calls"] += 1
+            usage["estimated"] = usage["estimated"] or bool(u.get("estimated"))
 
     final_response = {"text": "", "tools_used": [], "error": None}
     switched = None  # set when a backup model answered instead of the main one
@@ -487,8 +516,11 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
     # also used by re_execute_approval for its source-gating).
     is_remote_source = source in REMOTE_SOURCES
 
-    for turn in range(max_turns):
+    work_turns = 0
+    loads = 0
+    while work_turns < max_turns:
         llm_resp = await call_llm(messages, tools=tools)
+        count(llm_resp)
         if "_switched" in llm_resp:
             # Keep FreeHand's marker out of what goes back to the model.
             switched = llm_resp.pop("_switched")
@@ -514,6 +546,15 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
         # Execute the tool
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
+
+        if tool_name == tool_selection.LOAD_TOOLS and loads < 3:
+            # Not a real tool: add a group of tools, and don't count the turn.
+            loads += 1
+            tools, note = tool_selection.add_group(tools, tool_state, str((tool_args or {}).get("group", "")))
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": note})
+            continue
+        work_turns += 1
 
         # ── Detect stuck loops: same tool + same args called repeatedly ──
         call_key = f"{tool_name}|{json.dumps(tool_args, sort_keys=True)}"
@@ -653,6 +694,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
             "content": "Stop using tools now and answer my question from what you found so far.",
         })
         last = await call_llm(messages)
+        count(last)
         if "_switched" in last:
             switched = last.pop("_switched")
         if "error" in last:
@@ -662,6 +704,8 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
 
     if final_response["text"] and not final_response["error"]:
         _remember_turn(conv_key, command, final_response["text"], source)
+    if usage["calls"]:
+        final_response["usage"] = usage
 
     # Shown, not remembered: the note is added after the turn is saved.
     if switched and final_response["text"]:
