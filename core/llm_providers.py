@@ -124,6 +124,18 @@ PROVIDERS: list[dict] = [
         "steps": ["Install Ollama from its website.", "Download a model in Ollama, for example llama3.2.", "Choose it here. No key is needed."],
     },
     {
+        "id": "agnes",
+        "name": "Agnes AI",
+        # OpenAI-compatible at apihub.agnes-ai.com/v1 (checked Nov 2026: /v1/models
+        # asks for a key, the usual sign of a compatible API).
+        "base_url": "https://apihub.agnes-ai.com/v1",
+        "key_prefixes": [],
+        "key_url": "https://apihub.agnes-ai.com",
+        "default_model": "",
+        "blurb": "Agnes models, with a free allowance.",
+        "steps": ["Open the Agnes API page and sign in.", "Create an API key.", "Copy it and paste it here, then choose a model from the list."],
+    },
+    {
         "id": "custom",
         "name": "Other (OpenAI-compatible)",
         "base_url": "",
@@ -151,16 +163,37 @@ def identify(provider_id: str, base_url: str = "") -> str:
     p = get(provider_id)
     if p and p["id"] != "custom":
         return p["id"]
-    base = (base_url or "").rstrip("/").lower()
+    base = clean_base_url(base_url).lower()
     for q in PROVIDERS:
         if q["base_url"] and q["base_url"].lower() == base:
             return q["id"]
     return p["id"] if p else "custom"
 
 
+_ENDPOINT_SUFFIXES = ("/chat/completions", "/completions", "/models", "/chat")
+
+
+def clean_base_url(base_url: str) -> str:
+    """The service's base address, even if someone pasted a full endpoint.
+
+    Services' docs often show the whole chat address
+    (https://.../v1/chat/completions). FreeHand adds that part itself, so a
+    pasted endpoint used to become .../chat/completions/chat/completions
+    and fail with a confusing "doesn't know that model"."""
+    url = (base_url or "").strip().split("?", 1)[0].split("#", 1)[0].rstrip("/")
+    changed = True
+    while changed:
+        changed = False
+        for suffix in _ENDPOINT_SUFFIXES:
+            if url.lower().endswith(suffix):
+                url = url[: -len(suffix)].rstrip("/")
+                changed = True
+    return url
+
+
 def base_url_for(provider_id: str, base_url: str = "") -> str:
     if base_url:
-        return base_url.rstrip("/")
+        return clean_base_url(base_url)
     p = get(provider_id)
     return (p or {}).get("base_url", "").rstrip("/")
 
@@ -196,6 +229,9 @@ def list_models(provider_id: str, api_key: str, base_url: str = "", timeout: flo
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, ("FreeHand found the service, but not its list of models at that address. "
+                          "Check the address under Advanced: it usually ends in /v1.")
         return None, explain_http(e.code)
     except (urllib.error.URLError, OSError, ValueError):
         return None, "FreeHand couldn't reach that service. Check the internet connection, or the address under Advanced."
@@ -239,7 +275,8 @@ def explain_http(status: int, body: str = "") -> str:
     if status == 402:
         return "The account needs credit. Add some on the service's billing page, then test again."
     if status == 404:
-        return "The service doesn't know that model name. Choose a model from the list."
+        return ("The service didn't recognise that model name, or the address under Advanced isn't quite right. "
+                "Choose a model from the list, and check the address usually ends in /v1.")
     if status == 429:
         return "The service says you've hit a limit (too many requests, or no credit left). Wait a moment, or check your credit."
     if status >= 500:

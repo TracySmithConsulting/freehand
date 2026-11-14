@@ -1009,20 +1009,23 @@
         Scribble Pad
         <span class="hotkey-hint" aria-hidden="true">Alt+S</span>
       </h2>
-      <p class="hint">Ctrl+Enter to save. Full replace mode.</p>
+      <p class="hint" id="scribble-hint">Your scribble pad is one page of notes that you keep adding to.
+        Type anywhere in it, then press Save or Ctrl+Enter. Your words stay on the pad after saving;
+        that's normal. FreeHand sorts tasks and notes off the pad later, or straight away with Sweep Now.</p>
       <form id="scribble-form" novalidate>
         <div class="form-group">
-          <label for="scribble-content">Working Memory</label>
+          <label for="scribble-content">Scribble pad</label>
           <textarea
             id="scribble-content"
             name="content"
             rows="12"
             wrap="soft"
-            aria-describedby="scribble-error"
+            aria-describedby="scribble-hint scribble-saved scribble-error"
           ></textarea>
           <p class="error" id="scribble-error" role="alert"></p>
         </div>
         <button type="submit">Save Scribble</button>
+        <p class="hint" id="scribble-saved" role="status" aria-live="polite"></p>
       </form>
       <button type="button" id="sweep-btn" style="margin-top: 0.5rem;">Sweep Now</button>
       <p class="hint" style="margin-top: 0.25rem;">Classifies checklist lines now: tasks to the scheduler, notes to threads, then archives both.</p>
@@ -1812,6 +1815,18 @@
       // ---- Scribble Form ----
       var scribbleForm = document.getElementById('scribble-form');
       var scribbleContent = document.getElementById('scribble-content');
+      var scribbleDirty = false;
+      function setScribbleSaved(text) {
+        document.getElementById('scribble-saved').textContent = text;
+      }
+      scribbleContent.addEventListener('input', function() {
+        // Clear the old "Saved at" quietly (an empty live region isn't read
+        // out), so typing isn't interrupted and a stale time never shows.
+        if (!scribbleDirty) {
+          scribbleDirty = true;
+          setScribbleSaved('');
+        }
+      });
 
       // Load existing content
       apiFetch('/api/scribble')
@@ -1843,10 +1858,16 @@
         })
         .then(function(res) {
           if (!res.ok) throw new Error('Failed to save');
-          showStatus('Scribble saved successfully.', 'success');
+          var when = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          // Stays on screen (and is read out) next to the button, so nobody
+          // has to guess whether a pad that still shows their words saved.
+          setScribbleSaved('Saved at ' + when + '. Your words stay on the pad so you can keep adding to it.');
+          scribbleDirty = false;
+          showStatus('Scribble saved.', 'success');
         })
-        .catch(function(err) {
-          showError('scribble-error', err.message);
+        .catch(function() {
+          setScribbleSaved('');
+          showError('scribble-error', 'FreeHand couldn\'t save your scribble. Your words are still here; try Save again in a moment.');
           showStatus('Failed to save scribble.', 'error');
         });
       });

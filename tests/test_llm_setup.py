@@ -81,7 +81,7 @@ def test_google_model_names_lose_their_prefix(fake_http):
 
 
 @pytest.mark.parametrize("status,words", [
-    (401, "key wasn't accepted"), (402, "needs credit"), (404, "doesn't know that model"),
+    (401, "key wasn't accepted"), (402, "needs credit"), (404, "didn't recognise that model"),
     (429, "hit a limit"), (503, "problem on its side")])
 def test_errors_are_in_plain_words(fake_http, status, words):
     routes, _ = fake_http
@@ -147,3 +147,32 @@ def test_a_callback_without_a_state_from_freehand_is_refused(client):
 def test_starting_sign_in_needs_the_api_key():
     r = TestClient(server.app).post("/api/llm/openrouter/start")
     assert r.status_code == 401
+
+
+# ── Pasted endpoints and Agnes AI (Nov 2026) ──────────────────────────
+
+def test_a_pasted_full_endpoint_becomes_the_base_address():
+    from core import llm_providers as lp
+    for pasted in ("https://apihub.agnes-ai.com/v1/chat/completions",
+                   "https://apihub.agnes-ai.com/v1/chat/completions/",
+                   "https://apihub.agnes-ai.com/v1/models",
+                   " https://apihub.agnes-ai.com/v1/ "):
+        assert lp.base_url_for("custom", pasted) == "https://apihub.agnes-ai.com/v1"
+
+
+def test_a_pasted_agnes_endpoint_is_recognised_as_agnes():
+    from core import llm_providers as lp
+    assert lp.identify("custom", "https://apihub.agnes-ai.com/v1/chat/completions") == "agnes"
+    assert lp.get("agnes")["base_url"] == "https://apihub.agnes-ai.com/v1"
+    assert any(p["id"] == "agnes" for p in lp.public_list())
+
+
+def test_a_missing_model_list_points_at_the_address(monkeypatch):
+    import urllib.error
+    from core import llm_providers as lp
+
+    def not_found(*a, **k):
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+    monkeypatch.setattr(lp.urllib.request, "urlopen", not_found)
+    models, problem = lp.list_models("custom", "k", "https://example.test/api")
+    assert models is None and "address" in problem and "/v1" in problem
