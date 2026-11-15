@@ -875,15 +875,75 @@ async def create_task(body: dict):
             if job["kind"] == "check":
                 from core import checks
                 checks.validate(job["action"])
+            schedule_job.resolve_member(job)
         except Exception as e:  # ValueError or checks.CheckError: plain words
             if not isinstance(e, ValueError) and type(e).__name__ != "CheckError":
                 raise
             raise HTTPException(status_code=400, detail=str(e))
         created = create_scheduled_task(job["title"], job["cron"], deliver_to={"channel": "web"},
-                                        kind=job["kind"], action=job["action"], run_at=job["run_at"])
+                                        kind=job["kind"], action=job["action"], run_at=job["run_at"],
+                                        team_member=job["team_member"])
     created["description"] = schedule_job.describe(created["cron_schedule"], created["next_run"],
                                                    tz=scheduler.local_tz())
     return created
+
+
+# ── Team members (core/team.py) ───────────────────────────────────────
+
+def _team_view(member: dict) -> dict:
+    from core import team
+    used = team.usage(member)
+    return {**member, "used_this_month": used["runs"], "tokens_this_month": used["tokens"],
+            "recent": team.recent(member, 5)}
+
+
+@app.get("/api/team", dependencies=[Depends(require_api_key)])
+async def get_team():
+    """The person's team members, and what the form needs: templates, the
+    tools to choose from (and which can post or send), and the models."""
+    from core import team
+    from core.agent_config import get_tool_permission
+    tools = [{"value": key, "label": c["label"],
+              "can_act": [t for t in c["tools"] if get_tool_permission(t) == "write"]}
+             for key, c in team.TOOL_CHOICES.items()]
+    return {"members": [_team_view(m) for m in team.all_members()],
+            "templates": [{"value": k, **v} for k, v in team.TEMPLATES.items()],
+            "tools": tools, "models": team.model_choices()}
+
+
+@app.post("/api/team", dependencies=[Depends(require_api_key)])
+async def add_team_member(body: dict):
+    from core import team
+    try:
+        return _team_view(team.save(body))
+    except team.TeamError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/team/{member_id}", dependencies=[Depends(require_api_key)])
+async def change_team_member(member_id: str, body: dict):
+    from core import team
+    try:
+        return _team_view(team.save(body, member_id))
+    except team.TeamError as e:
+        raise HTTPException(status_code=400 if team.get(member_id) else 404, detail=str(e))
+
+
+@app.post("/api/team/{member_id}/pause", dependencies=[Depends(require_api_key)])
+async def pause_team_member(member_id: str, body: dict):
+    from core import team
+    member = team.get(member_id)
+    if not member:
+        raise HTTPException(status_code=404, detail="That team member doesn't exist.")
+    return _team_view(team.save({**member, "paused": bool(body.get("paused", True))}, member_id))
+
+
+@app.delete("/api/team/{member_id}", dependencies=[Depends(require_api_key)])
+async def delete_team_member(member_id: str):
+    from core import team
+    if not team.delete(member_id):
+        raise HTTPException(status_code=404, detail="That team member doesn't exist.")
+    return {"status": "deleted"}
 
 
 @app.get("/api/tasks/limits", dependencies=[Depends(require_api_key)])

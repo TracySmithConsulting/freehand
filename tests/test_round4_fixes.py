@@ -49,11 +49,12 @@ class TestListAvailableTools:
         dropped list_zoom_recordings (31 -> 30): Zoom runs through
         OpenConnector, which has no recordings action. Then remember and
         forget_memory were added (30 -> 32), then
-        use_skill, skill_outcome and save_skill (32 -> 35)."""
+        use_skill, skill_outcome and save_skill (32 -> 35), then
+        github_activity, read only, for team members (35 -> 36)."""
         tools = agent_config.list_available_tools()
         names = {t["function"]["name"] for t in tools}
         assert names == set(agent_config.TOOL_REGISTRY.keys())
-        assert len(tools) == 35
+        assert len(tools) == 36
 
     def test_write_tools_visible(self):
         """The previously-dead write tools (post_to_facebook etc.) are now visible."""

@@ -59,8 +59,10 @@ def schema() -> dict:
                 "told only when something is found. With then='think', you're asked about what was found, "
                 "following 'instructions'. Checks repeat, every hour by default. "
                 "Use 'think' only when the job needs work at the time, like a summary or a draft. "
+                "When the person names one of their team members to do it (\"have Dev ...\"), use 'think' "
+                "with team_member, so that team member does it with their own tools. "
                 "Give times in the person's own time; code works out the dates. "
-                "Afterwards, tell the person the summary this returns."
+                "Afterwards, tell the person the summary this returns, and describe the job as it was saved."
             ),
             "parameters": {
                 "type": "object",
@@ -79,6 +81,7 @@ def schema() -> dict:
                     "url": {"type": "string", "description": "For 'check_page': the page's full address."},
                     "then": {"type": "string", "enum": ["tell", "think"], "description": "For checks: 'tell' (default, free) or 'think'."},
                     "instructions": {"type": "string", "description": "For checks with then='think': what to do with what's found."},
+                    "team_member": {"type": "string", "description": "For 'think': the name of the person's team member who should do it, if they asked for one."},
                 },
                 "required": ["type", "what"],
             },
@@ -201,9 +204,21 @@ def build(spec: dict, tz=None, now: Optional[datetime] = None) -> dict:
             if not 1 <= dom <= 28:
                 raise ValueError("Choose a day from 1 to 28, so it happens every month.")
             cron = f"{minute} {hour} {dom} * *"
+    member = str(spec.get("team_member") or "").strip()[:40] if kind == "think" else ""
     return {"title": what, "cron": cron, "run_at": run_at,
             "kind": "think" if kind == "think" else "check" if kind in CHECK_TYPES else "do",
-            "action": action}
+            "action": action, "team_member": member or None}
+
+
+def resolve_member(job: dict) -> None:
+    """Turn the team member's name into their id, or say plainly they don't exist."""
+    if not job.get("team_member"):
+        return
+    from core import team
+    member = team.get(job["team_member"])
+    if not member:
+        raise ValueError(f"You don't have a team member called {job['team_member']}.")
+    job["team_member"] = member["id"]
 
 
 def cost(kind: str, action=None) -> str:
@@ -292,12 +307,14 @@ def run_tool(args: dict, source: str = "", caller_id: str = "") -> str:
         if job["kind"] == "check":
             from core import checks
             checks.validate(job["action"])
+        resolve_member(job)
     except ValueError as e:
         return json.dumps({"saved": False, "problem": str(e)})
     except Exception as e:  # checks.CheckError: plain words already
         return json.dumps({"saved": False, "problem": str(e)})
     created = scheduler.create_task(job["title"], job["cron"], deliver_to=target(source, caller_id),
-                                    kind=job["kind"], action=job["action"], run_at=job["run_at"])
+                                    kind=job["kind"], action=job["action"], run_at=job["run_at"],
+                                    team_member=job["team_member"])
     summary = describe(created["cron_schedule"], created["next_run"], tz=tz)
     free = job["kind"] != "think"
     note = {"do": "Free, no AI needed."}.get(job["kind"]) or cost(job["kind"], job["action"])

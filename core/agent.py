@@ -317,6 +317,10 @@ async def execute_tool(name: str, args: dict) -> dict:
                 media_url=args.get("media_url", ""),
             )
             return {"content": json.dumps(result, default=str)}
+        elif name == "github_activity":
+            from core.tools.github_read import github_activity
+            result = await github_activity(args.get("repo", ""))
+            return {"content": json.dumps(result, default=str)}
         elif name == "list_connections":
             result = get_connections_summary()
             return {"content": json.dumps(result, default=str)}
@@ -433,13 +437,17 @@ async def execute_tool(name: str, args: dict) -> dict:
 
 
 async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_id: str = "",
-                    job: bool = False) -> dict:
+                    job: bool = False, member: Optional[dict] = None) -> dict:
     """Run the agent loop: call LLM, execute tools, return final response.
 
     ``job=True`` is a scheduled job (core/scheduler.py): short instructions
     (build_job_prompt), no chat history, a few memories, only the tools the
     job's words call for, and nothing that needs someone there (questions,
     the computer Helper, more jobs). The run isn't kept in the chat history.
+
+    ``member`` is a team member (core/team.py): its own instructions inside
+    FreeHand's rules, only its tools, its model and limits. A message that
+    starts with a team member's name ("Thandi, draft a post") goes to them.
 
     Everything this run stores (chat history, tasks, approvals, memories)
     is tagged with whose message it is (core/people.py). The gateways only
@@ -448,35 +456,74 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     from core import people
     token = people.set_current(people.person_for(source, caller_id) or people.OWNER_ID)
     try:
+        if member is None and not job:
+            from core import team
+            member, command = team.addressed(command)
+        if member is not None:
+            return await _run_member(command, source, caller_id, job, member)
         return await _run_agent(command, max_turns, source, caller_id, job)
     finally:
         people.reset(token)
 
 
-async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, job: bool = False) -> dict:
+async def _run_member(command: str, source: str, caller_id: str, job: bool, member: dict) -> dict:
+    """A team member's turn: checks first (paused, over its limit), then the
+    loop with its setup, then the run counted and logged under its name."""
+    from core import team
+    name = member["name"]
+    if member.get("paused"):
+        return {"text": f"{name} is paused. You can resume them under My team members.",
+                "tools_used": [], "error": None, "team_member": name}
+    over = team.over_limit(member)
+    if over:
+        return {"text": over, "tools_used": [], "error": None, "team_member": name}
+    result = await _run_agent(command, int(member.get("steps") or team.DEFAULT_STEPS), source, caller_id,
+                              job, member=member)
+    try:
+        team.record(member, command, result)
+    except OSError:
+        pass  # the log is a convenience; the reply matters more
+    result["team_member"] = name
+    if result.get("text"):
+        result["text"] = f"{name}: {result['text']}"
+    return result
+
+
+async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, job: bool = False,
+                     member: Optional[dict] = None) -> dict:
     tier = get_current_tier()
     from core import tool_selection
     from core.agent_config import get_llm_config, build_job_prompt
     # A scheduled job is always lean: only the tools its words call for.
     lean = job or tool_selection.lean_mode(get_llm_config())
-    system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean)
+    if member:
+        from core import team
+        system_prompt = team.prompt(member, scheduled=job)
+        model_cfg = team.model_config(member)
+    else:
+        system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean)
+        model_cfg = None
 
     # Memory (Nov 2026). Long-term: the few facts that matter for this
     # message, from Hindsight. Short-term: the last few exchanges in this
     # conversation, so follow-ups like "and tomorrow?" make sense. Either
     # one being unavailable just means less context, never a failed chat.
     conv_key = conversation.conversation_key(source, caller_id)
-    remembered = await asyncio.to_thread(long_memory.recall, command)
+    if member:
+        conv_key += "|team:" + member["id"]  # its own short chat with the person
+    # A team member sees memories only if the person allowed it.
+    remembered = ([] if member and not member.get("memories")
+                  else await asyncio.to_thread(long_memory.recall, command))
     if remembered:
         system_prompt += (
             "\n## What you remember about the user\n"
             "Use these when they help; don't recite them unprompted.\n"
-            + "\n".join(f"- {line}" for line in remembered[:5 if lean else 15])
+            + "\n".join(f"- {line}" for line in remembered[:5 if lean or member else 15])
             + "\n"
         )
 
     history = [] if job else conversation.history(conv_key)
-    if lean:
+    if lean or member:
         history = history[-4:]  # the last two exchanges are enough for a small model
     messages = [
         {"role": "system", "content": system_prompt},
@@ -488,19 +535,27 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     # load_tools for the rest (core/tool_selection.py). The previous user
     # message counts too, so "and post it there" still finds Facebook.
     earlier = [m["content"] for m in history if m.get("role") == "user"][-1:]
-    tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
     from core import ask_user, helper_hub, schedule_job
     from core.scheduler import DUE_PREFIX
+    if member:
+        # Only its own tools: no load_tools, scheduling, Helper or other team members.
+        from core import team
+        allowed = set(team.tool_names(member))
+        tools, tool_state = tool_selection.select(
+            [s for s in list_available_tools() if s["function"]["name"] in allowed], [command], lean=False)
+    else:
+        allowed = None
+        tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
     if not job:
         tools = [*tools, ask_user.schema()]
     # Reminders and scheduled jobs, when the message is about a time. Not
     # while a scheduled job is itself running, so a job can't make more jobs.
-    if schedule_job.wanted([command, *earlier]) and not job and not command.startswith(DUE_PREFIX):
+    if schedule_job.wanted([command, *earlier]) and not job and not member and not command.startswith(DUE_PREFIX):
         tools.append(schedule_job.schema())
     # The user's own computer, through the FreeHand Helper: only while one
     # is connected, and only when the message is about the computer (and
     # someone is there to approve it, so not in a scheduled job).
-    if helper_hub.device_now() and not job:
+    if helper_hub.device_now() and not job and not member:
         if helper_hub.wanted([command, *earlier]):
             tools.extend(helper_hub.schemas())
         if helper_hub.wanted_change([command, *earlier]):
@@ -542,7 +597,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     work_turns = 0
     loads = 0
     while work_turns < max_turns:
-        llm_resp = await call_llm(messages, tools=tools)
+        llm_resp = await call_llm(messages, tools=tools, config=model_cfg)
         count(llm_resp)
         if "_switched" in llm_resp:
             # Keep FreeHand's marker out of what goes back to the model.
@@ -648,7 +703,35 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         from core.agent_config import get_tool_permission
         permission = get_tool_permission(tool_name)
 
-        if permission == "write":
+        if allowed is not None and tool_name not in allowed:
+            # A team member asked for a tool it wasn't given.
+            tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(
+                {"error": f"{tool_name} isn't one of {member['name']}'s tools."})}
+        elif member and permission == "write":
+            # A team member: "Ask me first" unless the person switched on
+            # "Just do it" for this tool. Deleting always asks, and the
+            # permission level's floor (Autonomous: no outside actions) holds.
+            from core import team
+            from core.tools import registry as _registry
+            from core.tools import composio_registry as _composio_registry
+            destructive = _registry.is_destructive_tool(tool_name) or _composio_registry.is_destructive_tool(tool_name)
+            if team.may_just_do(member, tool_name) and not destructive and tier != PermissionTier.AUTONOMOUS:
+                tool_result = await _run_tool(tool_name, tool_args)
+                tool_result["role"] = "tool"
+                tool_result["tool_call_id"] = tool_call["id"]
+            else:
+                result = intercept_action(
+                    "oauth_access",
+                    f"{member['name']} wants to use {tool_name}",
+                    {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id,
+                     "team_member": member["id"]},
+                    source, caller_id, force_confirm=True,
+                )
+                tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps({
+                    "error": f"Waiting for the person's approval for {tool_name}. Tell them it's waiting.",
+                    "approval_id": result.get("approval_id"),
+                })}
+        elif permission == "write":
             # N6: tighten permission for remote sources.
             # Even at FULL_ACCESS, write tools from telegram/slack/whatsapp go
             # through the approval workflow unless explicitly exempted.
@@ -765,7 +848,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             "content": ("Please answer me now from what you've found and done so far, without using more "
                         "tools. Don't mention tools or this message; if something isn't finished, say what's left."),
         })
-        last = await call_llm(messages)
+        last = await call_llm(messages, config=model_cfg)
         count(last)
         if "_switched" in last:
             switched = last.pop("_switched")
@@ -775,7 +858,12 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             final_response["text"] = strip_reasoning(last.get("content", "") or "")
 
     if final_response["text"] and not final_response["error"] and not job:
-        _remember_turn(conv_key, command, final_response["text"], source)
+        if member:
+            # Its own short chat only, not long-term memory.
+            from core import people
+            conversation.add_turn(conv_key, command, final_response["text"], person=people.current())
+        else:
+            _remember_turn(conv_key, command, final_response["text"], source)
     if usage["calls"]:
         final_response["usage"] = usage
 

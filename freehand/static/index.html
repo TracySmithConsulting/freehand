@@ -967,7 +967,8 @@
     <ul>
           <li><a href="#command">Command</a></li>
           <li><a href="#scribble">Scribble</a></li>
-          <li><a href="#tasks">Tasks</a></li>
+          <li><a href="#tasks">Scheduled jobs</a></li>
+          <li><a href="#team">Team</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
         <li data-advanced><a href="#skills">Skills</a></li>
           <li data-advanced><a href="#connections">Connections</a></li>
@@ -1211,6 +1212,67 @@
         </details>
         <p class="error" id="task-form-error" role="alert"></p>
         <button type="submit">Add job</button>
+      </form>
+    </section>
+
+    <!-- Team members (core/team.py, docs/design/scheduled-jobs-and-team-members.md) -->
+    <section id="team" aria-labelledby="team-heading">
+      <h2 id="team-heading">My team members</h2>
+      <p class="hint">
+        Team members are helpers with one job each, such as marketing or sorting email. You give them their names.
+        To talk to one, start your message with their name, for example "Thandi, draft a post about our December
+        specials". That works here and on Telegram, Slack and WhatsApp. They do nothing, and cost nothing, until you
+        ask them, or one of their scheduled jobs is due.
+      </p>
+      <div id="team-list" aria-live="polite"><p class="empty-state">Loading...</p></div>
+      <form id="team-form" novalidate class="stack-top">
+        <h3 id="team-form-heading">Add a team member</h3>
+        <div class="form-group">
+          <label for="team-template">Start from</label>
+          <select id="team-template"><option value="">From scratch</option></select>
+        </div>
+        <div class="form-group">
+          <label for="team-name">Their name</label>
+          <input type="text" id="team-name" placeholder="For example: Thandi" maxlength="40">
+        </div>
+        <div class="form-group">
+          <label for="team-job">Their job, in a sentence</label>
+          <input type="text" id="team-job" maxlength="300">
+        </div>
+        <div class="form-group">
+          <label for="team-instructions">How they should work (optional)</label>
+          <textarea id="team-instructions" rows="4" maxlength="3000"
+                    placeholder="For example: friendly tone, South African English, no hashtags"></textarea>
+        </div>
+        <fieldset id="team-tools">
+          <legend>What they may use</legend>
+        </fieldset>
+        <fieldset id="team-auto" hidden>
+          <legend>When they want to post, send or change something</legend>
+          <label><input type="radio" name="team-auto" value="ask" checked> Ask me first</label>
+          <label><input type="radio" name="team-auto" value="do"> Just do it, without asking me</label>
+          <p class="hint">Deleting always asks, whichever you choose.</p>
+        </fieldset>
+        <div class="form-group">
+          <label for="team-model">Which AI model</label>
+          <select id="team-model"></select>
+          <p class="hint">"Cheaper model" uses your first backup model. Simple jobs don't need the best one.</p>
+        </div>
+        <label><input type="checkbox" id="team-memories"> They may use what FreeHand remembers about you</label>
+        <details data-advanced>
+          <summary>More options</summary>
+          <div class="form-group">
+            <label for="team-steps">Most steps per request (1 to 20)</label>
+            <input type="number" id="team-steps" min="1" max="20" value="8">
+          </div>
+          <div class="form-group">
+            <label for="team-limit">Times they may use AI in a month</label>
+            <input type="number" id="team-limit" min="0" max="100000" value="100">
+          </div>
+        </details>
+        <p class="error" id="team-form-error" role="alert"></p>
+        <button type="submit" id="team-save">Add team member</button>
+        <button type="button" class="secondary" id="team-cancel" hidden>Cancel</button>
       </form>
     </section>
 
@@ -2705,6 +2767,175 @@
         }).then(function(res) { return res.ok ? res.json() : {}; })
           .then(function(d) { if (d.changed) loadTasks(); })
           .catch(function() {});
+      })();
+
+      // ---- Team members ----
+      (function() {
+        var form = document.getElementById('team-form');
+        var list = document.getElementById('team-list');
+        if (!form || !list) return;
+        var options = { templates: [], tools: [], models: [] };
+        var editing = null;
+
+        function el(id) { return document.getElementById(id) || {}; }
+        function picked() {
+          return [].map.call(form.querySelectorAll('#team-tools input:checked'), function(c) { return c.value; });
+        }
+        // "Ask me first" or "Just do it" only matters if a chosen tool can post, send or change things.
+        function actingTools() {
+          var out = [];
+          options.tools.forEach(function(t) { if (picked().indexOf(t.value) !== -1) out = out.concat(t.can_act); });
+          return out;
+        }
+        function updateAuto() { el('team-auto').hidden = !actingTools().length; }
+
+        function fill(m) {
+          el('team-name').value = m.name || '';
+          el('team-job').value = m.job || '';
+          el('team-instructions').value = m.instructions || '';
+          [].forEach.call(form.querySelectorAll('#team-tools input'), function(c) {
+            c.checked = (m.tools || []).indexOf(c.value) !== -1;
+          });
+          el('team-model').value = m.model || '';
+          el('team-memories').checked = !!m.memories;
+          el('team-steps').value = m.steps || 8;
+          el('team-limit').value = m.monthly_limit === undefined ? 100 : m.monthly_limit;
+          var auto = (m.auto_tools || []).length ? 'do' : 'ask';
+          var radio = form.querySelector('input[name="team-auto"][value="' + auto + '"]');
+          if (radio) radio.checked = true;
+          updateAuto();
+        }
+
+        function reset() {
+          editing = null;
+          form.reset();
+          fill({});
+          el('team-form-heading').textContent = 'Add a team member';
+          el('team-save').textContent = 'Add team member';
+          el('team-cancel').hidden = true;
+        }
+
+        function render(members) {
+          if (!members.length) {
+            list.innerHTML = '<p class="empty-state">No team members yet. Add one below, starting from a template if you like.</p>';
+            return;
+          }
+          list.innerHTML = '';
+          members.forEach(function(m) {
+            var labels = options.tools.filter(function(t) { return (m.tools || []).indexOf(t.value) !== -1; })
+              .map(function(t) { return t.label; });
+            var recent = (m.recent || []).map(function(r) {
+              var at = new Date(r.at);
+              return '<li>' + escapeHtml(isNaN(at) ? '' : at.toLocaleString()) + ': asked "' + escapeHtml(r.asked) + '". ' +
+                escapeHtml(r.reply || '') + '</li>';
+            }).join('');
+            var div = document.createElement('div');
+            div.className = 'task-item';
+            div.innerHTML =
+              '<div class="task-info">' +
+                '<span class="task-title">' + escapeHtml(m.name) + '</span>' +
+                (m.paused ? ' <span class="badge badge-paused">Paused</span>' : '') +
+                '<div class="task-meta">' + escapeHtml(m.job) + '</div>' +
+                '<div class="task-meta">May use: ' + escapeHtml(labels.join(', ') || 'nothing but talking') +
+                  ((m.auto_tools || []).length ? '. Posts and sends without asking.' : '. Asks you first before posting or sending.') + '</div>' +
+                '<div class="task-meta">This month: used AI ' + m.used_this_month + ' of ' + m.monthly_limit + ' times.</div>' +
+                (recent ? '<details><summary>Recent work</summary><ul>' + recent + '</ul></details>' : '') +
+              '</div>' +
+              '<button class="secondary" data-act="edit" aria-label="Change ' + escapeHtml(m.name) + '">Change</button> ' +
+              '<button class="secondary" data-act="pause" aria-label="' + (m.paused ? 'Resume ' : 'Pause ') + escapeHtml(m.name) + '">' +
+                (m.paused ? 'Resume' : 'Pause') + '</button> ' +
+              '<button class="danger" data-act="delete" aria-label="Delete ' + escapeHtml(m.name) + '">Delete</button>';
+            div.querySelector('[data-act="edit"]').onclick = function() {
+              editing = m.id;
+              fill(m);
+              el('team-form-heading').textContent = 'Change ' + m.name;
+              el('team-save').textContent = 'Save changes';
+              el('team-cancel').hidden = false;
+              el('team-name').focus();
+            };
+            div.querySelector('[data-act="pause"]').onclick = function() {
+              apiFetch('/api/team/' + encodeURIComponent(m.id) + '/pause', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ paused: !m.paused })
+              }).then(function() { showStatus(m.name + (m.paused ? ' is back at work.' : ' is paused.'), 'success'); loadTeam(); });
+            };
+            div.querySelector('[data-act="delete"]').onclick = function() {
+              if (!confirm('Delete ' + m.name + '? Their scheduled jobs will stop working.')) return;
+              apiFetch('/api/team/' + encodeURIComponent(m.id), { method: 'DELETE' })
+                .then(function() { showStatus(m.name + ' has been deleted.', 'success'); loadTeam(); });
+            };
+            list.appendChild(div);
+          });
+        }
+
+        function loadTeam() {
+          apiFetch('/api/team')
+            .then(function(res) { return res.ok ? res.json() : null; })
+            .then(function(d) {
+              if (!d) { list.innerHTML = '<p class="empty-state">Your team members could not be loaded.</p>'; return; }
+              var first = !options.tools.length;
+              options = d;
+              if (first) {
+                var tpl = el('team-template');
+                d.templates.forEach(function(t) {
+                  var o = document.createElement('option'); o.value = t.value; o.textContent = t.label; tpl.appendChild && tpl.appendChild(o);
+                });
+                var box = el('team-tools');
+                d.tools.forEach(function(t) {
+                  var label = document.createElement('label');
+                  label.innerHTML = '<input type="checkbox" value="' + escapeHtml(t.value) + '"> ' + escapeHtml(t.label);
+                  box.appendChild && box.appendChild(label);
+                });
+                var model = el('team-model');
+                [{ value: '', label: 'Main model' }, { value: 'cheap', label: 'Cheaper model (your first backup)' }]
+                  .concat(d.models.slice(1)).forEach(function(mo, i) {
+                    var o = document.createElement('option'); o.value = mo.value;
+                    o.textContent = i === 0 ? d.models[0].label : mo.label; model.appendChild && model.appendChild(o);
+                  });
+              }
+              render(d.members);
+            })
+            .catch(function() {});
+        }
+
+        form.addEventListener('change', function(e) {
+          if (e.target && e.target.id === 'team-template') {
+            var t = options.templates.filter(function(x) { return x.value === e.target.value; })[0];
+            if (t) fill({ name: el('team-name').value, job: t.job, instructions: t.instructions, tools: t.tools, model: t.model });
+          }
+          updateAuto();
+        });
+        el('team-cancel').onclick = reset;
+
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          clearError('team-form-error');
+          var auto = form.querySelector('input[name="team-auto"]:checked');
+          var justDo = auto && auto.value === 'do' && actingTools().length;
+          var name = el('team-name').value.trim() || 'This team member';
+          if (justDo && !confirm(name + ' will post, send or change things without asking you first. Are you sure?')) return;
+          var body = {
+            name: el('team-name').value, job: el('team-job').value, instructions: el('team-instructions').value,
+            template: el('team-template').value, tools: picked(), auto_tools: justDo ? actingTools() : [],
+            model: el('team-model').value, memories: !!el('team-memories').checked,
+            steps: el('team-steps').value, monthly_limit: el('team-limit').value
+          };
+          apiFetch(editing ? '/api/team/' + encodeURIComponent(editing) : '/api/team', {
+            method: editing ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+          .then(function(res) { return res.json().then(function(d) { if (!res.ok) throw new Error(d.detail); return d; }); })
+          .then(function(m) {
+            showStatus(editing ? m.name + "'s changes are saved." :
+              m.name + ' has joined your team. Start a message with "' + m.name + ', " to talk to them.', 'success');
+            reset();
+            loadTeam();
+          })
+          .catch(function(err) { showError('team-form-error', err.message || 'That could not be saved.'); });
+        });
+
+        loadTeam();
       })();
 
       // ---- Settings Form ----
