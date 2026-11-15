@@ -1,6 +1,7 @@
 import json
 import secrets as _secrets
 import sqlite3
+import re
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
@@ -814,30 +815,165 @@ async def save_scribble(body: dict):
     return {"status": "saved", "path": str(SCRIBBLE_PATH)}
 
 
+def _settings_file() -> dict:
+    if VAULT_SETTINGS_PATH.exists():
+        try:
+            return json.loads(VAULT_SETTINGS_PATH.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_setting(key: str, value) -> None:
+    data = _settings_file()
+    data[key] = value
+    VAULT_SETTINGS_PATH.write_text(json.dumps(data))
+
+
 @app.get("/api/tasks", dependencies=[Depends(require_api_key)])
 async def get_tasks():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM tasks ORDER BY id DESC")
-    tasks = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+    from core import schedule_job, scheduler
+    conn = scheduler._tasks_conn()
+    try:
+        scheduler._ensure_deliver_column(conn)
+        tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()]
+    finally:
+        conn.close()
+    tz = scheduler.local_tz()
+    for task in tasks:
+        # In plain words, for the Scheduled jobs list.
+        task["description"] = schedule_job.describe(task["cron_schedule"], task["next_run"], task["status"], tz=tz)
+        task["free"] = task.get("kind") == "do"
     return tasks
 
 
 @app.post("/api/tasks", dependencies=[Depends(require_api_key)])
 async def create_task(body: dict):
-    title = body.get("title", "").strip()
-    cron_schedule = body.get("cron_schedule", "").strip()
-    if not title or not cron_schedule:
-        raise HTTPException(status_code=400, detail="Title and cron_schedule are required")
-    created = create_scheduled_task(title, cron_schedule, deliver_to={"channel": "web"})
-    if not created["recurring"]:
-        raise HTTPException(
-            status_code=400,
-            detail=f"'{cron_schedule}' is not a valid 5-field cron schedule",
-        )
+    """Plain choices (type, what, repeat, date, time, ...: core/schedule_job.py),
+    or a cron schedule for tinkerers ("More options")."""
+    from core import schedule_job, scheduler
+    title = str(body.get("title") or body.get("what") or "").strip()
+    cron_schedule = str(body.get("cron_schedule") or "").strip()
+    if cron_schedule:
+        if not title:
+            raise HTTPException(status_code=400, detail="Say what the job is.")
+        kind = "do" if body.get("type") in ("remind", "todos") else "think"
+        action = ({"type": "remind", "text": str(body.get("message") or title)} if body.get("type") == "remind"
+                  else {"type": "todos"} if body.get("type") == "todos" else None)
+        if scheduler._parse_cron(cron_schedule) is None:
+            raise HTTPException(status_code=400,
+                                detail=f"'{cron_schedule}' is not a valid 5-field cron schedule")
+        created = create_scheduled_task(title, cron_schedule, deliver_to={"channel": "web"},
+                                        kind=kind, action=action)
+    else:
+        tz = scheduler.local_tz()
+        try:
+            job = schedule_job.build({**body, "what": title}, tz=tz)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        created = create_scheduled_task(job["title"], job["cron"], deliver_to={"channel": "web"},
+                                        kind=job["kind"], action=job["action"], run_at=job["run_at"])
+    created["description"] = schedule_job.describe(created["cron_schedule"], created["next_run"],
+                                                   tz=scheduler.local_tz())
     return created
+
+
+@app.post("/api/tasks/{task_id}/pause", dependencies=[Depends(require_api_key)])
+async def pause_task(task_id: int, body: dict):
+    """Pause or resume a job. Resuming works out its next time again."""
+    from core import scheduler
+    paused = bool(body.get("paused", True))
+    conn = scheduler._tasks_conn()
+    try:
+        scheduler._ensure_deliver_column(conn)
+        row = conn.execute("SELECT cron_schedule, next_run, status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if paused:
+            conn.execute("UPDATE tasks SET status = 'paused' WHERE id = ?", (task_id,))
+        else:
+            nxt = row["next_run"]
+            if row["cron_schedule"]:
+                found = scheduler._cron_next(row["cron_schedule"], tz=scheduler.local_tz())
+                nxt = scheduler._iso_utc(found) if found else None
+            conn.execute("UPDATE tasks SET status = 'pending', fail_count = 0, next_run = ? WHERE id = ?",
+                         (nxt, task_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"id": task_id, "status": "paused" if paused else "pending"}
+
+
+@app.post("/api/timezone", dependencies=[Depends(require_api_key)])
+async def set_timezone(body: dict):
+    """The person's time zone, sent by their browser, so "9:00" means 9 where
+    they are. Only a real zone name is kept."""
+    name = str(body.get("timezone") or "").strip()
+    try:
+        from zoneinfo import ZoneInfo
+        ZoneInfo(name)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Not a time zone name")
+    changed = _settings_file().get("timezone") != name
+    if changed:
+        _save_setting("timezone", name)
+    return {"timezone": name, "changed": changed}
+
+
+_TIDY_REMIND = re.compile(r"^\s*(?:please\s+)?remind(?:er)?(?:\s+me)?(?:\s+to)?[\s:,-]+(.+)$", re.I)
+_TIDY_TODOS = re.compile(r"\bto-?do(?:\s+list)?\b", re.I)
+
+
+def _tidy_suggestions() -> list:
+    from core import scheduler
+    conn = scheduler._tasks_conn()
+    try:
+        scheduler._ensure_deliver_column(conn)
+        rows = conn.execute(
+            "SELECT id, title FROM tasks WHERE status IN ('pending', 'paused') AND kind = 'think' ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        m = _TIDY_REMIND.match(row["title"] or "")
+        if m:
+            text = m.group(1).strip().rstrip(".")
+            out.append({"id": row["id"], "title": row["title"],
+                        "action": {"type": "remind", "text": "Reminder: " + text[:1].lower() + text[1:] + "."}})
+        elif _TIDY_TODOS.search(row["title"] or "") and re.search(r"\b(send|list|show|tell)\b", row["title"], re.I):
+            out.append({"id": row["id"], "title": row["title"], "action": {"type": "todos"}})
+    return out
+
+
+@app.get("/api/tasks/tidy", dependencies=[Depends(require_api_key)])
+async def tidy_tasks_offer():
+    """Once, after the update: old tasks that look like reminders, which
+    could run free (no AI). Nothing changes without a yes."""
+    if _settings_file().get("tasks_tidied"):
+        return []
+    return _tidy_suggestions()
+
+
+@app.post("/api/tasks/tidy", dependencies=[Depends(require_api_key)])
+async def tidy_tasks(body: dict):
+    """Make the chosen ones free. Asked once: after this (even with none
+    chosen) the offer doesn't come back."""
+    from core import scheduler
+    chosen = {int(i) for i in (body.get("ids") or []) if str(i).isdigit()}
+    changed = 0
+    suggestions = {s["id"]: s for s in _tidy_suggestions()}
+    conn = scheduler._tasks_conn()
+    try:
+        for task_id in chosen & set(suggestions):
+            conn.execute("UPDATE tasks SET kind = 'do', action = ? WHERE id = ?",
+                         (json.dumps(suggestions[task_id]["action"]), task_id))
+            changed += 1
+        conn.commit()
+    finally:
+        conn.close()
+    _save_setting("tasks_tidied", True)
+    return {"changed": changed}
 
 
 @app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_api_key)])

@@ -32,6 +32,7 @@ THREADS_DIR = VAULT_DIR / "Threads"
 
 _scheduler: Optional[BackgroundScheduler] = None
 DEFAULT_CRON = "0 2 * * *"
+DUE_PREFIX = "It's time for a scheduled task the person set up earlier: "
 MAX_FAILURES = 3  # failures in a row before a task pauses itself
 TASK_KEYWORDS = {"task", "todo", "todo:", "schedule", "reminder", "remember", "don't forget"}
 
@@ -75,6 +76,19 @@ def _load_settings() -> dict:
         except Exception:
             pass
     return {}
+
+
+def local_tz():
+    """The person's time zone (settings "timezone", set from their browser),
+    so "every day at 9" means 9 where they are. UTC until it's known."""
+    name = str(_load_settings().get("timezone") or "").strip()
+    if name:
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(name)
+        except Exception:
+            pass
+    return timezone.utc
 
 
 def _call_omniroute(text: str) -> Optional[dict]:
@@ -228,10 +242,11 @@ def _parse_cron(expr: str) -> Optional[dict]:
     }
 
 
-def _cron_next(expr: str, after: Optional[datetime] = None) -> Optional[datetime]:
+def _cron_next(expr: str, after: Optional[datetime] = None, tz=None) -> Optional[datetime]:
     """Next UTC datetime matching a 5-field cron expression, or None.
 
-    Cron is interpreted in UTC (this codebase's canonical clock). Brute-force
+    Cron is read in ``tz`` (the person's time zone, see local_tz), UTC if
+    not given; the answer is always in UTC. Brute-force
     minute stepping capped at 366 days; expressions that never fire inside a
     year (e.g. '0 0 30 2 *') return None.
     """
@@ -241,7 +256,7 @@ def _cron_next(expr: str, after: Optional[datetime] = None) -> Optional[datetime
     start = after or datetime.now(timezone.utc)
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
-    dt = start.astimezone(timezone.utc)
+    dt = start.astimezone(tz or timezone.utc)
     dt = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
     for _ in range(366 * 1440):
         if (
@@ -261,7 +276,7 @@ def _cron_next(expr: str, after: Optional[datetime] = None) -> Optional[datetime
             else:
                 day_ok = dom_ok or dow_ok  # standard cron OR when both restricted
             if day_ok:
-                return dt
+                return dt.astimezone(timezone.utc)
         dt += timedelta(minutes=1)
     return None
 
@@ -422,18 +437,29 @@ def _tasks_conn() -> sqlite3.Connection:
     return conn
 
 
+# Kinds of job (docs/design/scheduled-jobs-and-team-members.md): "do" runs
+# in code with no model at all; "think" asks the model each time.
+KINDS = ("do", "think")
+
+
 def _ensure_deliver_column(conn: sqlite3.Connection) -> None:
-    """Where a task's result goes (core/notices.py). Added Nov 2026."""
+    """Columns added in Nov 2026: where the result goes (core/notices.py),
+    failures in a row, the kind of job and its action, and paused jobs."""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
     if "deliver_to" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN deliver_to TEXT")
     if "fail_count" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0")
+    if "kind" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'think'")
+    if "action" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN action TEXT")
     conn.commit()
 
 
 def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = None,
-                status: str = "pending") -> dict:
+                status: str = "pending", kind: str = "think", action: Optional[dict] = None,
+                run_at: Optional[datetime] = None) -> dict:
     """Insert a task row and compute its first scheduled run.
 
     A valid 5-field cron makes the task recurring (next_run set; the runner
@@ -445,22 +471,33 @@ def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = Non
     deliver_to says where the result goes besides the web page, for example
     {"channel": "telegram", "to": "<chat id>"}. status "todo" keeps a to-do
     the runner never runs (a scribbled task with no time).
+
+    kind "do" with an action (see run_action) runs in code, with no model;
+    "think" asks the model. run_at makes it a one-off at that moment.
     Never raises in normal operation; DB failures surface to the caller.
     """
     title = (title or "").strip()
     cron = (cron_schedule or "").strip()
-    next_run = _cron_next(cron) if cron else None
+    if run_at is not None:
+        cron = ""
+        if run_at.tzinfo is None:
+            run_at = run_at.replace(tzinfo=local_tz())
+        next_run = run_at.astimezone(timezone.utc)
+    else:
+        next_run = _cron_next(cron, tz=local_tz()) if cron else None
     status = status if status in ("pending", "todo") else "pending"
+    kind = kind if kind in KINDS else "think"
     from core import people
     conn = _tasks_conn()
     try:
         people.ensure_person_column(conn, "tasks")
         _ensure_deliver_column(conn)
         cursor = conn.execute(
-            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person, deliver_to) "
-            "VALUES (?, ?, ?, ?, NULL, ?, ?)",
+            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person, deliver_to, kind, action) "
+            "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)",
             (title, cron, status, _iso_utc(next_run) if next_run else None, people.current(),
-             json.dumps(deliver_to) if deliver_to else None),
+             json.dumps(deliver_to) if deliver_to else None, kind,
+             json.dumps(action) if action else None),
         )
         conn.commit()
         task_id = cursor.lastrowid
@@ -470,7 +507,8 @@ def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = Non
             "cron_schedule": cron,
             "status": status,
             "next_run": _iso_utc(next_run) if next_run else None,
-            "recurring": next_run is not None,
+            "recurring": bool(cron) and next_run is not None,
+            "kind": kind,
         }
     finally:
         conn.close()
@@ -520,8 +558,9 @@ def backfill_next_run() -> dict:
             "SELECT id, cron_schedule FROM tasks "
             "WHERE status = 'pending' AND next_run IS NULL"
         ).fetchall()
+        tz = local_tz()
         for row in remaining:
-            nxt = _cron_next(row["cron_schedule"])
+            nxt = _cron_next(row["cron_schedule"], tz=tz)
             if nxt is not None:
                 conn.execute(
                     "UPDATE tasks SET next_run = ? WHERE id = ?",
@@ -534,11 +573,42 @@ def backfill_next_run() -> dict:
     return {"deduped": deduped, "backfilled": backfilled}
 
 
+def run_action(action, person: str = "owner") -> str:
+    """A "do" job's work, in code. Returns the message to send.
+
+    {"type": "remind", "text": "..."}  the reminder, word for word.
+    {"type": "todos"}                  the person's to-do list.
+    """
+    if isinstance(action, str):
+        try:
+            action = json.loads(action)
+        except ValueError:
+            action = {}
+    action = action if isinstance(action, dict) else {}
+    kind = action.get("type")
+    if kind == "remind":
+        text = str(action.get("text") or "").strip()
+        return text if text.lower().startswith("reminder") else "Reminder: " + text
+    if kind == "todos":
+        conn = _tasks_conn()
+        try:
+            rows = conn.execute(
+                "SELECT title FROM tasks WHERE status = 'todo' AND person = ? ORDER BY id",
+                (person,),
+            ).fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return "Your to-do list is empty."
+        return "Your to-do list:\n" + "\n".join("- " + r["title"] for r in rows)
+    raise ValueError(f"unknown action: {kind!r}")
+
+
 def _due_prompt(title: str) -> str:
     """What the agent is told when a task is due. Without this, "Remind me
     to phone the dentist" got "Sure, I'll remind you" instead of a reminder."""
     return (
-        f"It's time for a scheduled task the person set up earlier: \"{title}\". "
+        DUE_PREFIX + f"\"{title}\". "
         "Do it now. If it's a reminder, write the reminder to them in a sentence "
         'or two, for example "Reminder: phone the dentist." Your reply is sent '
         "to them as it is."
@@ -561,12 +631,12 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
     from core.agent import run_agent  # lazy: avoids the heavy import chain at module load
     from core import notices, people
 
-    if not _llm_ready():
-        if not _TASK_RUNNER_WARNED:
-            print("[WARN] No LLM configured (settings.llm) — task runner is idle. "
-                  "Set an API key in the web UI to enable scheduled task execution.")
-            _TASK_RUNNER_WARNED = True
-        return {"executed": 0, "failed": 0, "skipped": "llm_not_configured"}
+    # "do" jobs need no model, so they run even when none is set up.
+    llm_ok = _llm_ready()
+    if not llm_ok and not _TASK_RUNNER_WARNED:
+        print("[WARN] No LLM configured (settings.llm): only free scheduled jobs "
+              "(reminders and lists) will run. Set an API key in the web UI for the rest.")
+        _TASK_RUNNER_WARNED = True
 
     cap = int(_load_settings().get("task_max_per_tick", 3))
     cap = max(1, cap)
@@ -579,13 +649,21 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
         people.ensure_person_column(conn, "tasks")
         _ensure_deliver_column(conn)
         rows = conn.execute(
-            "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count FROM tasks "
+            "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count, kind, action FROM tasks "
             "WHERE status = 'pending' AND (next_run IS NULL OR next_run <= ?) "
-            "ORDER BY id LIMIT ?",
+            + ("" if llm_ok else "AND kind = 'do' ")
+            + "ORDER BY id LIMIT ?",
             (now_iso, cap),
         ).fetchall()
+        tz = local_tz()
         for row in rows:
-            result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=3, source="cli"))
+            if row["kind"] == "do":
+                try:
+                    result = {"text": run_action(row["action"], row["person"]), "error": None}
+                except Exception as e:
+                    result = {"text": "", "error": str(e)}
+            else:
+                result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=3, source="cli"))
             error = result.get("error")
             reply = (result.get("text") or "").strip()
             fails = (row["fail_count"] or 0) + 1 if error else 0
@@ -596,7 +674,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 if fails >= MAX_FAILURES:
                     reply = (f"I couldn't do your scheduled task \"{row['title']}\". "
                              f"I tried {fails} times, so I've stopped trying. To try again, "
-                             "add it again under Task Scheduler.")
+                             "add it again under Scheduled jobs.")
             if reply:
                 _run_coro(notices.deliver(reply, title=row["title"],
                                           target=row["deliver_to"], person=row["person"]))
@@ -604,7 +682,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             err_note = (stamp + " error: " + str(error)[:120]) if error else stamp
             next_iso = None
             if row["next_run"]:
-                nxt = _cron_next(row["cron_schedule"], after=now)
+                nxt = _cron_next(row["cron_schedule"], after=now, tz=tz) if row["cron_schedule"] else None
                 next_iso = _iso_utc(nxt) if nxt else None
             if error:
                 failed += 1
@@ -622,7 +700,8 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
         conn.commit()
     finally:
         conn.close()
-    return {"executed": executed, "failed": failed, "skipped": None}
+    return {"executed": executed, "failed": failed,
+            "skipped": None if llm_ok else "llm_not_configured"}
 
 
 # ──────────────────────────────────────────────────────────────────────

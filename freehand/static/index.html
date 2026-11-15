@@ -1098,41 +1098,78 @@
       <p class="hint" style="margin-top: 0.25rem;">Classifies checklist lines now: tasks to the scheduler, notes to threads, then archives both.</p>
     </section>
 
-    <!-- Task Scheduler -->
+    <!-- Scheduled jobs (docs/design/scheduled-jobs-and-team-members.md) -->
     <section id="tasks" aria-labelledby="task-heading">
-      <h2 id="task-heading">Task Scheduler</h2>
+      <h2 id="task-heading">Scheduled jobs</h2>
+      <p class="hint">
+        Things FreeHand does at a time, or on a repeat. Reminders and your to-do list are free: no AI runs
+        when they're sent. You can also just ask in the chat, for example
+        "Remind me to phone the dentist tomorrow at 9".
+      </p>
       <div id="task-runner-status" aria-live="polite"></div>
+      <div id="task-tidy" class="stack-top" hidden></div>
       <div id="task-list" aria-live="polite">
-        <p class="empty-state">Loading tasks...</p>
+        <p class="empty-state">Loading jobs...</p>
       </div>
       <form id="task-form" novalidate class="stack-top">
-        <h3>Add New Task</h3>
-        <div class="form-group">
-          <label for="task-title">Title</label>
-          <input
-            type="text"
-            id="task-title"
-            name="title"
-            placeholder="Task title..."
-            required
-            aria-describedby="task-title-error"
-          >
+        <h3>Add a job</h3>
+        <fieldset>
+          <legend>What should FreeHand do?</legend>
+          <label><input type="radio" name="job-type" value="remind" checked> Remind me (free)</label>
+          <label><input type="radio" name="job-type" value="todos"> Send me my to-do list (free)</label>
+          <label><input type="radio" name="job-type" value="think"> Do something for me (uses AI each time)</label>
+        </fieldset>
+        <div class="form-group" id="task-title-group">
+          <label for="task-title" id="task-title-label">What to remind you about</label>
+          <input type="text" id="task-title" name="title" placeholder="For example: phone the dentist"
+                 aria-describedby="task-title-error">
           <p class="error" id="task-title-error" role="alert"></p>
         </div>
         <div class="form-group">
-          <label for="task-cron">Cron Schedule</label>
-          <input
-            type="text"
-            id="task-cron"
-            name="cron_schedule"
-            placeholder="e.g. 0 9 * * * (daily at 9 AM)"
-            required
-            aria-describedby="task-cron-error"
-          >
-          <p class="hint">Standard cron format: minute hour day month weekday</p>
-          <p class="error" id="task-cron-error" role="alert"></p>
+          <label for="task-repeat">How often</label>
+          <select id="task-repeat">
+            <option value="once">Once</option>
+            <option value="daily">Every day</option>
+            <option value="weekdays">Every weekday (Monday to Friday)</option>
+            <option value="weekly">Every week</option>
+            <option value="monthly">Every month</option>
+          </select>
         </div>
-        <button type="submit">Add Task</button>
+        <div class="form-group" id="task-date-group">
+          <label for="task-date">Day</label>
+          <input type="date" id="task-date">
+        </div>
+        <div class="form-group" id="task-weekday-group" hidden>
+          <label for="task-weekday">Day of the week</label>
+          <select id="task-weekday">
+            <option value="monday">Monday</option>
+            <option value="tuesday">Tuesday</option>
+            <option value="wednesday">Wednesday</option>
+            <option value="thursday">Thursday</option>
+            <option value="friday">Friday</option>
+            <option value="saturday">Saturday</option>
+            <option value="sunday">Sunday</option>
+          </select>
+        </div>
+        <div class="form-group" id="task-dom-group" hidden>
+          <label for="task-dom">Day of the month (1 to 28)</label>
+          <input type="number" id="task-dom" min="1" max="28" value="1">
+        </div>
+        <div class="form-group">
+          <label for="task-time">Time</label>
+          <input type="time" id="task-time" value="09:00">
+        </div>
+        <details data-advanced>
+          <summary>More options</summary>
+          <div class="form-group">
+            <label for="task-cron">Cron schedule, instead of the choices above</label>
+            <input type="text" id="task-cron" name="cron_schedule" placeholder="e.g. 0 9 * * 1"
+                   aria-describedby="task-cron-hint">
+            <p class="hint" id="task-cron-hint">Minute, hour, day of month, month, day of week, in your own time.</p>
+          </div>
+        </details>
+        <p class="error" id="task-form-error" role="alert"></p>
+        <button type="submit">Add job</button>
       </form>
     </section>
 
@@ -2381,47 +2418,83 @@
         });
       });
 
-      // ---- Task Form ----
+      // ---- Scheduled jobs ----
       var taskForm = document.getElementById('task-form');
+
+      // Missing elements (an older page, or a test's pretend page) are skipped.
+      function jobEl(id) { return document.getElementById(id) || {}; }
+
+      function jobType() {
+        var picked = taskForm.querySelector && taskForm.querySelector('input[name="job-type"]:checked');
+        return picked ? picked.value : 'remind';
+      }
+
+      // Show only the questions that matter for the choices made.
+      function updateJobForm() {
+        var type = jobType(), repeat = jobEl('task-repeat').value || 'once';
+        jobEl('task-title-group').hidden = type === 'todos';
+        jobEl('task-title-label').textContent =
+          type === 'think' ? 'What should FreeHand do?' : 'What to remind you about';
+        jobEl('task-date-group').hidden = repeat !== 'once';
+        jobEl('task-weekday-group').hidden = repeat !== 'weekly';
+        jobEl('task-dom-group').hidden = repeat !== 'monthly';
+      }
+      taskForm.addEventListener('change', updateJobForm);
+      (function() {
+        var d = new Date(), pad = function(n) { return (n < 10 ? '0' : '') + n; };
+        jobEl('task-date').value = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+        updateJobForm();
+      })();
 
       taskForm.addEventListener('submit', function(e) {
         e.preventDefault();
         clearError('task-title-error');
-        clearError('task-cron-error');
-
+        clearError('task-form-error');
+        var type = jobType();
         var title = document.getElementById('task-title').value.trim();
+        if (type !== 'todos' && !title) {
+          showError('task-title-error', type === 'think' ? 'Say what FreeHand should do.' : 'Say what to remind you about.');
+          document.getElementById('task-title').focus();
+          return;
+        }
+        var body = {
+          type: type,
+          what: type === 'todos' ? 'Send me my to-do list' : title,
+          repeat: document.getElementById('task-repeat').value,
+          date: document.getElementById('task-date').value,
+          time: document.getElementById('task-time').value || '09:00',
+          weekday: document.getElementById('task-weekday').value,
+          day_of_month: document.getElementById('task-dom').value
+        };
+        if (type === 'remind') body.message = 'Reminder: ' + title.charAt(0).toLowerCase() + title.slice(1);
         var cron = document.getElementById('task-cron').value.trim();
-        var valid = true;
-
-        if (!title) {
-          showError('task-title-error', 'Title is required.');
-          valid = false;
-        }
-        if (!cron) {
-          showError('task-cron-error', 'Cron schedule is required.');
-          valid = false;
-        }
-        if (!valid) return;
+        if (cron) { body.cron_schedule = cron; body.title = body.what; }
 
         apiFetch('/api/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: title, cron_schedule: cron })
+          body: JSON.stringify(body)
         })
         .then(function(res) {
-          if (!res.ok) throw new Error('Failed to add task');
-          showStatus('Task added: ' + title, 'success');
+          return res.json().then(function(data) {
+            if (!res.ok) throw new Error(data.detail || 'The job could not be saved.');
+            return data;
+          });
+        })
+        .then(function(data) {
+          showStatus('Job added: ' + data.title + '. ' + data.description + '.', 'success');
           document.getElementById('task-title').value = '';
           document.getElementById('task-cron').value = '';
           loadTasks();
         })
         .catch(function(err) {
-          showStatus('Failed to add task: ' + err.message, 'error');
+          showError('task-form-error', err.message);
         });
       });
 
       function loadTasks() {
         checkRunnerStatus();
+        loadTidyOffer();
         var listEl = document.getElementById('task-list');
         listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
@@ -2429,41 +2502,114 @@
           .then(function(res) { return res.json(); })
           .then(function(tasks) {
             if (!tasks.length) {
-              listEl.innerHTML = '<p class="empty-state">No tasks scheduled</p>';
+              listEl.innerHTML = '<p class="empty-state">No scheduled jobs yet.</p>';
               return;
             }
             listEl.innerHTML = '';
+            var words = { paused: 'Paused', done: 'Done', todo: 'To-do' };
             tasks.forEach(function(task) {
               var div = document.createElement('div');
               div.className = 'task-item';
+              var last = '';
+              if (task.last_run) {
+                var at = new Date(String(task.last_run).slice(0, 25));
+                var failed = String(task.last_run).indexOf('error') !== -1;
+                last = '<div class="task-meta">Last ran ' + (isNaN(at) ? '' : escapeHtml(at.toLocaleString())) +
+                  (failed ? ', and it didn\'t work' : '') + '</div>';
+              }
+              var canPause = task.status === 'pending' || task.status === 'paused';
               div.innerHTML =
                 '<div class="task-info">' +
                   '<span class="task-title">' + escapeHtml(task.title) + '</span>' +
-                  ' <span class="badge badge-' + escapeHtml(task.status) + '">' + escapeHtml(task.status) + '</span>' +
-                  '<div class="task-meta">Cron: ' + escapeHtml(task.cron_schedule) + '</div>' +
-                  (task.last_run ? '<div class="task-meta">Last run: ' + escapeHtml(task.last_run) + '</div>' : '') +
-                  (task.next_run ? '<div class="task-meta">Next: ' + escapeHtml(task.next_run) + '</div>' : '') +
+                  (words[task.status] ? ' <span class="badge badge-' + escapeHtml(task.status) + '">' + words[task.status] + '</span>' : '') +
+                  '<div class="task-meta">' + escapeHtml(task.description) + '. ' +
+                    (task.status === 'todo' ? '' : (task.free ? 'Free.' : 'Uses AI each time.')) + '</div>' +
+                  last +
                 '</div>' +
-                '<button class="danger" onclick="deleteTask(' + task.id + ')" aria-label="Delete task ' + escapeHtml(task.title) + '">Delete</button>';
+                (canPause ? '<button class="secondary" onclick="pauseTask(' + task.id + ', ' + (task.status === 'pending') + ')" aria-label="' +
+                  (task.status === 'pending' ? 'Pause ' : 'Resume ') + escapeHtml(task.title) + '">' +
+                  (task.status === 'pending' ? 'Pause' : 'Resume') + '</button> ' : '') +
+                '<button class="danger" onclick="deleteTask(' + task.id + ')" aria-label="Delete ' + escapeHtml(task.title) + '">Delete</button>';
               listEl.appendChild(div);
             });
           })
           .catch(function() {
-            listEl.innerHTML = '<p class="empty-state">Failed to load tasks</p>';
+            listEl.innerHTML = '<p class="empty-state">The jobs could not be loaded.</p>';
           });
       }
 
+      window.pauseTask = function(id, pause) {
+        apiFetch('/api/tasks/' + id + '/pause', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ paused: pause })
+        })
+        .then(function() { showStatus(pause ? 'Job paused.' : 'Job resumed.', 'success'); loadTasks(); })
+        .catch(function() { showStatus('That did not work. Try again.', 'error'); });
+      };
+
       window.deleteTask = function(id) {
-        if (!confirm('Delete this task?')) return;
+        if (!confirm('Delete this job?')) return;
         apiFetch('/api/tasks/' + id, { method: 'DELETE' })
           .then(function() {
-            showStatus('Task deleted.', 'success');
+            showStatus('Job deleted.', 'success');
             loadTasks();
           })
           .catch(function() {
-            showStatus('Failed to delete task.', 'error');
+            showStatus('Failed to delete the job.', 'error');
           });
       };
+
+      // Once, after the update: old jobs that look like reminders can run
+      // free. Nothing changes without a tick.
+      function loadTidyOffer() {
+        var box = document.getElementById('task-tidy');
+        if (!box) return;
+        apiFetch('/api/tasks/tidy')
+          .then(function(res) { return res.ok ? res.json() : []; })
+          .then(function(list) {
+            if (!Array.isArray(list) || !list.length) { box.hidden = true; return; }
+            box.innerHTML = '<h3 id="tidy-heading">Make these free?</h3>' +
+              '<p>These jobs were set up before FreeHand could send reminders without AI. They use AI each time they run, ' +
+              'but they don\'t need to. Tick the ones to make free.</p>' +
+              list.map(function(s) {
+                return '<label><input type="checkbox" class="tidy-pick" value="' + s.id + '"> ' + escapeHtml(s.title) + '</label>';
+              }).join('<br>') +
+              '<p><button type="button" id="tidy-yes">Make the ticked ones free</button> ' +
+              '<button type="button" class="secondary" id="tidy-no">Leave them as they are</button></p>';
+            box.hidden = false;
+            function send(ids) {
+              apiFetch('/api/tasks/tidy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: ids })
+              }).then(function(res) { return res.json(); }).then(function(d) {
+                box.hidden = true;
+                showStatus(d.changed ? (d.changed === 1 ? '1 job is now free.' : d.changed + ' jobs are now free.') : 'Left as they are.', 'success');
+                loadTasks();
+              });
+            }
+            document.getElementById('tidy-yes').onclick = function() {
+              send([].map.call(box.querySelectorAll('.tidy-pick:checked'), function(c) { return c.value; }));
+            };
+            document.getElementById('tidy-no').onclick = function() { send([]); };
+          })
+          .catch(function() {});
+      }
+
+      // The person's time zone, so "9:00" means 9 where they are.
+      (function() {
+        var zone = '';
+        try { zone = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) {}
+        if (!zone) return;
+        apiFetch('/api/timezone', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ timezone: zone })
+        }).then(function(res) { return res.ok ? res.json() : {}; })
+          .then(function(d) { if (d.changed) loadTasks(); })
+          .catch(function() {});
+      })();
 
       // ---- Settings Form ----
       var settingsForm = document.getElementById('settings-form');
@@ -3012,8 +3158,8 @@
             box.innerHTML = '';
           } else {
             box.innerHTML =
-              '<p class="runner-alert">Task runner is idle: no LLM is configured, so scheduled tasks are NOT executing. ' +
-              '<a href="#settings">Save an LLM API key under Settings</a> to activate it.</p>';
+              '<p class="runner-alert">No AI model is set up, so only the free jobs (reminders and your to-do list) will run. ' +
+              '<a href="#settings">Set up a model under Settings</a> for the others.</p>';
           }
         })
         .catch(function() { /* status is advisory; leave the box untouched */ });

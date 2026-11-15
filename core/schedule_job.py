@@ -1,0 +1,234 @@
+"""Setting up a scheduled job in plain words (build step 2 of
+docs/design/scheduled-jobs-and-team-members.md).
+
+Used by the model's ``schedule_job`` tool and by the web page's form, so
+both understand the same things:
+
+- **What:** "remind" (a message, word for word) and "todos" (the person's
+  to-do list) run in code with no model, so they're free however often
+  they run. "think" asks the model each time, for jobs that need work.
+- **When:** once (today, tomorrow, a weekday, a date, or in N minutes), or
+  every day, every weekday, every week on a day, every month on a date, at
+  a time in the person's own time zone. Code does the date maths, which
+  small models get wrong.
+"""
+from __future__ import annotations
+
+import json
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Optional
+
+TOOL = "schedule_job"
+TYPES = ("remind", "todos", "think")
+REPEATS = ("once", "daily", "weekdays", "weekly", "monthly")
+DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+CHANNELS = ("telegram", "slack", "whatsapp")
+
+KEYWORDS = {
+    "remind", "reminder", "reminders", "schedule", "scheduled", "every", "daily", "weekly",
+    "monthly", "tomorrow", "tonight", "later", "minutes", "hour", "hours", "alarm",
+    "weekday", "weekdays", "morning", "evening", "o'clock", "oclock", *DAYS,
+}
+
+
+def wanted(texts) -> bool:
+    words = set()
+    for t in texts:
+        words.update(re.findall(r"[a-z']+", (t or "").lower()))
+    return bool(words & KEYWORDS)
+
+
+def schema() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": TOOL,
+            "description": (
+                "Set up something for FreeHand to do later, once or on a repeat. "
+                "type 'remind' sends a reminder message and 'todos' sends the person's to-do list: "
+                "both are free (no AI runs), so use them whenever the job is only a message. "
+                "Use 'think' only when the job needs work at the time, like a summary or a draft. "
+                "Give times in the person's own time; code works out the dates. "
+                "Afterwards, tell the person the summary this returns."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": list(TYPES)},
+                    "what": {"type": "string", "description": "The job in a few words, e.g. 'Phone the dentist'."},
+                    "message": {"type": "string", "description": "For 'remind': the reminder to send, e.g. 'Reminder: phone the dentist.'"},
+                    "repeat": {"type": "string", "enum": list(REPEATS), "description": "Default 'once'."},
+                    "date": {"type": "string", "description": "For 'once': today, tomorrow, a weekday name, or YYYY-MM-DD."},
+                    "time": {"type": "string", "description": "HH:MM, 24-hour, e.g. 09:00 or 17:30."},
+                    "in_minutes": {"type": "integer", "description": "For 'once': instead of date and time, this many minutes from now."},
+                    "weekday": {"type": "string", "enum": list(DAYS), "description": "For 'weekly'."},
+                    "day_of_month": {"type": "integer", "description": "For 'monthly': 1 to 28."},
+                },
+                "required": ["type", "what"],
+            },
+        },
+    }
+
+
+def _time(value) -> tuple[int, int]:
+    m = re.fullmatch(r"\s*(\d{1,2})(?:[:h.](\d{2}))?\s*(am|pm)?\s*", str(value or "").lower())
+    if not m:
+        raise ValueError("Say the time as hours and minutes, for example 09:00 or 17:30.")
+    hour, minute = int(m.group(1)), int(m.group(2) or 0)
+    if m.group(3) == "pm" and hour < 12:
+        hour += 12
+    if m.group(3) == "am" and hour == 12:
+        hour = 0
+    if hour > 23 or minute > 59:
+        raise ValueError("That time doesn't exist. Use 00:00 to 23:59.")
+    return hour, minute
+
+
+def _date(value, now: datetime):
+    text = str(value or "today").strip().lower()
+    if text in ("", "today"):
+        return now.date()
+    if text == "tomorrow":
+        return (now + timedelta(days=1)).date()
+    if text in DAYS:
+        ahead = (DAYS.index(text) - now.weekday()) % 7
+        return (now + timedelta(days=ahead)).date()
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("Say the day as today, tomorrow, a weekday, or a date like 2026-12-24.")
+
+
+def build(spec: dict, tz=None, now: Optional[datetime] = None) -> dict:
+    """Plain choices -> what create_task needs. Raises ValueError with a
+    plain-words message when something doesn't make sense."""
+    spec = spec if isinstance(spec, dict) else {}
+    tz = tz or timezone.utc
+    now = (now or datetime.now(timezone.utc)).astimezone(tz)
+    kind = str(spec.get("type") or "remind").strip().lower()
+    if kind not in TYPES:
+        raise ValueError("Choose a reminder, your to-do list, or something for FreeHand to do.")
+    what = str(spec.get("what") or spec.get("title") or "").strip()[:200]
+    if not what and kind == "todos":
+        what = "Send me my to-do list"
+    if not what:
+        raise ValueError("Say what the job is.")
+    action = None
+    if kind == "remind":
+        action = {"type": "remind", "text": str(spec.get("message") or what).strip()[:500]}
+    elif kind == "todos":
+        action = {"type": "todos"}
+
+    repeat = str(spec.get("repeat") or "once").strip().lower()
+    if repeat not in REPEATS:
+        raise ValueError("Choose once, every day, every weekday, every week or every month.")
+    cron, run_at = "", None
+    if repeat == "once":
+        minutes = spec.get("in_minutes")
+        if minutes not in (None, ""):
+            try:
+                minutes = int(minutes)
+            except (TypeError, ValueError):
+                raise ValueError("Say how many minutes from now, as a number.")
+            if not 1 <= minutes <= 60 * 24 * 366:
+                raise ValueError("Choose between 1 minute and a year from now.")
+            run_at = now + timedelta(minutes=minutes)
+        else:
+            day = _date(spec.get("date"), now)
+            hour, minute = _time(spec.get("time") or "09:00")
+            run_at = datetime(day.year, day.month, day.day, hour, minute, tzinfo=tz)
+            if run_at <= now:
+                if str(spec.get("date") or "").strip().lower() in DAYS:
+                    run_at += timedelta(days=7)  # "on Monday" when it's Monday afternoon
+                else:
+                    raise ValueError("That time has already passed. Choose a time in the future.")
+    else:
+        hour, minute = _time(spec.get("time") or "09:00")
+        if repeat == "daily":
+            cron = f"{minute} {hour} * * *"
+        elif repeat == "weekdays":
+            cron = f"{minute} {hour} * * 1-5"
+        elif repeat == "weekly":
+            day = str(spec.get("weekday") or "").strip().lower()
+            if day not in DAYS:
+                raise ValueError("Choose which day of the week.")
+            cron = f"{minute} {hour} * * {(DAYS.index(day) + 1) % 7}"
+        else:
+            try:
+                dom = int(spec.get("day_of_month"))
+            except (TypeError, ValueError):
+                raise ValueError("Choose which day of the month, 1 to 28.")
+            if not 1 <= dom <= 28:
+                raise ValueError("Choose a day from 1 to 28, so it happens every month.")
+            cron = f"{minute} {hour} {dom} * *"
+    return {"title": what, "cron": cron, "run_at": run_at,
+            "kind": "think" if kind == "think" else "do", "action": action}
+
+
+def _ordinal(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def _when(dt: datetime) -> str:
+    return f"{DAYS[dt.weekday()].capitalize()} {dt.day} {dt.strftime('%B')} at {dt:%H:%M}"
+
+
+def describe(cron: str, next_run: Optional[str], status: str = "pending", tz=None) -> str:
+    """When a job happens, in plain words."""
+    tz = tz or timezone.utc
+    nxt = None
+    if next_run:
+        try:
+            nxt = datetime.fromisoformat(str(next_run).replace("Z", "+00:00")).astimezone(tz)
+        except ValueError:
+            nxt = None
+    if status == "todo":
+        return "On your to-do list (no time set)"
+    cron = (cron or "").strip()
+    if not cron:
+        if status == "done":
+            return "Done"
+        return "Once, " + _when(nxt) if nxt else "Once, as soon as possible"
+    parts = cron.split()
+    simple = len(parts) == 5 and parts[0].isdigit() and parts[1].isdigit() and parts[3] == "*"
+    if simple:
+        at = f"{int(parts[1]):02d}:{int(parts[0]):02d}"
+        dom, dow = parts[2], parts[4]
+        if dom == "*" and dow == "*":
+            return f"Every day at {at}"
+        if dom == "*" and dow == "1-5":
+            return f"Every weekday at {at}"
+        if dom == "*" and dow.isdigit() and int(dow) <= 7:
+            return f"Every {DAYS[(int(dow) - 1) % 7].capitalize()} at {at}"
+        if dow == "*" and dom.isdigit():
+            return f"Every month on the {_ordinal(int(dom))} at {at}"
+    return f"On a custom schedule ({cron})"
+
+
+def target(source: str, caller_id: str) -> dict:
+    """Where results go: back to the chat app it was asked on, if any (the
+    web page always gets them too)."""
+    if source in CHANNELS and caller_id:
+        return {"channel": source, "to": caller_id}
+    return {"channel": "web"}
+
+
+def run_tool(args: dict, source: str = "", caller_id: str = "") -> str:
+    """The model's schedule_job tool. Returns JSON for the model."""
+    from core import scheduler
+    tz = scheduler.local_tz()
+    try:
+        job = build(args, tz=tz)
+    except ValueError as e:
+        return json.dumps({"saved": False, "problem": str(e)})
+    created = scheduler.create_task(job["title"], job["cron"], deliver_to=target(source, caller_id),
+                                    kind=job["kind"], action=job["action"], run_at=job["run_at"])
+    summary = describe(created["cron_schedule"], created["next_run"], tz=tz)
+    free = job["kind"] == "do"
+    return json.dumps({
+        "saved": True,
+        "summary": f"{job['title']}: {summary}. " + ("Free, no AI needed." if free else "This uses AI each time it runs."),
+        "free": free,
+        "time_zone_known": tz is not timezone.utc,
+    })
