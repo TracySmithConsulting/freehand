@@ -21,6 +21,11 @@ There are only two things to remember:
 2. **Use a different name for your own version.** The code is free to take,
    but the FreeHand name is not. See [The FreeHand name](../TRADEMARKS.md).
 
+And one request: if you share your own version or build on FreeHand,
+**please credit it** where people will see it, for example "Based on
+FreeHand by Tracy Smith Consulting". See
+[Please credit FreeHand](../TRADEMARKS.md#please-credit-freehand).
+
 ## Words you may come across
 
 **Licence:** The permission slip that comes with software. It says what you may and may not do with it. FreeHand uses the MIT licence, one of the most widely used and most generous ones.
