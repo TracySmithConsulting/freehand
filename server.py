@@ -831,7 +831,7 @@ async def create_task(body: dict):
     cron_schedule = body.get("cron_schedule", "").strip()
     if not title or not cron_schedule:
         raise HTTPException(status_code=400, detail="Title and cron_schedule are required")
-    created = create_scheduled_task(title, cron_schedule)
+    created = create_scheduled_task(title, cron_schedule, deliver_to={"channel": "web"})
     if not created["recurring"]:
         raise HTTPException(
             status_code=400,
@@ -849,6 +849,23 @@ async def delete_task(task_id: int):
     if cursor.rowcount == 0:
         raise HTTPException(status_code=404, detail="Task not found")
     return {"status": "deleted"}
+
+
+@app.get("/api/notices", dependencies=[Depends(require_api_key)])
+async def api_get_notices():
+    """Messages from FreeHand waiting to be shown: reminders and the results
+    of scheduled tasks (core/notices.py)."""
+    from core import notices
+    return await asyncio.to_thread(notices.unseen)
+
+
+@app.post("/api/notices/seen", dependencies=[Depends(require_api_key)])
+async def api_notices_seen(body: dict):
+    from core import notices
+    ids = body.get("ids") if isinstance(body, dict) else None
+    if not isinstance(ids, list):
+        raise HTTPException(status_code=400, detail="Send the ids of the notices that were shown")
+    return {"marked": await asyncio.to_thread(notices.mark_seen, ids)}
 
 
 @app.get("/api/approvals", dependencies=[Depends(require_api_key)])
