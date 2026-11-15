@@ -34,7 +34,19 @@ a monthly limit on AI uses, a log of its work, and scheduled jobs done by
 a team member. A read-only GitHub tool (github_activity) was added for the
 Developer template. FreeHand has no tools to send email, add calendar
 events or search the web, so team members can't either; the News and
-Research templates read a search engine's results page instead. Tracy's answers to
+Research templates read a search engine's results page instead.
+
+Step 6 is built: the main FreeHand has an ask_team_member tool, offered
+only when there are team members who aren't paused, and never to a team
+member or a scheduled job, so work only goes one level down. The team
+member gets just the request (no chat, no memories, no questions back) and
+reports back; what it used is counted in the reply's total and under its
+name. FreeHand still does a job itself when it has the same tool (it
+answered a GitHub question itself rather than asking Dev). Naming the team
+member ("Dev, ...") is the cheapest way, because it skips FreeHand's own
+model.
+
+All six steps are built. Tracy's answers to
 the open questions are marked **Decided**, and listed at the end.
 
 Two related ideas:

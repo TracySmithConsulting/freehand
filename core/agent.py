@@ -466,7 +466,8 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         people.reset(token)
 
 
-async def _run_member(command: str, source: str, caller_id: str, job: bool, member: dict) -> dict:
+async def _run_member(command: str, source: str, caller_id: str, job: bool, member: dict,
+                      delegated: bool = False) -> dict:
     """A team member's turn: checks first (paused, over its limit), then the
     loop with its setup, then the run counted and logged under its name."""
     from core import team
@@ -478,7 +479,7 @@ async def _run_member(command: str, source: str, caller_id: str, job: bool, memb
     if over:
         return {"text": over, "tools_used": [], "error": None, "team_member": name}
     result = await _run_agent(command, int(member.get("steps") or team.DEFAULT_STEPS), source, caller_id,
-                              job, member=member)
+                              job, member=member, delegated=delegated)
     try:
         team.record(member, command, result)
     except OSError:
@@ -490,7 +491,7 @@ async def _run_member(command: str, source: str, caller_id: str, job: bool, memb
 
 
 async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, job: bool = False,
-                     member: Optional[dict] = None) -> dict:
+                     member: Optional[dict] = None, delegated: bool = False) -> dict:
     tier = get_current_tier()
     from core import tool_selection
     from core.agent_config import get_llm_config, build_job_prompt
@@ -498,7 +499,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     lean = job or tool_selection.lean_mode(get_llm_config())
     if member:
         from core import team
-        system_prompt = team.prompt(member, scheduled=job)
+        system_prompt = team.prompt(member, scheduled=job, delegated=delegated)
         model_cfg = team.model_config(member)
     else:
         system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean)
@@ -522,7 +523,8 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             + "\n"
         )
 
-    history = [] if job else conversation.history(conv_key)
+    # Handed work by FreeHand, a team member gets just the request.
+    history = [] if job or delegated else conversation.history(conv_key)
     if lean or member:
         history = history[-4:]  # the last two exchanges are enough for a small model
     messages = [
@@ -546,8 +548,14 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     else:
         allowed = None
         tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
-    if not job:
+    if not job and not delegated:
         tools = [*tools, ask_user.schema()]
+    # The main FreeHand can hand work to a team member (core/team.py). Team
+    # members can't, so it only ever goes one level down.
+    from core import team as _team
+    ask_team = None if (member or job) else _team.ask_schema(_team.all_members())
+    if ask_team:
+        tools.append(ask_team)
     # Reminders and scheduled jobs, when the message is about a time. Not
     # while a scheduled job is itself running, so a job can't make more jobs.
     if schedule_job.wanted([command, *earlier]) and not job and not member and not command.startswith(DUE_PREFIX):
@@ -637,6 +645,32 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             work_turns += 1
             messages.append(llm_resp)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": ask_user.refusal()})
+            continue
+
+        if ask_team and tool_name == _team.ASK:
+            who = _team.get(str((tool_args or {}).get("name") or ""))
+            request = str((tool_args or {}).get("request") or "").strip()
+            if not who or who.get("paused") or not request:
+                out = json.dumps({"error": "That isn't one of the person's team members who is working now, "
+                                           "or there was no request."})
+            else:
+                done = await _run_member(request, source, caller_id, False, who, delegated=True)
+                # What the team member used counts in this reply's total too.
+                du = done.get("usage") or {}
+                usage["prompt_tokens"] += int(du.get("prompt_tokens") or 0)
+                usage["completion_tokens"] += int(du.get("completion_tokens") or 0)
+                usage["calls"] += int(du.get("calls") or 0)
+                reply = (done.get("text") or done.get("error") or "")
+                if reply.startswith(who["name"] + ": "):
+                    reply = reply[len(who["name"]) + 2:]
+                out = json.dumps({
+                    "team_member": who["name"],
+                    "reply": reply[:_team.MAX_REPLY],
+                    "tools_they_used": [x.get("name") for x in done.get("tools_used") or []],
+                })
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out})
+            final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": out[:200]})
             continue
 
         if tool_name == schedule_job.TOOL:
@@ -857,7 +891,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         else:
             final_response["text"] = strip_reasoning(last.get("content", "") or "")
 
-    if final_response["text"] and not final_response["error"] and not job:
+    if final_response["text"] and not final_response["error"] and not job and not delegated:
         if member:
             # Its own short chat only, not long-term memory.
             from core import people
