@@ -223,6 +223,22 @@ def parse_tool_call(message: dict) -> Optional[dict]:
     return {"id": tc.get("id", ""), "name": name, "args": args}
 
 
+def describe_action(tool: str, args: dict) -> str:
+    """What an approval is for, in words the person can decide on: who an
+    email goes to and what it says, what a post says. It used to say only
+    "Tool call: send_email"."""
+    args = args if isinstance(args, dict) else {}
+    if tool == "send_email":
+        return (f"Send an email to {args.get('to', '?')}\nSubject: {args.get('subject', '')}\n\n"
+                f"{str(args.get('body', ''))[:1500]}")
+    if tool in ("post_to_facebook", "post_to_instagram"):
+        where = "Facebook" if tool == "post_to_facebook" else "Instagram"
+        text = args.get("content") or args.get("caption") or args.get("message") or ""
+        return f"Post to {where}:\n\n{str(text)[:1500]}"
+    shown = ", ".join(f"{k}: {str(v)[:200]}" for k, v in args.items() if v not in (None, ""))
+    return f"Use {tool}" + (f" ({shown})" if shown else "")
+
+
 async def execute_tool(name: str, args: dict) -> dict:
     """Execute a tool by name with the given arguments."""
     try:
@@ -264,6 +280,11 @@ async def execute_tool(name: str, args: dict) -> dict:
                 filter_query=args.get("filter", ""),
             )
             return {"content": json.dumps(slim_emails(service, result), default=str)}
+        elif name == "send_email":
+            from core.tools.integrations import send_email
+            result = await send_email(service=args.get("service", "google"), label=args.get("label", "default"),
+                                      to=args.get("to", ""), subject=args.get("subject", ""), body=args.get("body", ""))
+            return {"content": json.dumps(result, default=str)}
         elif name == "list_calendar_events":
             result = await list_calendar_events(
                 service=args.get("service", "google"),
@@ -787,7 +808,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             else:
                 result = intercept_action(
                     "oauth_access",
-                    f"{member['name']} wants to use {tool_name}",
+                    f"{member['name']} wants to: " + describe_action(tool_name, tool_args),
                     {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id,
                      "team_member": member["id"]},
                     source, caller_id, force_confirm=True,
@@ -809,7 +830,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             if effective_tier != PermissionTier.FULL_ACCESS:
                 result = intercept_action(
                     "oauth_access",
-                    f"Tool call: {tool_name}",
+                    describe_action(tool_name, tool_args),
                     {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id},
                     source,
                     caller_id,

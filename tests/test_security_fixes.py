@@ -74,10 +74,16 @@ class TestToolPermissionRegistry:
 
     def test_no_dead_write_tools_in_registry(self):
         """Regression: send_email and create_meeting were in the old hardcoded set
-        but never existed in execute_tool(). They must NOT be in the registry."""
+        but never existed in execute_tool(). Every write tool in the registry
+        must really run (send_email does since Nov 2026); create_meeting
+        still isn't one of the agent's tools."""
+        import asyncio
+        from core import agent
         from core.agent_config import TOOL_REGISTRY
-        assert "send_email" not in TOOL_REGISTRY
         assert "create_meeting" not in TOOL_REGISTRY
+        assert TOOL_REGISTRY["send_email"] == "write"
+        out = asyncio.run(agent.execute_tool("send_email", {}))  # nothing to send: says what's missing
+        assert "Unknown tool" not in out["content"] and "required" in out["content"]
 
 
 # ── C1: agent loop stuck-detection ─────────────────────────────────────

@@ -201,8 +201,8 @@ def slim_emails(service: str, data) -> dict:
     short preview, and whether it's been read. Outlook sends each email's
     whole body and dozens of other fields: about 132,500 tokens for 10
     emails (Nov 2026), so the model saw one or two before the cut-off."""
-    if not isinstance(data, dict) or data.get("error"):
-        return data
+    if not isinstance(data, dict) or data.get("error") or "emails" in data:
+        return data  # an error, or already trimmed (own-domain email)
     out = []
     for m in data.get("messages") or []:
         if not isinstance(m, dict):
@@ -234,14 +234,18 @@ async def read_email(service: str = "google", label: str = "default", filter_que
         }, label)
         return err or data
     if service == "email":
-        return {"error": "Use IMAP directly for custom email providers"}
+        import asyncio
+        from core.tools import own_email
+        try:
+            return await asyncio.to_thread(own_email.read, label, filter_query)
+        except own_email.EmailError as e:
+            return {"error": str(e)}
     return {"error": f"Email not supported for: {service}"}
 
 
 async def send_email(service: str = "google", label: str = "default", to: str = "", subject: str = "", body: str = "") -> dict:
-    check = _check_write_permission("send_email", service, label)
-    if not check.get("allowed"):
-        return {"error": "Approval required to send email", "approval": check}
+    # The approval is asked for once, before this runs (core/agent.py and
+    # core/mcp_server.py); an approved send then runs straight through.
     recipients = _recipients(to)
     if not recipients or not subject or not body:
         return {"error": "to, subject, and body are required"}
@@ -256,6 +260,13 @@ async def send_email(service: str = "google", label: str = "default", to: str = 
             "toRecipients": recipients, "subject": subject, "body": body,
         }, label)
         return err or {"sent": True, **data}
+    if service == "email":
+        import asyncio
+        from core.tools import own_email
+        try:
+            return await asyncio.to_thread(own_email.send, label, recipients, subject, body)
+        except own_email.EmailError as e:
+            return {"error": str(e)}
     return {"error": f"Send email not supported for: {service}"}
 
 
@@ -276,6 +287,7 @@ async def list_calendar_events(service: str = "google", label: str = "default", 
 
 
 async def create_meeting(service: str = "google", label: str = "default", title: str = "", start: str = "", end: str = "", attendees: list = None) -> dict:
+    # Not one of the agent's tools, so nothing asks before it runs: it asks itself.
     check = _check_write_permission("create_meeting", service, label)
     if not check.get("allowed"):
         return {"error": "Approval required to create meeting", "approval": check}
@@ -322,9 +334,7 @@ async def list_facebook_pages(service: str = "facebook", label: str = "default")
 
 
 async def post_to_facebook(service: str = "facebook", label: str = "default", page_id: str = "", content: str = "") -> dict:
-    check = _check_write_permission("post_to_facebook", service, label)
-    if not check.get("allowed"):
-        return {"error": "Approval required to post to Facebook", "approval": check}
+    # One approval, asked before this runs (core/agent.py, core/mcp_server.py).
     if not page_id or not content:
         return {"error": "page_id and content are required"}
     conn, err = await _ensure_token(service, label)
@@ -383,9 +393,7 @@ async def list_instagram_accounts(service: str = "instagram", label: str = "defa
 
 
 async def post_to_instagram(service: str = "instagram", label: str = "default", content: str = "", media_url: str = "") -> dict:
-    check = _check_write_permission("post_to_instagram", service, label)
-    if not check.get("allowed"):
-        return {"error": "Approval required to post to Instagram", "approval": check}
+    # One approval, asked before this runs (core/agent.py, core/mcp_server.py).
     if not media_url:
         return {"error": "Instagram posts need a picture: media_url must be a public https image address"}
     # Instagram publishes in two steps: upload the picture as a "container",
@@ -420,9 +428,7 @@ async def list_zoom_meetings(service: str = "zoom", label: str = "default", page
 
 
 async def schedule_zoom_meeting(service: str = "zoom", label: str = "default", title: str = "", start_time: str = "", duration: int = 60) -> dict:
-    check = _check_write_permission("schedule_zoom_meeting", service, label)
-    if not check.get("allowed"):
-        return {"error": "Approval required to schedule Zoom meeting", "approval": check}
+    # One approval, asked before this runs (core/agent.py, core/mcp_server.py).
     if not title or not start_time:
         return {"error": "title and start_time are required"}
     data, err = await _oc_run(

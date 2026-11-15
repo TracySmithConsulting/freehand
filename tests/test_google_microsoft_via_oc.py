@@ -60,10 +60,36 @@ def test_gmail_send_has_no_fake_sender(oc):
     assert "sender@example.com" not in str(sent)
 
 
-def test_send_still_needs_approval(monkeypatch):
-    monkeypatch.setattr(it, "_check_write_permission", lambda *a, **k: {"allowed": False, "id": 3})
-    out = run(it.send_email("google", "default", "a@x.com", "Hi", "Body"))
-    assert "Approval required" in out["error"]
+def test_send_still_needs_approval(oc, monkeypatch):
+    """The approval is asked once, by the agent, and an approved email is
+    then really sent (before, the yes led to a second approval, and the
+    email never went)."""
+    import json
+    from core import agent, security
+    calls, reply = oc
+    security.set_tier(security.PermissionTier.SEMI_AUTONOMOUS.value)
+    replies = iter([{"content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {
+        "name": "send_email", "arguments": json.dumps(
+            {"service": "google", "to": "sam@x.com", "subject": "Hi", "body": "Hello Sam"})}}]},
+        {"content": "It's waiting for your approval."}])
+
+    async def fake_llm(messages, tools=None, config=None):
+        return next(replies)
+    monkeypatch.setattr(agent, "call_llm", fake_llm)
+    run(agent.run_agent("Email Sam to say hello", source="selftest"))
+    assert calls == []  # held, not sent
+    pending = security.get_pending_approvals()
+    assert len(pending) == 1
+    assert pending[0]["description"].startswith("Send an email to sam@x.com\nSubject: Hi")
+    conn = security._get_conn()
+    conn.execute("UPDATE approvals SET status = 'approved' WHERE id = ?", (pending[0]["id"],))
+    conn.commit()
+    conn.close()
+    reply["value"] = {"ok": True, "data": {"messageId": "m1"}}
+    out = run(security.re_execute_approval(pending[0]["id"]))
+    assert json.loads(out["result"]["content"])["sent"] is True
+    assert calls[0]["action"] == "gmail.send_email"
+    assert security.get_pending_approvals() == []  # no second approval
 
 
 def test_not_connected_says_where_to_connect(oc, monkeypatch):

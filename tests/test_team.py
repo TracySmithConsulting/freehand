@@ -156,7 +156,7 @@ def test_ask_me_first_asks_even_at_full_access(thandi, llm, monkeypatch):
     assert ran == []
     from core.security import get_pending_approvals
     pending = get_pending_approvals()
-    assert len(pending) == 1 and "Thandi wants to use post_to_facebook" in pending[0]["description"]
+    assert len(pending) == 1 and pending[0]["description"].startswith("Thandi wants to: Post to Facebook")
 
 
 def test_just_do_it_posts_without_asking(llm, monkeypatch):
