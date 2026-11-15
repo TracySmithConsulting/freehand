@@ -317,6 +317,10 @@ async def execute_tool(name: str, args: dict) -> dict:
                 media_url=args.get("media_url", ""),
             )
             return {"content": json.dumps(result, default=str)}
+        elif name == "web_search":
+            from core.tools.web_search import web_search
+            result = await web_search(args.get("query", ""), args.get("max_results", 5))
+            return {"content": json.dumps(result, default=str)}
         elif name == "github_activity":
             from core.tools.github_read import github_activity
             result = await github_activity(args.get("repo", ""))

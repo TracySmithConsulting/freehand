@@ -246,6 +246,8 @@ TOOL_REGISTRY: Dict[str, str] = {
     "list_connections":       "read",
     # GitHub, read only (core/tools/github_read.py)
     "github_activity":        "read",
+    # Web search (core/tools/web_search.py)
+    "web_search":             "read",
     # Memory
     "search_memory":          "read",
     # Long-term memory (Hindsight). Local to this FreeHand and reversible
@@ -569,6 +571,18 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {},
             "required": [],
+        },
+    },
+    "web_search": {
+        "description": ("Search the web. Returns a few results, each with a title, address and a line or "
+                        "two. To read one in full, use extract_text on its address. Say where facts came from."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to search for, in a few words."},
+                "max_results": {"type": "integer", "description": "1 to 10. Default 5."},
+            },
+            "required": ["query"],
         },
     },
     "github_activity": {

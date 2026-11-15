@@ -1420,6 +1420,28 @@
         <span class="hotkey-hint" aria-hidden="true">Alt+A</span>
       </h2>
 
+      <fieldset id="web-search-settings">
+        <legend>Web search</legend>
+        <p class="hint">How FreeHand searches the web. DuckDuckGo is free and needs nothing. If it stops answering
+          because FreeHand searches a lot, Brave Search is sturdier, with a free key.</p>
+        <label><input type="radio" name="ws-provider" value="duckduckgo" checked> DuckDuckGo (free, no key)</label>
+        <label><input type="radio" name="ws-provider" value="brave"> Brave Search (free key, about 2,000 searches a month)</label>
+        <label><input type="radio" name="ws-provider" value="searxng"> My own SearXNG server</label>
+        <div class="form-group" id="ws-brave-group" hidden>
+          <label for="ws-brave-key">Brave Search key</label>
+          <input type="password" id="ws-brave-key" autocomplete="off" aria-describedby="ws-brave-hint">
+          <p class="hint" id="ws-brave-hint">Get one free at brave.com/search/api. It's kept on this computer and
+            sent only to Brave. <span id="ws-brave-saved"></span></p>
+        </div>
+        <div class="form-group" id="ws-searxng-group" hidden>
+          <label for="ws-searxng-url">SearXNG server address</label>
+          <input type="url" id="ws-searxng-url" placeholder="https://">
+        </div>
+        <button type="button" id="ws-save">Save</button>
+        <button type="button" class="secondary" id="ws-test">Try a search</button>
+        <p id="ws-result" role="status"></p>
+      </fieldset>
+
       <fieldset>
         <legend>Permission Tier</legend>
         <form id="tier-form" novalidate>
@@ -2936,6 +2958,47 @@
         });
 
         loadTeam();
+      })();
+
+      // ---- Web search settings ----
+      (function() {
+        var box = document.getElementById('web-search-settings');
+        if (!box || !box.querySelector) return;
+        function el(id) { return document.getElementById(id) || {}; }
+        function provider() {
+          var r = box.querySelector('input[name="ws-provider"]:checked');
+          return r ? r.value : 'duckduckgo';
+        }
+        function update() {
+          el('ws-brave-group').hidden = provider() !== 'brave';
+          el('ws-searxng-group').hidden = provider() !== 'searxng';
+        }
+        box.addEventListener('change', update);
+        function show(d) {
+          var r = box.querySelector('input[name="ws-provider"][value="' + d.provider + '"]');
+          if (r) r.checked = true;
+          el('ws-searxng-url').value = d.searxng_url || '';
+          el('ws-brave-saved').textContent = d.has_brave_key ? 'A key is saved. Leave the box empty to keep it.' : '';
+          update();
+        }
+        apiFetch('/api/web-search').then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(d) { if (d) show(d); }).catch(function() {});
+        el('ws-save').onclick = function() {
+          apiFetch('/api/web-search', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ provider: provider(), brave_key: el('ws-brave-key').value, searxng_url: el('ws-searxng-url').value })
+          })
+          .then(function(res) { return res.json().then(function(d) { if (!res.ok) throw new Error(d.detail); return d; }); })
+          .then(function(d) { el('ws-brave-key').value = ''; show(d); el('ws-result').textContent = 'Saved.'; })
+          .catch(function(err) { el('ws-result').textContent = err.message || 'That could not be saved.'; });
+        };
+        el('ws-test').onclick = function() {
+          el('ws-result').textContent = 'Searching...';
+          apiFetch('/api/web-search/test', { method: 'POST' })
+            .then(function(res) { return res.json(); })
+            .then(function(d) { el('ws-result').textContent = d.message; })
+            .catch(function() { el('ws-result').textContent = 'The search could not be tried.'; });
+        };
       })();
 
       // ---- Settings Form ----
