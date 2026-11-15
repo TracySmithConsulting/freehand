@@ -288,19 +288,45 @@ def delete(skill_id) -> dict:
     return {"deleted": True}
 
 
-def prompt_index() -> str:
+PROMPT_DESCRIBED = 5  # skills described in full; the rest by name only
+_STOP = {"the", "and", "for", "with", "that", "this", "what", "when", "your", "from", "have", "about",
+         "please", "can", "you", "could", "would", "make", "help", "want", "need", "into", "some"}
+
+
+def _words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 2 and w not in _STOP}
+
+
+def prompt_index(query: str = "") -> str:
     """The skills list for FreeHand's instructions: active first, then
-    drafts. Archived skills are left out."""
+    drafts. Archived skills are left out.
+
+    Economy (Nov 2026): the skills that match the message are described in
+    full, up to five; the rest are listed by name only, so the model knows
+    they exist (use_skill reads one). Describing all of them cost about
+    1,000 tokens on every message."""
     skills = [s for s in scan() if s["status"] != "archived"]
     if not skills:
         return ""
     skills.sort(key=lambda s: (s["status"] != "active", s["name"]))
-    lines = []
-    for s in skills[:PROMPT_LIST_LIMIT]:
+    skills = skills[:PROMPT_LIST_LIMIT]
+    asked = _words(query)
+    scored = [(len(asked & _words(s["name"].replace("-", " ") + " " + s["description"])), s) for s in skills]
+    if query:
+        described = {id(s) for score, s in sorted(scored, key=lambda x: -x[0])[:PROMPT_DESCRIBED] if score}
+    else:  # no message to go by: describe them all, as before
+        described = {id(s) for s in skills}
+    lines, names = [], []
+    for s in skills:
         tag = "" if s["status"] == "active" else " (draft, untested)"
-        desc = s["description"][:140] + ("..." if len(s["description"]) > 140 else "")
-        lines.append(f"- {s['name']}{tag}: {desc}")
-    more = len(skills) - PROMPT_LIST_LIMIT
+        if id(s) in described:
+            desc = s["description"][:140] + ("..." if len(s["description"]) > 140 else "")
+            lines.append(f"- {s['name']}{tag}: {desc}")
+        else:
+            names.append(s["name"] + ("" if s["status"] == "active" else " (draft)"))
+    if names:
+        lines.append(("- Also: " if lines else "- ") + ", ".join(names))
+    more = len([s for s in scan() if s["status"] != "archived"]) - PROMPT_LIST_LIMIT
     if more > 0:
         lines.append(f"- ...and {more} more on the Skills page")
     return "\n".join(lines)

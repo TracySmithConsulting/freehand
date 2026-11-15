@@ -17,6 +17,26 @@ Too much also makes replies slower, and confuses small models.
 A typical message went from about **172,000 tokens to about 5,400**
 (November 2026).
 
+## Everyday chat (November 2026, second pass)
+
+Measured with a real setup (`scripts/measure_prompt.py`), an everyday
+message was still about 6,800 tokens: every tool (about 4,000), every skill
+described (about 1,000), 15 memories (about 600). Now:
+
+| Part | Change |
+|---|---|
+| Tools | By topic for every model, not only small ones: the core tools always, the rest when the words call for them, and `load_tools` for anything missed. `llm.all_tools: true` sends them all again. Saving skills and forgetting memories are only sent when the words are about them (saving how a skill went comes as soon as a skill is used). Reading a web page goes with searching, not with the form-filling tools. |
+| Skills | Up to five that match the message are described; the rest are listed by name. |
+| Memories | 8 instead of 15. |
+| Emails | Trimmed to sender, subject, date, a preview and read or unread. Outlook sent about 132,500 tokens for 10 emails, so the model only ever saw the first one or two. |
+
+Everyday messages came to about 3,400 to 4,600 tokens. "Thanks, that is all
+for now" used 3,574; "What did I get in my inbox today?" went from 33,702
+tokens in 6 calls to 17,833 in 3.
+
+`tests/test_everyday_economy.py` fails if the always-sent tools grow past
+about 1,300 tokens again.
+
 ## Lean mode
 
 For small models, and models running on this computer through Ollama, which

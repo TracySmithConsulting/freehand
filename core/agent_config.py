@@ -708,14 +708,14 @@ def build_job_prompt() -> str:
     )
 
 
-def build_system_prompt(lean: bool = False) -> str:
+def build_system_prompt(lean: bool = False, query: str = "") -> str:
     """FreeHand's instructions to the model.
 
     ``lean`` (small and local models, core/tool_selection.py) leaves out
     what the tool descriptions already say and the lists a small model
     doesn't need, so more of its limited context is left for the chat.
     """
-    prompt = _build_system_prompt()
+    prompt = _build_system_prompt(query)
     if not lean:
         return prompt
     import re as _re
@@ -728,7 +728,7 @@ def build_system_prompt(lean: bool = False) -> str:
     return _re.sub(r"\n{3,}", "\n\n", prompt).strip() + "\n"
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(query: str = "") -> str:
     settings = _load_settings()
     tier = settings.get("tier", "semi_autonomous")
     connected = []
@@ -752,7 +752,7 @@ def _build_system_prompt() -> str:
 
     try:
         from core import skills
-        skills_str = skills.prompt_index() or "  (no skills yet)"
+        skills_str = skills.prompt_index(query) or "  (no skills yet)"
     except Exception:
         skills_str = "  (skills unavailable)"
 

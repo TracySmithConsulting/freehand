@@ -196,6 +196,32 @@ def _google_time(value: str) -> dict:
     return {"dateTime": value} if has_tz else {"dateTime": value, "timeZone": "UTC"}
 
 
+def slim_emails(service: str, data) -> dict:
+    """What the model needs from a list of emails: who, subject, when, a
+    short preview, and whether it's been read. Outlook sends each email's
+    whole body and dozens of other fields: about 132,500 tokens for 10
+    emails (Nov 2026), so the model saw one or two before the cut-off."""
+    if not isinstance(data, dict) or data.get("error"):
+        return data
+    out = []
+    for m in data.get("messages") or []:
+        if not isinstance(m, dict):
+            continue
+        if service == "microsoft":
+            addr = (m.get("from") or {}).get("emailAddress") or {}
+            sender = f"{addr.get('name') or ''} <{addr.get('address') or ''}>".strip()
+            out.append({"id": m.get("id"), "from": sender, "subject": m.get("subject") or "",
+                        "date": m.get("receivedDateTime") or "", "unread": not m.get("isRead", True),
+                        "preview": (m.get("bodyPreview") or "")[:300],
+                        "attachments": bool(m.get("hasAttachments"))})
+        else:
+            labels = m.get("labelIds") or []
+            out.append({"id": m.get("messageId"), "from": m.get("sender") or "", "subject": m.get("subject") or "",
+                        "date": m.get("messageTimestamp") or "", "unread": "UNREAD" in labels,
+                        "preview": (m.get("snippet") or "")[:300]})
+    return {"emails": out, "count": len(out)}
+
+
 async def read_email(service: str = "google", label: str = "default", filter_query: str = "") -> dict:
     if service == "google":
         data, err = await _oc_run(service, "email", "fetch_emails", {

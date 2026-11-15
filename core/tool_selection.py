@@ -25,38 +25,49 @@ LOAD_TOOLS = "load_tools"
 # FreeHand's own tools, by group. Anything not listed is "other" and goes
 # with the core group (so a new tool is never silently unavailable).
 BUILTIN_GROUPS: dict[str, tuple[str, ...]] = {
-    "core": ("remember", "forget_memory", "search_memory", "use_skill", "skill_outcome",
-             "save_skill", "list_connections"),
+    "core": ("remember", "search_memory", "use_skill", "list_connections"),
+    # Rarely needed, so only when the words call for them (Nov 2026).
+    # skill_care is also loaded as soon as a skill is used.
+    "skill_care": ("save_skill", "skill_outcome"),
+    "forget": ("forget_memory",),
     "email": ("read_email", "send_email"),
     "calendar": ("list_calendar_events", "create_calendar_event"),
     "zoom": ("list_zoom_meetings", "schedule_zoom_meeting"),
     "github": ("github_activity",),
-    "search": ("web_search",),
+    # Searching and reading a page go together; the browser group is for
+    # working on a page (clicking, filling in forms).
+    "search": ("web_search", "extract_text"),
     "facebook": ("list_facebook_pages", "post_to_facebook"),
     "instagram": ("list_instagram_accounts", "post_to_instagram"),
     "documents": ("read_docx", "write_docx", "read_xlsx", "read_pptx"),
     "sheets": ("read_sheets", "read_sheet_range"),
-    "browser": ("get_axtree", "extract_text", "take_screenshot", "navigate", "click", "fill",
+    "browser": ("get_axtree", "take_screenshot", "navigate", "click", "fill",
                 "get_validation_summary", "save_checkpoint", "restore_checkpoint",
                 "delete_checkpoint", "list_checkpoints", "start_request_capture",
                 "get_captured_requests", "stop_request_capture"),
 }
 
 GROUP_SUMMARIES = {
+    "skill_care": "save a new skill, or say how a skill went",
+    "forget": "forget something FreeHand remembers",
     "email": "read and send email (Gmail, Outlook)",
     "calendar": "calendar events",
     "zoom": "Zoom meetings",
     "github": "GitHub projects: issues, pull requests and test runs (read only)",
-    "search": "search the web",
+    "search": "search the web and read web pages",
     "facebook": "Facebook pages and posts",
     "instagram": "Instagram account, posts, comments and messages",
     "documents": "Word, Excel and PowerPoint files",
     "sheets": "Google Sheets",
-    "browser": "open and read web pages, fill in forms",
+    "browser": "work on web pages: click, fill in forms, screenshots",
 }
 
 # Words that bring a group in. Whole words, case-insensitive.
 KEYWORDS: dict[str, tuple[str, ...]] = {
+    "skill_care": ("skill", "skills", "learned", "learnt", "lesson", "procedure", "steps", "worked",
+                   "recipe", "workflow"),
+    "forget": ("forget", "forgot", "wrong", "incorrect", "remove", "delete", "mistake", "outdated",
+               "untrue", "remembered"),
     "email": ("email", "e-mail", "mail", "inbox", "gmail", "outlook", "reply", "send"),
     "calendar": ("calendar", "diary", "meeting", "meetings", "appointment", "appointments",
                  "event", "events", "schedule", "today", "tomorrow", "week", "busy", "free"),
@@ -64,14 +75,15 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "github": ("github", "repo", "repository", "repositories", "issue", "issues", "pr", "prs",
                "pull", "pulls"),
     "search": ("search", "google", "look", "find", "news", "latest", "current", "price", "prices",
-               "weather", "research", "online", "web", "internet", "compare", "who", "where"),
+               "weather", "research", "online", "web", "internet", "compare", "who", "where",
+               "website", "page", "url", "link", "http", "https", "www", "article", "read"),
     "facebook": ("facebook", "fb", "page", "pages", "meta"),
     "instagram": ("instagram", "insta", "ig", "reel", "reels", "story", "stories"),
     "documents": ("doc", "docx", "word", "document", "documents", "excel", "xlsx", "spreadsheet",
                   "powerpoint", "pptx", "slides", "presentation", "file", "files"),
     "sheets": ("sheet", "sheets", "spreadsheet"),
-    "browser": ("website", "web", "site", "page", "url", "link", "http", "https", "www",
-                "browse", "browser", "form", "online", "search", "look", "google"),
+    "browser": ("website", "site", "url", "http", "https", "www", "browse", "browser", "form", "forms",
+                "click", "fill", "screenshot", "login", "sign", "button"),
 }
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9.\-']*")
@@ -142,8 +154,13 @@ def load_tools_schema(groups: list[str]) -> dict:
     }
 
 
-def select(all_tools: list[dict], texts: Iterable[str], lean: bool = False) -> tuple[list[dict], dict]:
+def select(all_tools: list[dict], texts: Iterable[str], lean: bool = False,
+           by_topic: bool = False) -> tuple[list[dict], dict]:
     """The tools to send now, and a plan for load_tools.
+
+    ``lean`` or ``by_topic``: only the core tools always, and the other
+    groups when the words call for them (load_tools brings in the rest).
+    Otherwise every one of FreeHand's own groups goes every time.
 
     Returns (tools, state) where state holds every group's tools so
     ``add_group`` can load one later in the same turn.
@@ -162,7 +179,8 @@ def select(all_tools: list[dict], texts: Iterable[str], lean: bool = False) -> t
     send: list[dict] = []
     loaded: set[str] = set()
     for group, tools in by_group.items():
-        always = group == "core" or (not lean and group not in add_on_groups and group in BUILTIN_GROUPS)
+        always = group == "core" or (not (lean or by_topic) and group not in add_on_groups
+                                     and group in BUILTIN_GROUPS)
         if always or group in wanted:
             send.extend(tools)
             loaded.add(group)
@@ -187,6 +205,13 @@ def add_group(tools: list[dict], state: dict, group: str) -> tuple[list[dict], s
     new = rest + added + ([load_tools_schema(waiting)] if waiting else [])
     names = ", ".join(_name(t) for t in added[:12]) + (" ..." if len(added) > 12 else "")
     return new, f"Loaded {len(added)} {group} tools: {names}. Use them now."
+
+
+def tools_by_topic(config: dict) -> bool:
+    """Tools by topic for every model (Nov 2026): it was about 4,000 tokens
+    of tools on every message, whatever it was about. Setting llm.all_tools:
+    true sends them all again."""
+    return str(config.get("all_tools", "")).lower() not in ("true", "1", "on", "yes")
 
 
 def lean_mode(config: dict) -> bool:
