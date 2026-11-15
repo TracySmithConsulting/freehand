@@ -40,5 +40,26 @@ under the same name could change any of that without them knowing. A new name
 lets everyone tell the versions apart, and that protects your users as well as
 ours.
 
+## Please credit FreeHand
+
+FreeHand took a lot of work to build. If your project uses or is based on
+it, please say so where people will see it. We ask this as a courtesy; the
+licence itself only requires you to keep the copyright notice in the code.
+
+- **Trying it out or using it privately:** no credit needed. Enjoy it.
+- **Sharing your own version, or building a product or service on it:**
+  please show a credit in your app's About or Help screen, your website, or
+  your documentation, something like:
+
+  > Based on FreeHand by Tracy Smith Consulting
+  > (https://github.com/TracySmithConsulting/freehand)
+
+- **Running FreeHand for clients:** say that your service "runs FreeHand",
+  with the same link.
+
+If you'd like to credit FreeHand in another way that suits your project
+better, that's fine too. We'd love to hear what you've built: tell us by
+opening an issue.
+
 For a plain-language guide to what the licence allows, see
 [Using, sharing and changing FreeHand](docs/LICENSING.md).
