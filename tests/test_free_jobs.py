@@ -86,7 +86,7 @@ def test_repeats_become_cron():
     ({"date": "next blursday"}, "today, tomorrow"),
     ({"repeat": "monthly", "day_of_month": 31}, "1 to 28"),
     ({"repeat": "weekly"}, "day of the week"),
-    ({"repeat": "hourly"}, "Choose once"),
+    ({"repeat": "fortnightly"}, "Choose once"),
 ])
 def test_mistakes_get_plain_answers(spec, words):
     with pytest.raises(ValueError, match=words):

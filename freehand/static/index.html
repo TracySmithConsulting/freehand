@@ -1117,6 +1117,8 @@
           <legend>What should FreeHand do?</legend>
           <label><input type="radio" name="job-type" value="remind" checked> Remind me (free)</label>
           <label><input type="radio" name="job-type" value="todos"> Send me my to-do list (free)</label>
+          <label><input type="radio" name="job-type" value="check_email"> Tell me about new emails (free to check)</label>
+          <label><input type="radio" name="job-type" value="check_page"> Tell me when a web page changes (free to check)</label>
           <label><input type="radio" name="job-type" value="think"> Do something for me (uses AI each time)</label>
         </fieldset>
         <div class="form-group" id="task-title-group">
@@ -1125,10 +1127,32 @@
                  aria-describedby="task-title-error">
           <p class="error" id="task-title-error" role="alert"></p>
         </div>
+        <div class="form-group" id="task-sender-group" hidden>
+          <label for="task-sender">From (part of their name or email address)</label>
+          <input type="text" id="task-sender" placeholder="For example: fnb">
+        </div>
+        <div class="form-group" id="task-url-group" hidden>
+          <label for="task-url">The web page's address</label>
+          <input type="url" id="task-url" placeholder="https://">
+        </div>
+        <div class="form-group" id="task-words-group" hidden>
+          <label for="task-words">Only when it mentions (optional; separate words with commas)</label>
+          <input type="text" id="task-words" placeholder="For example: statement, payment">
+        </div>
+        <fieldset id="task-then-group" hidden>
+          <legend>When it finds something</legend>
+          <label><input type="radio" name="job-then" value="tell" checked> Just tell me (free)</label>
+          <label><input type="radio" name="job-then" value="think"> Read it and tell me what matters (uses AI only then)</label>
+          <div class="form-group">
+            <label for="task-instructions">What should FreeHand look out for? (optional)</label>
+            <input type="text" id="task-instructions" placeholder="For example: tell me if I need to pay anything">
+          </div>
+        </fieldset>
         <div class="form-group">
           <label for="task-repeat">How often</label>
           <select id="task-repeat">
             <option value="once">Once</option>
+            <option value="hourly">Every hour</option>
             <option value="daily">Every day</option>
             <option value="weekdays">Every weekday (Monday to Friday)</option>
             <option value="weekly">Every week</option>
@@ -2431,10 +2455,19 @@
 
       // Show only the questions that matter for the choices made.
       function updateJobForm() {
-        var type = jobType(), repeat = jobEl('task-repeat').value || 'once';
+        var type = jobType(), isCheck = type === 'check_email' || type === 'check_page';
+        var repeatEl = jobEl('task-repeat');
+        // A check that runs once only notes what's there: checks repeat.
+        if (isCheck && repeatEl.value === 'once') repeatEl.value = 'hourly';
+        var repeat = repeatEl.value || 'once';
         jobEl('task-title-group').hidden = type === 'todos';
         jobEl('task-title-label').textContent =
-          type === 'think' ? 'What should FreeHand do?' : 'What to remind you about';
+          type === 'think' ? 'What should FreeHand do?' :
+          isCheck ? 'A name for this check (optional)' : 'What to remind you about';
+        jobEl('task-sender-group').hidden = type !== 'check_email';
+        jobEl('task-url-group').hidden = type !== 'check_page';
+        jobEl('task-words-group').hidden = !isCheck;
+        jobEl('task-then-group').hidden = !isCheck;
         jobEl('task-date-group').hidden = repeat !== 'once';
         jobEl('task-weekday-group').hidden = repeat !== 'weekly';
         jobEl('task-dom-group').hidden = repeat !== 'monthly';
@@ -2452,6 +2485,15 @@
         clearError('task-form-error');
         var type = jobType();
         var title = document.getElementById('task-title').value.trim();
+        var isCheck = type === 'check_email' || type === 'check_page';
+        var sender = jobEl('task-sender').value ? jobEl('task-sender').value.trim() : '';
+        var url = jobEl('task-url').value ? jobEl('task-url').value.trim() : '';
+        var words = jobEl('task-words').value ? jobEl('task-words').value.trim() : '';
+        if (isCheck && !title) {
+          title = type === 'check_email'
+            ? 'New emails' + (sender ? ' from ' + sender : '') + (words ? ' about ' + words : '')
+            : 'Changes to ' + (url || 'a web page');
+        }
         if (type !== 'todos' && !title) {
           showError('task-title-error', type === 'think' ? 'Say what FreeHand should do.' : 'Say what to remind you about.');
           document.getElementById('task-title').focus();
@@ -2467,6 +2509,12 @@
           day_of_month: document.getElementById('task-dom').value
         };
         if (type === 'remind') body.message = 'Reminder: ' + title.charAt(0).toLowerCase() + title.slice(1);
+        if (isCheck) {
+          var then = taskForm.querySelector('input[name="job-then"]:checked');
+          body.sender = sender; body.url = url; body.words = words;
+          body.then = then ? then.value : 'tell';
+          body.instructions = jobEl('task-instructions').value || '';
+        }
         var cron = document.getElementById('task-cron').value.trim();
         if (cron) { body.cron_schedule = cron; body.title = body.what; }
 
@@ -2485,6 +2533,7 @@
           showStatus('Job added: ' + data.title + '. ' + data.description + '.', 'success');
           document.getElementById('task-title').value = '';
           document.getElementById('task-cron').value = '';
+          ['task-sender', 'task-url', 'task-words', 'task-instructions'].forEach(function(id) { jobEl(id).value = ''; });
           loadTasks();
         })
         .catch(function(err) {
@@ -2523,7 +2572,7 @@
                   '<span class="task-title">' + escapeHtml(task.title) + '</span>' +
                   (words[task.status] ? ' <span class="badge badge-' + escapeHtml(task.status) + '">' + words[task.status] + '</span>' : '') +
                   '<div class="task-meta">' + escapeHtml(task.description) + '. ' +
-                    (task.status === 'todo' ? '' : (task.free ? 'Free.' : 'Uses AI each time.')) + '</div>' +
+                    (task.status === 'todo' ? '' : escapeHtml(task.cost || (task.free ? 'Free.' : 'Uses AI each time.'))) + '</div>' +
                   last +
                 '</div>' +
                 (canPause ? '<button class="secondary" onclick="pauseTask(' + task.id + ', ' + (task.status === 'pending') + ')" aria-label="' +
