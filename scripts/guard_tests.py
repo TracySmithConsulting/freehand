@@ -66,9 +66,9 @@ def verdict(base: dict, head: dict, overridden: bool) -> tuple[bool, str]:
     """(passes, plain-words explanation)."""
     problems = []
     if head["tests"] < base["tests"]:
-        problems.append(f"it has {base['tests'] - head['tests']} fewer tests ({base['tests']} before, {head['tests']} now)")
+        problems.append(f"has {base['tests'] - head['tests']} fewer tests ({base['tests']} before, {head['tests']} now)")
     if head["skips"] > base["skips"]:
-        problems.append(f"it switches off {head['skips'] - base['skips']} more tests with skip or xfail")
+        problems.append(f"switches off {head['skips'] - base['skips']} more tests with skip or xfail")
     summary = f"Tests: {base['tests']} before, {head['tests']} now. Skip/xfail markers: {base['skips']} before, {head['skips']} now."
     if not problems:
         return True, "The tests are as strong as before. " + summary

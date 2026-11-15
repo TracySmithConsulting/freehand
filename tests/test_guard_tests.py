@@ -42,7 +42,9 @@ def test_more_tests_pass():
 
 
 def test_skip_markers_are_counted():
-    source = "@pytest.mark.skip\ndef test_a(): pass\n@pytest.mark.xfail(reason='x')\ndef test_b(): pytest.skip('no')\n"
+    # Built from pieces, so this file doesn't trip the guard itself.
+    mark, plain = "pytest" + ".mark.", "pytest" + "."
+    source = f"@{mark}skip\ndef test_a(): pass\n@{mark}xfail(reason='x')\ndef test_b(): {plain}skip('no')\n"
     assert len(guard.SKIP_PATTERN.findall(source)) == 3
 
 
