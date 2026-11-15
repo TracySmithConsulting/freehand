@@ -256,12 +256,14 @@ async def execute_tool(name: str, args: dict) -> dict:
             result = await screenshot(args.get("url", ""), mode=args.get("mode", "headless"), full_page=args.get("full_page", False))
             return {"content": json.dumps(result, default=str)}
         elif name == "read_email":
+            from core.tools.integrations import slim_emails
+            service = args.get("service", "google")
             result = await read_email(
-                service=args.get("service", "google"),
+                service=service,
                 label=args.get("label", "default"),
                 filter_query=args.get("filter", ""),
             )
-            return {"content": json.dumps(result, default=str)}
+            return {"content": json.dumps(slim_emails(service, result), default=str)}
         elif name == "list_calendar_events":
             result = await list_calendar_events(
                 service=args.get("service", "google"),
@@ -470,6 +472,11 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         people.reset(token)
 
 
+# The memories that matter most for a message (Hindsight ranks them). Was 15:
+# the first 8 carry nearly all the use, at about half the tokens.
+MEMORIES_SENT = 8
+
+
 async def _run_member(command: str, source: str, caller_id: str, job: bool, member: dict,
                       delegated: bool = False) -> dict:
     """A team member's turn: checks first (paused, over its limit), then the
@@ -506,7 +513,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         system_prompt = team.prompt(member, scheduled=job, delegated=delegated)
         model_cfg = team.model_config(member)
     else:
-        system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean)
+        system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean, query=command)
         model_cfg = None
 
     # Memory (Nov 2026). Long-term: the few facts that matter for this
@@ -523,7 +530,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         system_prompt += (
             "\n## What you remember about the user\n"
             "Use these when they help; don't recite them unprompted.\n"
-            + "\n".join(f"- {line}" for line in remembered[:5 if lean or member else 15])
+            + "\n".join(f"- {line}" for line in remembered[:5 if lean or member else MEMORIES_SENT])
             + "\n"
         )
 
@@ -551,7 +558,8 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             [s for s in list_available_tools() if s["function"]["name"] in allowed], [command], lean=False)
     else:
         allowed = None
-        tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
+        tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean,
+                                                  by_topic=tool_selection.tools_by_topic(get_llm_config()))
     if not job and not delegated:
         tools = [*tools, ask_user.schema()]
     # The main FreeHand can hand work to a team member (core/team.py). Team
@@ -749,6 +757,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             final_response["tools_used"].append({"name": tool_name, "args": tool_args,
                                                  "result": out["content"][:200]})
             continue
+
+        if tool_name == "use_skill" and tool_state:
+            # After using a skill, FreeHand may need to say how it went.
+            tools, _ = tool_selection.add_group(tools, tool_state, "skill_care")
 
         # ── Permission check via central registry (C2 fix) ──────────────
         # Unknown tools are treated as 'unknown' permission — fail closed,
