@@ -560,6 +560,11 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     # while a scheduled job is itself running, so a job can't make more jobs.
     if schedule_job.wanted([command, *earlier]) and not job and not member and not command.startswith(DUE_PREFIX):
         tools.append(schedule_job.schema())
+    # Stopping and changing jobs from the chat (core/manage_jobs.py), when
+    # the person has jobs and the message is about them.
+    from core import manage_jobs
+    if not job and not member and manage_jobs.wanted([command, *earlier]):
+        tools.append(manage_jobs.schema())
     # The user's own computer, through the FreeHand Helper: only while one
     # is connected, and only when the message is about the computer (and
     # someone is there to approve it, so not in a scheduled job).
@@ -668,6 +673,16 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
                     "reply": reply[:_team.MAX_REPLY],
                     "tools_they_used": [x.get("name") for x in done.get("tools_used") or []],
                 })
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out})
+            final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": out[:200]})
+            continue
+
+        if tool_name == manage_jobs.TOOL and not job and not member:
+            try:
+                out = await asyncio.to_thread(manage_jobs.run_tool, tool_args, source, caller_id, command)
+            except Exception as e:
+                out = json.dumps({"problem": f"That couldn't be done: {str(e)[:150]}"})
             messages.append(llm_resp)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out})
             final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": out[:200]})

@@ -321,8 +321,7 @@ def run_tool(args: dict, source: str = "", caller_id: str = "") -> str:
     if job["kind"] == "check":
         note += " The first check only notes what's there now; after that, only new things count."
     # So the reply doesn't promise what FreeHand can't do.
-    facts = ["To stop or change it, the person uses the Scheduled jobs screen (Pause or Delete); "
-             "it can't be stopped from the chat yet."]
+    facts = ["The person can stop, pause or change it by asking in the chat, or on the Scheduled jobs screen."]
     if job["action"] and job["action"].get("check") == "email":
         facts.append("The check sees each email's sender, subject and first few lines, not the whole email.")
     return json.dumps({

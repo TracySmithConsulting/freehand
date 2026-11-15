@@ -979,27 +979,11 @@ async def set_job_limits(body: dict):
 @app.post("/api/tasks/{task_id}/pause", dependencies=[Depends(require_api_key)])
 async def pause_task(task_id: int, body: dict):
     """Pause or resume a job. Resuming works out its next time again."""
-    from core import scheduler
-    paused = bool(body.get("paused", True))
-    conn = scheduler._tasks_conn()
-    try:
-        scheduler._ensure_deliver_column(conn)
-        row = conn.execute("SELECT cron_schedule, next_run, status FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if row is None:
-            raise HTTPException(status_code=404, detail="Job not found")
-        if paused:
-            conn.execute("UPDATE tasks SET status = 'paused' WHERE id = ?", (task_id,))
-        else:
-            nxt = row["next_run"]
-            if row["cron_schedule"]:
-                found = scheduler._cron_next(row["cron_schedule"], tz=scheduler.local_tz())
-                nxt = scheduler._iso_utc(found) if found else None
-            conn.execute("UPDATE tasks SET status = 'pending', fail_count = 0, next_run = ? WHERE id = ?",
-                         (nxt, task_id))
-        conn.commit()
-    finally:
-        conn.close()
-    return {"id": task_id, "status": "paused" if paused else "pending"}
+    from core import manage_jobs
+    status = manage_jobs.set_paused(task_id, bool(body.get("paused", True)))
+    if status is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"id": task_id, "status": status}
 
 
 @app.post("/api/timezone", dependencies=[Depends(require_api_key)])
