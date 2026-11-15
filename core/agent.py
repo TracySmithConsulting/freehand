@@ -482,8 +482,13 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
     # message counts too, so "and post it there" still finds Facebook.
     earlier = [m["content"] for m in history if m.get("role") == "user"][-1:]
     tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
-    from core import ask_user, helper_hub
+    from core import ask_user, helper_hub, schedule_job
+    from core.scheduler import DUE_PREFIX
     tools = [*tools, ask_user.schema()]
+    # Reminders and scheduled jobs, when the message is about a time. Not
+    # while a scheduled job is itself running, so a job can't make more jobs.
+    if schedule_job.wanted([command, *earlier]) and not command.startswith(DUE_PREFIX):
+        tools.append(schedule_job.schema())
     # The user's own computer, through the FreeHand Helper: only while one
     # is connected, and only when the message is about the computer.
     if helper_hub.device_now():
@@ -568,6 +573,18 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
             work_turns += 1
             messages.append(llm_resp)
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": ask_user.refusal()})
+            continue
+
+        if tool_name == schedule_job.TOOL:
+            # Saving a job the person asked for: no approval needed. What it
+            # does when it runs goes through the usual permission rules.
+            try:
+                out = await asyncio.to_thread(schedule_job.run_tool, tool_args, source, caller_id)
+            except Exception as e:
+                out = json.dumps({"saved": False, "problem": f"The job couldn't be saved: {str(e)[:150]}"})
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out})
+            final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": out[:200]})
             continue
 
         if tool_name == tool_selection.LOAD_TOOLS and loads < 3:
