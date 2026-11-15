@@ -223,6 +223,8 @@ async def _think(action: dict, report: str) -> Optional[str]:
     ])
     if resp.get("error"):
         return None
+    if isinstance(resp.get("_usage"), dict):
+        action["last_usage"] = resp["_usage"]  # counted by the scheduler
     return (resp.get("content") or "").strip() or None
 
 

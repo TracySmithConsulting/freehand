@@ -26,7 +26,7 @@ def fake_agent(monkeypatch):
     calls = []
     reply = {"text": "Reminder: phone the dentist.", "tools_used": [], "error": None}
 
-    async def run_agent(command, max_turns=5, source="", caller_id=""):
+    async def run_agent(command, max_turns=5, source="", caller_id="", job=False):
         calls.append(command)
         return dict(reply)
 

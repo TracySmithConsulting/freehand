@@ -34,6 +34,7 @@ _scheduler: Optional[BackgroundScheduler] = None
 DEFAULT_CRON = "0 2 * * *"
 DUE_PREFIX = "It's time for a scheduled task the person set up earlier: "
 MAX_FAILURES = 3  # failures in a row before a task pauses itself
+JOB_STEPS = 5  # most model steps a "think" job may take per run
 TASK_KEYWORDS = {"task", "todo", "todo:", "schedule", "reminder", "remember", "don't forget"}
 
 # Single in-process writer lock for 00_Scribble.md. The sweep rewrites the
@@ -456,7 +457,30 @@ def _ensure_deliver_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'think'")
     if "action" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN action TEXT")
+    # What a job used this month: AI runs and tokens (build step 4).
+    if "usage_month" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN usage_month TEXT")
+        conn.execute("ALTER TABLE tasks ADD COLUMN month_runs INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE tasks ADD COLUMN month_tokens INTEGER NOT NULL DEFAULT 0")
     conn.commit()
+
+
+def _add_usage(conn: sqlite3.Connection, task_id: int, usage: Optional[dict], now: datetime) -> None:
+    """Count one AI run and its tokens against this month (a new month
+    starts again from nought)."""
+    if not usage:
+        return
+    tokens = int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
+    month = now.astimezone(local_tz()).strftime("%Y-%m")
+    row = conn.execute("SELECT usage_month FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        return
+    if row[0] != month:
+        conn.execute("UPDATE tasks SET usage_month = ?, month_runs = 1, month_tokens = ? WHERE id = ?",
+                     (month, tokens, task_id))
+    else:
+        conn.execute("UPDATE tasks SET month_runs = month_runs + 1, month_tokens = month_tokens + ? WHERE id = ?",
+                     (tokens, task_id))
 
 
 def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = None,
@@ -669,16 +693,20 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 try:
                     action = json.loads(row["action"] or "{}")
                     text, kept = _run_coro(checks.run(action, llm_ok=llm_ok))
+                    _add_usage(conn, row["id"], kept.pop("last_usage", None), now)
                     # What the check saw this time, so next time only new things count.
                     conn.execute("UPDATE tasks SET action = ? WHERE id = ?", (json.dumps(kept), row["id"]))
-                    conn.commit()  # before the notice is saved, or its write waits on this one
                     result = {"text": text, "error": None}
                 except checks.CheckError as e:
                     result = {"text": "", "error": str(e), "plain": str(e)}
                 except Exception as e:
                     result = {"text": "", "error": str(e)}
             else:
-                result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=3, source="cli"))
+                # Short instructions, no chat history, only the tools it needs,
+                # and at most JOB_STEPS steps (core/agent.py, job=True).
+                result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=JOB_STEPS,
+                                             source="cli", job=True))
+                _add_usage(conn, row["id"], result.get("usage"), now)
             error = result.get("error")
             reply = (result.get("text") or "").strip()
             fails = (row["fail_count"] or 0) + 1 if error else 0
@@ -692,6 +720,10 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                              f"I tried {fails} times, so I've stopped trying. To try again, "
                              "add it again under Scheduled jobs.")
             if reply:
+                # The notice is written on its own connection: anything this
+                # one has written must be saved first, or that write waits on
+                # a locked database and the message is lost.
+                conn.commit()
                 _run_coro(notices.deliver(reply, title=row["title"],
                                           target=row["deliver_to"], person=row["person"]))
             stamp = _iso_utc(datetime.now(timezone.utc))

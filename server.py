@@ -845,6 +845,7 @@ async def get_tasks():
         task["description"] = schedule_job.describe(task["cron_schedule"], task["next_run"], task["status"], tz=tz)
         task["free"] = task.get("kind") in ("do", "check")
         task["cost"] = schedule_job.cost(task.get("kind") or "think", task.get("action"))
+        task["usage_note"] = schedule_job.usage_note(task, tz=tz)
     return tasks
 
 

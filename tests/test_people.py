@@ -100,7 +100,7 @@ def test_the_agent_run_knows_whose_message_it_is(monkeypatch):
     save_settings(people=[THANDI])
     seen = []
 
-    async def fake_inner(command, max_turns, source, caller_id):
+    async def fake_inner(command, max_turns, source, caller_id, job=False):
         seen.append(people.current())
         return {"text": "ok"}
     from core import agent

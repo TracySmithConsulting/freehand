@@ -2573,6 +2573,7 @@
                   (words[task.status] ? ' <span class="badge badge-' + escapeHtml(task.status) + '">' + words[task.status] + '</span>' : '') +
                   '<div class="task-meta">' + escapeHtml(task.description) + '. ' +
                     (task.status === 'todo' ? '' : escapeHtml(task.cost || (task.free ? 'Free.' : 'Uses AI each time.'))) + '</div>' +
+                  (task.usage_note ? '<div class="task-meta">' + escapeHtml(task.usage_note) + '</div>' : '') +
                   last +
                 '</div>' +
                 (canPause ? '<button class="secondary" onclick="pauseTask(' + task.id + ', ' + (task.status === 'pending') + ')" aria-label="' +

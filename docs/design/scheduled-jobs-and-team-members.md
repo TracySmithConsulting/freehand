@@ -13,7 +13,13 @@ checks for new emails (Gmail and Outlook; sender, subject and first lines)
 and for web pages that change or start to mention some words, every hour
 by default. Only public websites are checked. With "think", the model gets
 only the instructions and what was found, and no tools. Numbers crossing a
-line and files appearing in a folder are left for later. Tracy's answers to
+line and files appearing in a folder are left for later. Step 4 is built:
+"think" jobs run with short instructions (build_job_prompt, about 150
+tokens instead of about 1,700), no chat history, only the tools their words
+call for, and at most 5 steps; what each job uses with AI is counted per
+month and shown. A real job used 1,699 tokens; the same question in the
+chat used 7,345. The monthly spending limit isn't built yet: FreeHand has
+no model prices, and many models are free, local or a subscription. Tracy's answers to
 the open questions are marked **Decided**, and listed at the end.
 
 Two related ideas:

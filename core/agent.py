@@ -432,8 +432,14 @@ async def execute_tool(name: str, args: dict) -> dict:
         return {"content": json.dumps({"error": str(e)})}
 
 
-async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_id: str = "") -> dict:
+async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_id: str = "",
+                    job: bool = False) -> dict:
     """Run the agent loop: call LLM, execute tools, return final response.
+
+    ``job=True`` is a scheduled job (core/scheduler.py): short instructions
+    (build_job_prompt), no chat history, a few memories, only the tools the
+    job's words call for, and nothing that needs someone there (questions,
+    the computer Helper, more jobs). The run isn't kept in the chat history.
 
     Everything this run stores (chat history, tasks, approvals, memories)
     is tagged with whose message it is (core/people.py). The gateways only
@@ -442,17 +448,18 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     from core import people
     token = people.set_current(people.person_for(source, caller_id) or people.OWNER_ID)
     try:
-        return await _run_agent(command, max_turns, source, caller_id)
+        return await _run_agent(command, max_turns, source, caller_id, job)
     finally:
         people.reset(token)
 
 
-async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) -> dict:
+async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, job: bool = False) -> dict:
     tier = get_current_tier()
     from core import tool_selection
-    from core.agent_config import get_llm_config
-    lean = tool_selection.lean_mode(get_llm_config())
-    system_prompt = build_system_prompt(lean=lean)
+    from core.agent_config import get_llm_config, build_job_prompt
+    # A scheduled job is always lean: only the tools its words call for.
+    lean = job or tool_selection.lean_mode(get_llm_config())
+    system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean)
 
     # Memory (Nov 2026). Long-term: the few facts that matter for this
     # message, from Hindsight. Short-term: the last few exchanges in this
@@ -468,7 +475,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
             + "\n"
         )
 
-    history = conversation.history(conv_key)
+    history = [] if job else conversation.history(conv_key)
     if lean:
         history = history[-4:]  # the last two exchanges are enough for a small model
     messages = [
@@ -484,14 +491,16 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
     tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean)
     from core import ask_user, helper_hub, schedule_job
     from core.scheduler import DUE_PREFIX
-    tools = [*tools, ask_user.schema()]
+    if not job:
+        tools = [*tools, ask_user.schema()]
     # Reminders and scheduled jobs, when the message is about a time. Not
     # while a scheduled job is itself running, so a job can't make more jobs.
-    if schedule_job.wanted([command, *earlier]) and not command.startswith(DUE_PREFIX):
+    if schedule_job.wanted([command, *earlier]) and not job and not command.startswith(DUE_PREFIX):
         tools.append(schedule_job.schema())
     # The user's own computer, through the FreeHand Helper: only while one
-    # is connected, and only when the message is about the computer.
-    if helper_hub.device_now():
+    # is connected, and only when the message is about the computer (and
+    # someone is there to approve it, so not in a scheduled job).
+    if helper_hub.device_now() and not job:
         if helper_hub.wanted([command, *earlier]):
             tools.extend(helper_hub.schemas())
         if helper_hub.wanted_change([command, *earlier]):
@@ -765,7 +774,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str) 
         else:
             final_response["text"] = strip_reasoning(last.get("content", "") or "")
 
-    if final_response["text"] and not final_response["error"]:
+    if final_response["text"] and not final_response["error"] and not job:
         _remember_turn(conv_key, command, final_response["text"], source)
     if usage["calls"]:
         final_response["usage"] = usage
