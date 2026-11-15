@@ -840,11 +840,13 @@ async def get_tasks():
     finally:
         conn.close()
     tz = scheduler.local_tz()
+    per_job = scheduler.limits()["per_job"]
     for task in tasks:
         # In plain words, for the Scheduled jobs list.
         task["description"] = schedule_job.describe(task["cron_schedule"], task["next_run"], task["status"], tz=tz)
         task["free"] = task.get("kind") in ("do", "check")
         task["cost"] = schedule_job.cost(task.get("kind") or "think", task.get("action"))
+        task["usage_note"] = schedule_job.usage_note(task, tz=tz, per_job=per_job)
     return tasks
 
 
@@ -882,6 +884,36 @@ async def create_task(body: dict):
     created["description"] = schedule_job.describe(created["cron_schedule"], created["next_run"],
                                                    tz=scheduler.local_tz())
     return created
+
+
+@app.get("/api/tasks/limits", dependencies=[Depends(require_api_key)])
+async def get_job_limits():
+    """How often scheduled jobs may use AI each month, and how often they have."""
+    from core import scheduler
+    conn = scheduler._tasks_conn()
+    try:
+        scheduler._ensure_deliver_column(conn)
+        month = scheduler._month(datetime.now(timezone.utc))
+        used = conn.execute("SELECT COALESCE(SUM(month_runs), 0) FROM tasks WHERE usage_month = ?",
+                            (month,)).fetchone()[0]
+    finally:
+        conn.close()
+    return {**scheduler.limits(), "used": used}
+
+
+@app.post("/api/tasks/limits", dependencies=[Depends(require_api_key)])
+async def set_job_limits(body: dict):
+    out = {}
+    for key in ("per_job", "total"):
+        try:
+            value = int(body.get(key))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Use whole numbers for the limits.")
+        if not 0 <= value <= 100_000:
+            raise HTTPException(status_code=400, detail="Choose a limit from 0 to 100,000.")
+        out[key] = value
+    _save_setting("job_limits", out)
+    return out
 
 
 @app.post("/api/tasks/{task_id}/pause", dependencies=[Depends(require_api_key)])

@@ -34,6 +34,25 @@ _scheduler: Optional[BackgroundScheduler] = None
 DEFAULT_CRON = "0 2 * * *"
 DUE_PREFIX = "It's time for a scheduled task the person set up earlier: "
 MAX_FAILURES = 3  # failures in a row before a task pauses itself
+JOB_STEPS = 5  # most model steps a "think" job may take per run
+# How often scheduled jobs may use AI each month (Tracy's choice, Nov 2026:
+# counted in uses, which works the same for every model, priced or not).
+LIMIT_PER_JOB = 100
+LIMIT_TOTAL = 300
+
+
+def limits() -> dict:
+    """{"per_job": n, "total": n}, from settings "job_limits" if set."""
+    saved = _load_settings().get("job_limits") or {}
+    out = {"per_job": LIMIT_PER_JOB, "total": LIMIT_TOTAL}
+    for key in out:
+        try:
+            value = int(saved.get(key))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= value <= 100_000:
+            out[key] = value
+    return out
 TASK_KEYWORDS = {"task", "todo", "todo:", "schedule", "reminder", "remember", "don't forget"}
 
 # Single in-process writer lock for 00_Scribble.md. The sweep rewrites the
@@ -456,7 +475,56 @@ def _ensure_deliver_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'think'")
     if "action" not in cols:
         conn.execute("ALTER TABLE tasks ADD COLUMN action TEXT")
+    # What a job used this month: AI runs and tokens (build step 4).
+    if "usage_month" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN usage_month TEXT")
+        conn.execute("ALTER TABLE tasks ADD COLUMN month_runs INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE tasks ADD COLUMN month_tokens INTEGER NOT NULL DEFAULT 0")
+    if "limit_told" not in cols:  # the month the person was told a limit was reached
+        conn.execute("ALTER TABLE tasks ADD COLUMN limit_told TEXT")
     conn.commit()
+
+
+def _month(now: datetime) -> str:
+    return now.astimezone(local_tz()).strftime("%Y-%m")
+
+
+def ai_allowed(conn: sqlite3.Connection, row, now: datetime) -> Optional[str]:
+    """None if this job may use AI now, or the reason it may not (a limit
+    on uses this month was reached). A new month starts again."""
+    month, lim = _month(now), limits()
+    used = int(row["month_runs"] or 0) if row["usage_month"] == month else 0
+    if used >= lim["per_job"]:
+        return f"has used AI {lim['per_job']} times this month, which is its limit"
+    total = conn.execute("SELECT COALESCE(SUM(month_runs), 0) FROM tasks WHERE usage_month = ?",
+                         (month,)).fetchone()[0]
+    if total >= lim["total"]:
+        return f"can't use AI: all your scheduled jobs together have used it {lim['total']} times this month, which is the limit"
+    return None
+
+
+def _next_month_name(now: datetime) -> str:
+    local = now.astimezone(local_tz())
+    first = (local.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return f"1 {first:%B}"
+
+
+def _add_usage(conn: sqlite3.Connection, task_id: int, usage: Optional[dict], now: datetime) -> None:
+    """Count one AI run and its tokens against this month (a new month
+    starts again from nought)."""
+    if not usage:
+        return
+    tokens = int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
+    month = _month(now)
+    row = conn.execute("SELECT usage_month FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        return
+    if row[0] != month:
+        conn.execute("UPDATE tasks SET usage_month = ?, month_runs = 1, month_tokens = ? WHERE id = ?",
+                     (month, tokens, task_id))
+    else:
+        conn.execute("UPDATE tasks SET month_runs = month_runs + 1, month_tokens = month_tokens + ? WHERE id = ?",
+                     (tokens, task_id))
 
 
 def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = None,
@@ -651,7 +719,8 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
         people.ensure_person_column(conn, "tasks")
         _ensure_deliver_column(conn)
         rows = conn.execute(
-            "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count, kind, action FROM tasks "
+            "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count, kind, action, "
+            "usage_month, month_runs, limit_told FROM tasks "
             "WHERE status = 'pending' AND (next_run IS NULL OR next_run <= ?) "
             + ("" if llm_ok else "AND kind IN ('do', 'check') ")
             + "ORDER BY id LIMIT ?",
@@ -668,17 +737,32 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 from core import checks
                 try:
                     action = json.loads(row["action"] or "{}")
-                    text, kept = _run_coro(checks.run(action, llm_ok=llm_ok))
+                    # Over its AI limit, a check still checks and tells, free.
+                    may_think = llm_ok and ai_allowed(conn, row, now) is None
+                    text, kept = _run_coro(checks.run(action, llm_ok=may_think))
+                    _add_usage(conn, row["id"], kept.pop("last_usage", None), now)
                     # What the check saw this time, so next time only new things count.
                     conn.execute("UPDATE tasks SET action = ? WHERE id = ?", (json.dumps(kept), row["id"]))
-                    conn.commit()  # before the notice is saved, or its write waits on this one
                     result = {"text": text, "error": None}
                 except checks.CheckError as e:
                     result = {"text": "", "error": str(e), "plain": str(e)}
                 except Exception as e:
                     result = {"text": "", "error": str(e)}
+            elif ai_allowed(conn, row, now):
+                # Over a limit: don't run. Say so once this month, and carry
+                # on next month (or when the limit is raised).
+                result = {"text": "", "error": None, "held": True}
+                if row["limit_told"] != _month(now):
+                    result["text"] = (f"Your scheduled job \"{row['title']}\" {ai_allowed(conn, row, now)}, "
+                                      f"so it won't run again until {_next_month_name(now)}. To change the "
+                                      "limit, go to Scheduled jobs, Limits on AI use.")
+                    conn.execute("UPDATE tasks SET limit_told = ? WHERE id = ?", (_month(now), row["id"]))
             else:
-                result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=3, source="cli"))
+                # Short instructions, no chat history, only the tools it needs,
+                # and at most JOB_STEPS steps (core/agent.py, job=True).
+                result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=JOB_STEPS,
+                                             source="cli", job=True))
+                _add_usage(conn, row["id"], result.get("usage"), now)
             error = result.get("error")
             reply = (result.get("text") or "").strip()
             fails = (row["fail_count"] or 0) + 1 if error else 0
@@ -692,6 +776,10 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                              f"I tried {fails} times, so I've stopped trying. To try again, "
                              "add it again under Scheduled jobs.")
             if reply:
+                # The notice is written on its own connection: anything this
+                # one has written must be saved first, or that write waits on
+                # a locked database and the message is lost.
+                conn.commit()
                 _run_coro(notices.deliver(reply, title=row["title"],
                                           target=row["deliver_to"], person=row["person"]))
             stamp = _iso_utc(datetime.now(timezone.utc))
@@ -700,7 +788,11 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             if row["next_run"]:
                 nxt = _cron_next(row["cron_schedule"], after=now, tz=tz) if row["cron_schedule"] else None
                 next_iso = _iso_utc(nxt) if nxt else None
-            if error:
+            if result.get("held"):
+                # A one-off waits; a repeating job skips to its next time.
+                conn.execute("UPDATE tasks SET next_run = ? WHERE id = ?",
+                             (next_iso if row["cron_schedule"] else row["next_run"], row["id"]))
+            elif error:
                 failed += 1
                 conn.execute(
                     "UPDATE tasks SET last_run = ?, next_run = ?, fail_count = ?, status = ? WHERE id = ?",

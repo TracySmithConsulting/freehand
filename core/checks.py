@@ -223,6 +223,8 @@ async def _think(action: dict, report: str) -> Optional[str]:
     ])
     if resp.get("error"):
         return None
+    if isinstance(resp.get("_usage"), dict):
+        action["last_usage"] = resp["_usage"]  # counted by the scheduler
     return (resp.get("content") or "").strip() or None
 
 
@@ -247,7 +249,7 @@ async def run(action: dict, llm_ok: bool = True) -> tuple[str, dict]:
             thought = await _think(action, report)
             if thought:
                 return thought, action
-        report += "\n\n(FreeHand couldn't ask the AI about this, so here's what the check found.)"
+        report += "\n\n(FreeHand didn't ask the AI about this, so here's what the check found.)"
     return report, action
 
 
