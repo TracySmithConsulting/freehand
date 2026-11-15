@@ -263,14 +263,15 @@ def describe(cron: str, next_run: Optional[str], status: str = "pending", tz=Non
     return f"On a custom schedule ({cron})"
 
 
-def usage_note(task: dict, tz=None, now: Optional[datetime] = None) -> str:
+def usage_note(task: dict, tz=None, now: Optional[datetime] = None, per_job: Optional[int] = None) -> str:
     """What a job used with AI this month, in plain words, or "" for none."""
     month = (now or datetime.now(timezone.utc)).astimezone(tz or timezone.utc).strftime("%Y-%m")
     runs = int(task.get("month_runs") or 0)
     if task.get("usage_month") != month or not runs:
         return ""
     tokens = int(task.get("month_tokens") or 0)
-    return (f"This month: used AI {runs} time{'s' if runs != 1 else ''}, "
+    limit = f" of {per_job}" if per_job is not None else ""
+    return (f"This month: used AI {runs}{limit} time{'s' if runs != 1 or limit else ''}, "
             f"about {tokens:,} tokens.")
 
 

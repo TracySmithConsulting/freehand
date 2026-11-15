@@ -135,3 +135,92 @@ def test_the_use_is_shown_in_plain_words():
     assert note == "This month: used AI 3 times, about 12,500 tokens."
     assert schedule_job.usage_note({"usage_month": "2029-12", "month_runs": 3}, now=now) == ""
     assert schedule_job.usage_note({}, now=now) == ""
+
+
+# ── Limits on AI uses a month ─────────────────────────────────────────
+
+@pytest.fixture
+def counted(db, monkeypatch):
+    runs = []
+
+    async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False):
+        runs.append(command)
+        return {"text": "Summary.", "error": None, "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+    monkeypatch.setattr("core.agent.run_agent", fake_run_agent)
+    return runs
+
+
+def test_a_job_stops_at_its_limit_says_so_once_and_starts_again_next_month(counted, db, monkeypatch):
+    from core import notices, scheduler
+    monkeypatch.setattr(scheduler, "limits", lambda: {"per_job": 2, "total": 300})
+    scheduler.create_task("Summarise the news", "0 7 * * *")
+    for day in (1, 2, 3, 4):
+        scheduler.run_due_tasks(now=datetime(2030, 1, day, 8, 0, tzinfo=timezone.utc))
+    assert len(counted) == 2
+    texts = [n["text"] for n in notices.unseen()]
+    assert texts[:2] == ["Summary.", "Summary."]
+    assert len(texts) == 3 and "used AI 2 times this month" in texts[2] and "until 1 February" in texts[2]
+    assert _row(db)["status"] == "pending"  # held, not paused or done
+    scheduler.run_due_tasks(now=datetime(2030, 2, 1, 8, 0, tzinfo=timezone.utc))
+    assert len(counted) == 3
+
+
+def test_all_jobs_together_have_a_limit_too(counted, monkeypatch):
+    from core import notices, scheduler
+    monkeypatch.setattr(scheduler, "limits", lambda: {"per_job": 100, "total": 1})
+    scheduler.create_task("Job one", "0 7 * * *")
+    scheduler.create_task("Job two", "0 7 * * *")
+    scheduler.run_due_tasks(now=datetime(2030, 1, 1, 8, 0, tzinfo=timezone.utc))
+    assert counted == [scheduler._due_prompt("Job one")]
+    assert "all your scheduled jobs together" in notices.unseen()[-1]["text"]
+
+
+def test_a_one_off_over_the_limit_waits(counted, db, monkeypatch):
+    from core import scheduler
+    monkeypatch.setattr(scheduler, "limits", lambda: {"per_job": 0, "total": 300})
+    scheduler.create_task("Once", "")
+    scheduler.run_due_tasks(now=datetime(2030, 1, 1, tzinfo=timezone.utc))
+    assert counted == []
+    assert _row(db)["status"] == "pending"  # it runs when the limit allows
+
+
+def test_a_check_over_its_limit_still_tells_free(db, monkeypatch):
+    from core import checks, scheduler
+    holder = {"text": "Coming soon"}
+
+    async def fake_fetch(url):
+        return holder["text"]
+
+    async def no_llm(*a, **k):
+        raise AssertionError("over the limit, the model must not be asked")
+    monkeypatch.setattr(checks, "fetch_page", fake_fetch)
+    monkeypatch.setattr("core.agent.call_llm", no_llm)
+    monkeypatch.setattr(scheduler, "limits", lambda: {"per_job": 0, "total": 300})
+    scheduler.create_task("Tickets", "* * * * *", kind="check",
+                          action={"type": "check", "check": "page", "url": "https://example.com", "then": "think"})
+    scheduler.run_due_tasks(now=datetime(2030, 1, 1, 0, 0, tzinfo=timezone.utc))
+    holder["text"] = "On sale now"
+    scheduler.run_due_tasks(now=datetime(2030, 1, 1, 0, 1, tzinfo=timezone.utc))
+    from core import notices
+    assert "On sale now" in notices.unseen()[0]["text"]
+
+
+def test_limits_can_be_seen_and_changed(db, tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    import server
+    from core import scheduler
+    monkeypatch.setattr("server.get_or_create_api_key", lambda: "k")
+    monkeypatch.setattr(server, "VAULT_SETTINGS_PATH", tmp_path / "settings.json")
+    monkeypatch.setattr(scheduler, "VAULT_DIR", tmp_path)
+    c = TestClient(server.app)
+    c.headers.update({"X-API-Key": "k"})
+    assert c.get("/api/tasks/limits").json() == {"per_job": 100, "total": 300, "used": 0}
+    assert c.post("/api/tasks/limits", json={"per_job": 20, "total": 50}).json() == {"per_job": 20, "total": 50}
+    assert scheduler.limits() == {"per_job": 20, "total": 50}
+    assert c.post("/api/tasks/limits", json={"per_job": "lots", "total": 50}).status_code == 400
+
+
+def test_the_screen_shows_use_against_the_limit():
+    now = datetime(2030, 1, 15, tzinfo=timezone.utc)
+    note = schedule_job.usage_note({"usage_month": "2030-01", "month_runs": 3, "month_tokens": 900}, now=now, per_job=100)
+    assert note == "This month: used AI 3 of 100 times, about 900 tokens."

@@ -139,7 +139,7 @@ def test_without_a_model_think_still_tells(page):
     _, action = run(checks.run({"check": "page", "url": "https://example.com", "then": "think"}))
     page["text"] = "New line"
     text, _ = run(checks.run(action, llm_ok=False))
-    assert "New line" in text and "couldn't ask the AI" in text
+    assert "New line" in text and "didn't ask the AI" in text
 
 
 # ── Setting one up ────────────────────────────────────────────────────

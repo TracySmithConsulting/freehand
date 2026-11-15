@@ -18,8 +18,12 @@ line and files appearing in a folder are left for later. Step 4 is built:
 tokens instead of about 1,700), no chat history, only the tools their words
 call for, and at most 5 steps; what each job uses with AI is counted per
 month and shown. A real job used 1,699 tokens; the same question in the
-chat used 7,345. The monthly spending limit isn't built yet: FreeHand has
-no model prices, and many models are free, local or a subscription. Tracy's answers to
+chat used 7,345. The monthly limit is counted in AI uses, not money
+(Tracy's choice, Nov 2026), because FreeHand has no model prices and many
+models are free, local or a subscription: each job may use AI 100 times a
+month, and all jobs together 300, changeable under "Limits on AI use". A
+job over a limit waits until the 1st and says so once; a check over its
+limit still checks and tells, free. Tracy's answers to
 the open questions are marked **Decided**, and listed at the end.
 
 Two related ideas:

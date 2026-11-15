@@ -249,7 +249,7 @@ async def run(action: dict, llm_ok: bool = True) -> tuple[str, dict]:
             thought = await _think(action, report)
             if thought:
                 return thought, action
-        report += "\n\n(FreeHand couldn't ask the AI about this, so here's what the check found.)"
+        report += "\n\n(FreeHand didn't ask the AI about this, so here's what the check found.)"
     return report, action
 
 
