@@ -277,7 +277,42 @@ def addressed(text: str) -> tuple[Optional[dict], str]:
     return None, text
 
 
-def prompt(member: dict, scheduled: bool = False) -> str:
+ASK = "ask_team_member"
+MAX_REPLY = 4000  # what goes back to FreeHand from a team member
+
+
+def ask_schema(members: list[dict]) -> Optional[dict]:
+    """The main FreeHand's tool for handing work to a team member (build
+    step 6). Only for team members who aren't paused; None if there are none.
+    Team members never get it, so work only ever goes one level down."""
+    members = [m for m in members if not m.get("paused")]
+    if not members:
+        return None
+    jobs = "; ".join(f"{m['name']}: {m['job'][:120]}" for m in members)
+    return {
+        "type": "function",
+        "function": {
+            "name": ASK,
+            "description": (
+                "Hand a request to one of the person's team members, when it's their job. Prefer this to "
+                "doing it yourself when a team member's job fits: they're set up for it, often on a cheaper "
+                "model. They do it with their own tools and model and report back to you; then tell the "
+                "person what they did, naming them. Put everything they need in the request, such as "
+                f"names and addresses: they don't see the chat or your memories. The team: {jobs}"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "enum": [m["name"] for m in members]},
+                    "request": {"type": "string", "description": "What to do, in full: they don't see the chat."},
+                },
+                "required": ["name", "request"],
+            },
+        },
+    }
+
+
+def prompt(member: dict, scheduled: bool = False, delegated: bool = False) -> str:
     """The team member's instructions, inside FreeHand's safety rules."""
     from core import scheduler
     tz = scheduler.local_tz()
@@ -292,6 +327,9 @@ def prompt(member: dict, scheduled: bool = False) -> str:
         "should happen regularly, say the person can ask FreeHand to have you do it on a schedule, "
         f"for example \"Every Monday at 8, have {member['name']} ...\".",
     ]
+    if delegated:
+        rules.append("- FreeHand handed you this request from the person. Your reply goes back to FreeHand, "
+                     "which tells them. Don't ask questions; if something is missing, say what.")
     if scheduled:
         rules.append("- This is a scheduled job and the person isn't watching: your final reply is sent "
                      "to them as a message. Don't ask questions; if something is missing, say so.")
