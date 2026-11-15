@@ -22,6 +22,31 @@ freehand start
 - **🔐 Encrypted token storage** — Fernet encryption for all OAuth tokens
 - **🌐 Tailscale support** — accessible from anywhere on your tailnet
 - **🔀 Pluggable connector backends** — OpenConnector for the broad catalog, with an optional Composio adapter for Meta OAuth
+- **🖥 Help on your own computer** — the FreeHand Helper for Windows (below)
+
+## FreeHand Helper for Windows
+
+The FreeHand Helper is a small Windows program that lets FreeHand help on
+your own computer, whether FreeHand runs on the same PC or on a server. It
+uses Windows accessibility (what screen readers use), so it's especially
+good with apps and websites that are hard to use with a screen reader.
+
+- **Look:** read a window's buttons, fields and menus, say which have no
+  name, take a picture of a window, and check the computer's details.
+- **Act:** click, type, press keys, open apps and websites, and switch,
+  close or minimise windows.
+- **Change:** install, update and remove programs with winget (Windows' own
+  installer), and run four known fixes: sound, printer, network and taskbar.
+
+**It asks you first,** in a dialog a screen reader reads, and changes are
+asked every time. **Ctrl+Alt+Escape stops it** at once. It never types
+passwords, never acts in Windows' security screens or FreeHand's own
+console, and can't run commands of its own.
+
+**Download:** [FreeHandHelper.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHandHelper.exe)
+(Windows 10 and 11, nothing else to install). Then, in FreeHand, open Help on
+my computer and press Add a computer. More in the
+[Helper guide](helper/windows/README.md).
 
 ## Install
 
@@ -194,6 +219,25 @@ Full API reference: [API Documentation](https://github.com/TracySmithConsulting/
 - Permission tiers enforce approval workflows for write operations
 - Nango removed — all OAuth is handled in-process
 - No telemetry or data collection
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io),
+certificate by [SignPath Foundation](https://signpath.org).
+
+- **What's signed:** the FreeHand Helper for Windows, built by GitHub Actions
+  from this repository's public source
+  ([workflow](.github/workflows/helper.yml)). Nothing built on a personal
+  computer is signed.
+- **Authors and reviewers:** the members of
+  [TracySmithConsulting](https://github.com/TracySmithConsulting).
+  Every change goes through a pull request.
+- **Approver:** Tracy Smith. Every release is approved by hand.
+- **Privacy:** the Helper connects only to the FreeHand address the person
+  pairs it with, and sends only what they allow. It sends nothing to anyone
+  else.
+
+The full policy: [Code signing policy](docs/code-signing-policy.md).
 
 ## License
 
