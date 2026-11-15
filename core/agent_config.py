@@ -244,6 +244,8 @@ TOOL_REGISTRY: Dict[str, str] = {
     "post_to_instagram":      "write",
     # Meta-utility
     "list_connections":       "read",
+    # GitHub, read only (core/tools/github_read.py)
+    "github_activity":        "read",
     # Memory
     "search_memory":          "read",
     # Long-term memory (Hindsight). Local to this FreeHand and reversible
@@ -567,6 +569,15 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {},
             "required": [],
+        },
+    },
+    "github_activity": {
+        "description": ("Read a public GitHub project: its open issues, open pull requests and latest "
+                        "test runs. Read only."),
+        "parameters": {
+            "type": "object",
+            "properties": {"repo": {"type": "string", "description": "owner/name, or the project's GitHub address"}},
+            "required": ["repo"],
         },
     },
     # ── Memory ─────────────────────────────────────────────────────

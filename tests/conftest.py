@@ -68,6 +68,13 @@ def _isolate_persistent_state(tmp_path, monkeypatch):
     monkeypatch.setattr(server_module, "SCRIBBLE_PATH", vault / "00_Scribble.md")
     monkeypatch.setattr(server_module, "VAULT_SETTINGS_PATH", vault / "settings.json")
 
+    # The scheduler's settings (time zone, limits) and the team members
+    # (core/team.py) live in the vault too.
+    import core.scheduler as scheduler_module
+    import core.team as team_module
+    monkeypatch.setattr(scheduler_module, "VAULT_DIR", vault)
+    monkeypatch.setattr(team_module, "TEAM_DIR", vault / "team")
+
     # Long-term memory (Hindsight) and OpenConnector's admin API are real
     # services on the developer's machine: a test that runs the agent must
     # never save test chatter into someone's memory, or touch their OC

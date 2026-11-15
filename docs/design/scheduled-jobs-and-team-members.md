@@ -23,7 +23,18 @@ chat used 7,345. The monthly limit is counted in AI uses, not money
 models are free, local or a subscription: each job may use AI 100 times a
 month, and all jobs together 300, changeable under "Limits on AI use". A
 job over a limit waits until the 1st and says so once; a check over its
-limit still checks and tells, free. Tracy's answers to
+limit still checks and tells, free.
+
+Step 5 is built (core/team.py): team members saved in vault/team, the
+five templates, the My team members screen, talking to one by starting a
+message with its name (on the web and in chat apps), its own model,
+instructions inside FreeHand's rules, its own tools only, "Ask me first"
+(even at Full access) or "Just do it" per tool, memories only if allowed,
+a monthly limit on AI uses, a log of its work, and scheduled jobs done by
+a team member. A read-only GitHub tool (github_activity) was added for the
+Developer template. FreeHand has no tools to send email, add calendar
+events or search the web, so team members can't either; the News and
+Research templates read a search engine's results page instead. Tracy's answers to
 the open questions are marked **Decided**, and listed at the end.
 
 Two related ideas:

@@ -482,6 +482,8 @@ def _ensure_deliver_column(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE tasks ADD COLUMN month_tokens INTEGER NOT NULL DEFAULT 0")
     if "limit_told" not in cols:  # the month the person was told a limit was reached
         conn.execute("ALTER TABLE tasks ADD COLUMN limit_told TEXT")
+    if "team_member" not in cols:  # the team member who does the job (core/team.py)
+        conn.execute("ALTER TABLE tasks ADD COLUMN team_member TEXT")
     conn.commit()
 
 
@@ -529,7 +531,7 @@ def _add_usage(conn: sqlite3.Connection, task_id: int, usage: Optional[dict], no
 
 def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = None,
                 status: str = "pending", kind: str = "think", action: Optional[dict] = None,
-                run_at: Optional[datetime] = None) -> dict:
+                run_at: Optional[datetime] = None, team_member: Optional[str] = None) -> dict:
     """Insert a task row and compute its first scheduled run.
 
     A valid 5-field cron makes the task recurring (next_run set; the runner
@@ -563,11 +565,11 @@ def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = Non
         people.ensure_person_column(conn, "tasks")
         _ensure_deliver_column(conn)
         cursor = conn.execute(
-            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person, deliver_to, kind, action) "
-            "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person, deliver_to, kind, action, team_member) "
+            "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)",
             (title, cron, status, _iso_utc(next_run) if next_run else None, people.current(),
              json.dumps(deliver_to) if deliver_to else None, kind,
-             json.dumps(action) if action else None),
+             json.dumps(action) if action else None, team_member if kind == "think" else None),
         )
         conn.commit()
         task_id = cursor.lastrowid
@@ -674,6 +676,13 @@ def run_action(action, person: str = "owner") -> str:
     raise ValueError(f"unknown action: {kind!r}")
 
 
+def _member_for(row) -> Optional[dict]:
+    if not row["team_member"]:
+        return None
+    from core import team
+    return team.get(row["team_member"])
+
+
 def _due_prompt(title: str) -> str:
     """What the agent is told when a task is due. Without this, "Remind me
     to phone the dentist" got "Sure, I'll remind you" instead of a reminder."""
@@ -720,7 +729,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
         _ensure_deliver_column(conn)
         rows = conn.execute(
             "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count, kind, action, "
-            "usage_month, month_runs, limit_told FROM tasks "
+            "usage_month, month_runs, limit_told, team_member FROM tasks "
             "WHERE status = 'pending' AND (next_run IS NULL OR next_run <= ?) "
             + ("" if llm_ok else "AND kind IN ('do', 'check') ")
             + "ORDER BY id LIMIT ?",
@@ -757,11 +766,18 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                                       f"so it won't run again until {_next_month_name(now)}. To change the "
                                       "limit, go to Scheduled jobs, Limits on AI use.")
                     conn.execute("UPDATE tasks SET limit_told = ? WHERE id = ?", (_month(now), row["id"]))
+            elif row["team_member"] and _member_for(row) is None:
+                result = {"text": "", "error": "team member gone",
+                          "plain": "the team member who did this job has been deleted"}
+            elif row["team_member"] and _member_for(row).get("paused"):
+                result = {"text": "", "error": None, "held": True}  # resumes with them
             else:
                 # Short instructions, no chat history, only the tools it needs,
-                # and at most JOB_STEPS steps (core/agent.py, job=True).
+                # and at most JOB_STEPS steps (core/agent.py, job=True). As a
+                # team member: its own setup and limits (core/team.py).
+                as_member = {"member": _member_for(row)} if row["team_member"] else {}
                 result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=JOB_STEPS,
-                                             source="cli", job=True))
+                                             source="cli", job=True, **as_member))
                 _add_usage(conn, row["id"], result.get("usage"), now)
             error = result.get("error")
             reply = (result.get("text") or "").strip()
