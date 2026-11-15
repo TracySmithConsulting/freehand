@@ -280,11 +280,14 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
         match = re.match(r"/task\s+(.+?)(?:\s+\[([^\]]+)\])?$", text)
         if match:
             title = match.group(1).strip()
-            cron = match.group(2) or "0 2 * * *"
-            created = create_task(title, cron)
+            cron = (match.group(2) or "").strip()
+            # The result comes back here, as well as to the web page.
+            created = create_task(title, cron, deliver_to={"channel": source, "to": caller_id})
             if created["recurring"]:
                 return f"Task created: {title} (cron: " + created["cron_schedule"] + ", next: " + created["next_run"] + ")"
-            return "Task created (one-shot - cron '" + cron + "' is not a valid 5-field schedule): " + title
+            if not cron:
+                return "Task created: " + title + ". No time was given, so I'll do it once, within a minute, and send you the result here."
+            return "Task created (one-shot - cron '" + cron + "' is not a valid 5-field schedule, so I'll do it once, within a minute): " + title
         return "Use: /task <title> [cron_schedule]"
 
     if text.startswith("/memory"):

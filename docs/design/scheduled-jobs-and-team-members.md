@@ -1,6 +1,8 @@
 # Scheduled jobs and team members: doing more for less
 
-Status: design agreed (Nov 2026), nothing built yet. Tracy's answers to
+Status: design agreed (Nov 2026). Step 1 is built: results are delivered
+(core/notices.py), a task with no time runs once, and a task that fails
+three times in a row stops and says so. Tracy's answers to
 the open questions are marked **Decided**, and listed at the end.
 
 Two related ideas:

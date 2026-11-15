@@ -151,7 +151,8 @@ class TestTaskExecutor:
         result = run_due_tasks()
         assert result["executed"] == 1
         assert result["failed"] == 0
-        assert calls == ["One-off reminder"]
+        # The agent is told the task is due now, with the task in its words.
+        assert len(calls) == 1 and '"One-off reminder"' in calls[0]
 
         # Marked done: a second pass must not re-execute
         result = run_due_tasks()

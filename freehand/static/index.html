@@ -1063,6 +1063,11 @@
       </div>
       <div id="command-response" aria-live="polite" class="hint" style="margin-top: 0.5rem;"></div>
       <div id="agent-response" aria-live="polite" style="margin-top:0.5rem;"></div>
+      <div id="notices-area" class="stack-top" hidden>
+        <h3 id="notices-heading">Messages from FreeHand</h3>
+        <p class="hint">Reminders, and the results of your scheduled tasks.</p>
+        <div id="notices-list" aria-live="polite" aria-labelledby="notices-heading"></div>
+      </div>
     </section>
 
     <!-- Scribble Pad -->
@@ -3602,6 +3607,70 @@
         setInterval(loadApprovals, 8000);
       }
 
+      // ---- Messages from FreeHand: reminders and scheduled task results ----
+      // Kept on the server until this page has shown them (core/notices.py),
+      // so nothing is lost while the page is closed.
+      function noticeChime() {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        try {
+          var ctx = new AC();
+          [660, 990].forEach(function(freq, i) {
+            var osc = ctx.createOscillator(), gain = ctx.createGain(), at = ctx.currentTime + i * 0.16;
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.12, at);
+            gain.gain.exponentialRampToValueAtTime(0.001, at + 0.15);
+            osc.connect(gain); gain.connect(ctx.destination);
+            osc.start(at); osc.stop(at + 0.16);
+            if (i === 1) osc.onended = function() { ctx.close(); };
+          });
+        } catch (e) {}
+      }
+
+      function loadNotices() {
+        apiFetch('/api/notices')
+          .then(function(res) { return res.ok ? res.json() : []; })
+          .then(function(list) {
+            if (!Array.isArray(list) || !list.length) return;
+            var area = document.getElementById('notices-area');
+            var box = document.getElementById('notices-list');
+            var voiceReads = voiceReadsReplies();
+            // When FreeHand reads it aloud itself, the screen reader stays quiet.
+            box.setAttribute('aria-live', voiceReads ? 'off' : 'polite');
+            area.hidden = false;
+            list.forEach(function(n) {
+              var div = document.createElement('div');
+              div.className = 'agent-bubble';
+              div.textContent = n.text;
+              var when = document.createElement('p');
+              when.className = 'hint';
+              var at = new Date(n.created_at);
+              when.textContent = (n.title ? 'Your task "' + n.title + '", ' : '') +
+                (isNaN(at) ? '' : at.toLocaleString([], { weekday: 'long', hour: '2-digit', minute: '2-digit' }));
+              box.appendChild(div);
+              box.appendChild(when);
+            });
+            noticeChime();
+            if (voiceReads) {
+              list.forEach(function(n) { window.speechSynthesis.speak(voiceUtterance(n.text)); });
+            } else {
+              showStatus(list.length === 1 ? 'A message from FreeHand: ' + list[0].text
+                : list.length + ' messages from FreeHand, under the chat.', 'success');
+            }
+            apiFetch('/api/notices/seen', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ids: list.map(function(n) { return n.id; }) })
+            }).catch(function() {});
+          })
+          .catch(function() {});
+      }
+
+      function startNoticesPolling() {
+        loadNotices();
+        setInterval(loadNotices, 20000);
+      }
+
       // ---- WhatsApp on/off ----
       (function() {
         var power = document.getElementById('wa-power');
@@ -4417,6 +4486,7 @@
         loadGatewayStatus();
         loadAgents();
         startApprovalsPolling();
+        startNoticesPolling();
         loadMemoryFiles();
         loadFacts();
         loadSkills();

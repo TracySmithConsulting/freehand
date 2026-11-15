@@ -32,6 +32,7 @@ THREADS_DIR = VAULT_DIR / "Threads"
 
 _scheduler: Optional[BackgroundScheduler] = None
 DEFAULT_CRON = "0 2 * * *"
+MAX_FAILURES = 3  # failures in a row before a task pauses itself
 TASK_KEYWORDS = {"task", "todo", "todo:", "schedule", "reminder", "remember", "don't forget"}
 
 # Single in-process writer lock for 00_Scribble.md. The sweep rewrites the
@@ -268,7 +269,7 @@ def _cron_next(expr: str, after: Optional[datetime] = None) -> Optional[datetime
 def _extract_cron(entry: str) -> str:
     """Extract a bracketed cron-like schedule if (and only if) it is a
     valid 5-field cron expression. Anything else — e.g. the note '[wip*]' —
-    returns '' so the caller falls back to DEFAULT_CRON instead of storing
+    returns '' (no schedule) instead of storing
     garbage as a schedule.
     """
     m = re.search(r"\[([^\]]+\*[^\]]*)\]", entry)
@@ -421,25 +422,45 @@ def _tasks_conn() -> sqlite3.Connection:
     return conn
 
 
-def create_task(title: str, cron_schedule: str) -> dict:
+def _ensure_deliver_column(conn: sqlite3.Connection) -> None:
+    """Where a task's result goes (core/notices.py). Added Nov 2026."""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+    if "deliver_to" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN deliver_to TEXT")
+    if "fail_count" not in cols:
+        conn.execute("ALTER TABLE tasks ADD COLUMN fail_count INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
+
+
+def create_task(title: str, cron_schedule: str, deliver_to: Optional[dict] = None,
+                status: str = "pending") -> dict:
     """Insert a task row and compute its first scheduled run.
 
     A valid 5-field cron makes the task recurring (next_run set; the runner
     re-computes after each run). An empty or invalid cron makes it one-shot
     (next_run stays NULL; the runner runs it once, then marks it done).
+    Until Nov 2026 an empty cron became DEFAULT_CRON, so a task with no time
+    ran every night at 2am, forever.
+
+    deliver_to says where the result goes besides the web page, for example
+    {"channel": "telegram", "to": "<chat id>"}. status "todo" keeps a to-do
+    the runner never runs (a scribbled task with no time).
     Never raises in normal operation; DB failures surface to the caller.
     """
     title = (title or "").strip()
-    cron = (cron_schedule or "").strip() or DEFAULT_CRON
-    next_run = _cron_next(cron)
+    cron = (cron_schedule or "").strip()
+    next_run = _cron_next(cron) if cron else None
+    status = status if status in ("pending", "todo") else "pending"
     from core import people
     conn = _tasks_conn()
     try:
         people.ensure_person_column(conn, "tasks")
+        _ensure_deliver_column(conn)
         cursor = conn.execute(
-            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person) "
-            "VALUES (?, ?, 'pending', ?, NULL, ?)",
-            (title, cron, _iso_utc(next_run) if next_run else None, people.current()),
+            "INSERT INTO tasks (title, cron_schedule, status, next_run, last_run, person, deliver_to) "
+            "VALUES (?, ?, ?, ?, NULL, ?, ?)",
+            (title, cron, status, _iso_utc(next_run) if next_run else None, people.current(),
+             json.dumps(deliver_to) if deliver_to else None),
         )
         conn.commit()
         task_id = cursor.lastrowid
@@ -447,7 +468,7 @@ def create_task(title: str, cron_schedule: str) -> dict:
             "id": task_id,
             "title": title,
             "cron_schedule": cron,
-            "status": "pending",
+            "status": status,
             "next_run": _iso_utc(next_run) if next_run else None,
             "recurring": next_run is not None,
         }
@@ -513,6 +534,17 @@ def backfill_next_run() -> dict:
     return {"deduped": deduped, "backfilled": backfilled}
 
 
+def _due_prompt(title: str) -> str:
+    """What the agent is told when a task is due. Without this, "Remind me
+    to phone the dentist" got "Sure, I'll remind you" instead of a reminder."""
+    return (
+        f"It's time for a scheduled task the person set up earlier: \"{title}\". "
+        "Do it now. If it's a reminder, write the reminder to them in a sentence "
+        'or two, for example "Reminder: phone the dentist." Your reply is sent '
+        "to them as it is."
+    )
+
+
 def run_due_tasks(now: Optional[datetime] = None) -> dict:
     """Execute pending tasks whose next_run has arrived (or one-shot rows
     with no next_run). Oldest task id first, capped per tick
@@ -527,6 +559,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
     """
     global _TASK_RUNNER_WARNED
     from core.agent import run_agent  # lazy: avoids the heavy import chain at module load
+    from core import notices, people
 
     if not _llm_ready():
         if not _TASK_RUNNER_WARNED:
@@ -543,15 +576,30 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
     executed = 0
     failed = 0
     try:
+        people.ensure_person_column(conn, "tasks")
+        _ensure_deliver_column(conn)
         rows = conn.execute(
-            "SELECT id, title, cron_schedule, next_run FROM tasks "
+            "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count FROM tasks "
             "WHERE status = 'pending' AND (next_run IS NULL OR next_run <= ?) "
             "ORDER BY id LIMIT ?",
             (now_iso, cap),
         ).fetchall()
         for row in rows:
-            result = _run_coro(run_agent(row["title"], max_turns=3, source="cli"))
+            result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=3, source="cli"))
             error = result.get("error")
+            reply = (result.get("text") or "").strip()
+            fails = (row["fail_count"] or 0) + 1 if error else 0
+            if error:
+                # A failed one-off task is due again on the next tick, so only
+                # speak up when it's paused, not every 30 seconds.
+                reply = ""
+                if fails >= MAX_FAILURES:
+                    reply = (f"I couldn't do your scheduled task \"{row['title']}\". "
+                             f"I tried {fails} times, so I've stopped trying. To try again, "
+                             "add it again under Task Scheduler.")
+            if reply:
+                _run_coro(notices.deliver(reply, title=row["title"],
+                                          target=row["deliver_to"], person=row["person"]))
             stamp = _iso_utc(datetime.now(timezone.utc))
             err_note = (stamp + " error: " + str(error)[:120]) if error else stamp
             next_iso = None
@@ -561,14 +609,14 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             if error:
                 failed += 1
                 conn.execute(
-                    "UPDATE tasks SET last_run = ?, next_run = ? WHERE id = ?",
-                    (err_note, next_iso, row["id"]),
+                    "UPDATE tasks SET last_run = ?, next_run = ?, fail_count = ?, status = ? WHERE id = ?",
+                    (err_note, next_iso, fails, "paused" if fails >= MAX_FAILURES else "pending", row["id"]),
                 )
             else:
                 executed += 1
                 new_status = "pending" if next_iso else "done"
                 conn.execute(
-                    "UPDATE tasks SET last_run = ?, next_run = ?, status = ? WHERE id = ?",
+                    "UPDATE tasks SET last_run = ?, next_run = ?, status = ?, fail_count = 0 WHERE id = ?",
                     (stamp, next_iso, new_status, row["id"]),
                 )
         conn.commit()
@@ -644,13 +692,16 @@ def process_scribble() -> dict:
             title = re.sub(r"\[[^\]]*\]", "", entry_text).strip()
             if not title:
                 title = entry_text[:80]
-            created = create_task(title, cron or DEFAULT_CRON)
+            # No time given: a to-do to keep, not a job to run (it used to
+            # become a job that ran every night at 2am).
+            created = create_task(title, cron, status="pending" if cron else "todo")
             tasks_created += 1
-            sched_desc = (
-                f"cron {created['cron_schedule']}"
-                if created["recurring"]
-                else "one-shot (cron could not be parsed)"
-            )
+            if not cron:
+                sched_desc = "to-do, no time given, so FreeHand won't run it"
+            elif created["recurring"]:
+                sched_desc = f"cron {created['cron_schedule']}"
+            else:
+                sched_desc = "one-shot (cron could not be parsed)"
             _append_journal(f"task scheduled — {title} ({sched_desc})")
             archived += 1
 
