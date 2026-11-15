@@ -461,6 +461,14 @@ def _open_connector_connect(service: str, label: str, request: Request):
 @router.get("/{service}/authorize")
 async def get_authorize_url(service: str, label: str = "default", request: Request = None):
     service = service.lower()
+    if service == "email":
+        # Own-domain email has no sign-in page: it's a form in Connections
+        # (it used to redirect to an empty address).
+        message = ("Email on your own domain is connected with a form, not a sign-in page. In FreeHand, "
+                   "go to Connections, choose Email, and fill in the form.")
+        if _wants_html(request):
+            return _simple_page("Connect email with the form", message, 400)
+        raise HTTPException(status_code=400, detail=message)
     if label not in ("default", "work", "personal"):
         if len(label) > 50:
             raise HTTPException(status_code=400, detail="Label too long (max 50 chars)")

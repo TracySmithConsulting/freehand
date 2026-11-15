@@ -40,6 +40,7 @@ LOG_KEEP = 200
 # What a team member may use, in plain words -> FreeHand's tool names.
 TOOL_CHOICES: dict[str, dict] = {
     "email_read": {"label": "Read email", "tools": ["read_email"]},
+    "email_send": {"label": "Send email", "tools": ["send_email"]},
     "calendar": {"label": "Calendar (read)", "tools": ["list_calendar_events"]},
     "facebook": {"label": "Facebook", "tools": ["list_facebook_pages", "post_to_facebook"]},
     "instagram": {"label": "Instagram", "tools": ["list_instagram_accounts", "post_to_instagram"]},

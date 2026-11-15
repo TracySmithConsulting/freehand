@@ -946,6 +946,36 @@ async def delete_team_member(member_id: str):
     return {"status": "deleted"}
 
 
+# ── Email on the person's own domain (core/tools/own_email.py) ─────────
+
+@app.get("/api/email-account/guess", dependencies=[Depends(require_api_key)])
+async def guess_email_servers(address: str = ""):
+    from core.tools import own_email
+    return own_email.guess_servers(address)
+
+
+@app.post("/api/email-account", dependencies=[Depends(require_api_key)])
+async def connect_email_account(body: dict):
+    """Check the mail server details by really reading and sending a login,
+    and keep them (encrypted) only if both work. The password is never sent
+    back to the page."""
+    from core.tools import own_email
+    from core.oauth.manager import save_connection
+    label = str(body.get("label") or "default").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", label):
+        raise HTTPException(status_code=400, detail="Account names can use letters, numbers, - and _ only, for example Work.")
+    try:
+        creds = own_email.clean(body)
+    except own_email.EmailError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    result = await asyncio.to_thread(own_email.test, creds)
+    if not (result["reading"] and result["sending"]):
+        raise HTTPException(status_code=400, detail=" ".join(result["problems"]) or "That didn't work.")
+    save_connection("email", label, {"credentials": creds, "expires_in": None}, ["imap", "smtp"],
+                    user_id=creds["address"])
+    return {"connected": True, "label": label, "address": creds["address"]}
+
+
 # ── Web search (core/tools/web_search.py) ─────────────────────────────
 
 @app.get("/api/web-search", dependencies=[Depends(require_api_key)])

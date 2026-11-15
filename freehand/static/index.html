@@ -1276,6 +1276,48 @@
       </form>
     </section>
 
+    <!-- Email on your own domain (core/tools/own_email.py) -->
+    <dialog id="email-account-dialog" aria-labelledby="ea-heading">
+      <form id="email-account-form" novalidate>
+        <h2 id="ea-heading">Connect email on your own domain</h2>
+        <p class="hint">For an address like you@yourbusiness.co.za. For Gmail or Outlook, use their own Connect
+          buttons instead. Your password is kept encrypted on this computer and used only to sign in to your mail server.</p>
+        <input type="hidden" id="ea-label">
+        <div class="form-group">
+          <label for="ea-address">Email address</label>
+          <input type="email" id="ea-address" autocomplete="username" required>
+        </div>
+        <div class="form-group">
+          <label for="ea-password">Password</label>
+          <input type="password" id="ea-password" autocomplete="current-password" required aria-describedby="ea-password-hint">
+          <p class="hint" id="ea-password-hint">Many providers want an "app password" here, which you make in the
+            email account's security settings. Your normal password may be refused.</p>
+        </div>
+        <details>
+          <summary>Mail server details (filled in for you; change them if your provider says so)</summary>
+          <div class="form-group">
+            <label for="ea-imap-host">Server for reading (IMAP)</label>
+            <input type="text" id="ea-imap-host" placeholder="mail.yourbusiness.co.za">
+          </div>
+          <div class="form-group">
+            <label for="ea-imap-port">Port for reading</label>
+            <input type="number" id="ea-imap-port" value="993">
+          </div>
+          <div class="form-group">
+            <label for="ea-smtp-host">Server for sending (SMTP)</label>
+            <input type="text" id="ea-smtp-host" placeholder="mail.yourbusiness.co.za">
+          </div>
+          <div class="form-group">
+            <label for="ea-smtp-port">Port for sending (465, or 587)</label>
+            <input type="number" id="ea-smtp-port" value="465">
+          </div>
+        </details>
+        <p id="ea-error" role="status" aria-live="polite"></p>
+        <button type="submit">Check and connect</button>
+        <button type="button" class="secondary" id="ea-cancel">Cancel</button>
+      </form>
+    </dialog>
+
     <!-- Memory Panel -->
     <section id="memory" data-advanced aria-labelledby="mem-heading">
       <h2 id="mem-heading">Memory</h2>
@@ -3822,6 +3864,7 @@
       // Open the sign-in window, then refresh Connections when it closes,
       // so a new account shows up as connected without reloading the page.
       function openSignIn(service, name) {
+        if (service === 'email') { openEmailForm(name); return; }  // a form, not a sign-in page
         var win = window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(name), '_blank', 'width=600,height=700');
         if (!win) {
           showStatus('Your browser blocked the sign-in window. Allow pop-ups for FreeHand, then try again.', 'error');
@@ -3835,6 +3878,58 @@
           loadConnections();
         }, 1000);
       }
+
+      // Email on your own domain: the mail server's details, in a dialog.
+      function openEmailForm(name) {
+        var dlg = document.getElementById('email-account-dialog');
+        if (!dlg || !dlg.showModal) { showStatus('Your browser can\'t show the email form. Try another browser.', 'error'); return; }
+        var form = document.getElementById('email-account-form');
+        form.reset();
+        document.getElementById('ea-label').value = name || 'default';
+        document.getElementById('ea-error').textContent = '';
+        dlg.showModal();
+        document.getElementById('ea-address').focus();
+      }
+      (function() {
+        var dlg = document.getElementById('email-account-dialog');
+        var form = document.getElementById('email-account-form');
+        if (!dlg || !form) return;
+        function el(id) { return document.getElementById(id); }
+        // Suggest the usual server names from the address, until they're changed by hand.
+        el('ea-address').addEventListener('change', function() {
+          apiFetch('/api/email-account/guess?address=' + encodeURIComponent(el('ea-address').value))
+            .then(function(r) { return r.json(); })
+            .then(function(g) {
+              ['imap_host', 'smtp_host', 'imap_port', 'smtp_port'].forEach(function(k) {
+                var input = el('ea-' + k.replace('_', '-'));
+                if (input && !input.dataset.typed) input.value = g[k] || '';
+              });
+            }).catch(function() {});
+        });
+        ['ea-imap-host', 'ea-smtp-host', 'ea-imap-port', 'ea-smtp-port'].forEach(function(id) {
+          el(id).addEventListener('input', function() { el(id).dataset.typed = '1'; });
+        });
+        el('ea-cancel').onclick = function() { dlg.close(); };
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var status = el('ea-error');
+          status.textContent = 'Checking: FreeHand is signing in to read and to send. This takes a few seconds.';
+          var body = {
+            label: el('ea-label').value, address: el('ea-address').value, password: el('ea-password').value,
+            imap_host: el('ea-imap-host').value, imap_port: el('ea-imap-port').value,
+            smtp_host: el('ea-smtp-host').value, smtp_port: el('ea-smtp-port').value
+          };
+          apiFetch('/api/email-account', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+            .then(function(res) { return res.json().then(function(d) { if (!res.ok) throw new Error(d.detail); return d; }); })
+            .then(function(d) {
+              el('ea-password').value = '';
+              dlg.close();
+              showStatus(d.address + ' is connected as "' + d.label + '". FreeHand can now read and send its email.', 'success');
+              loadConnections();
+            })
+            .catch(function(err) { status.textContent = err.message || 'That did not work.'; });
+        });
+      })();
 
       function connectService(service) {
         var name = askAccountName('default');

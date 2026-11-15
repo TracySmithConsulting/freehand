@@ -231,6 +231,7 @@ TOOL_REGISTRY: Dict[str, str] = {
     "delete_checkpoint":     "write",
     # Email / calendar / sheets (read-only surface exposed here)
     "read_email":         "read",
+    "send_email":         "write",
     "list_calendar_events": "read",
     "read_sheets":        "read",
     "read_sheet_range":   "read",
@@ -460,6 +461,23 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "filter": {"type": "string", "description": "Optional filter query"},
             },
             "required": ["service"],
+        },
+    },
+    "send_email": {
+        "description": ("Send an email from one of the person's connected accounts. FreeHand shows the "
+                        "person who it's to and what it says, and asks first unless their permission "
+                        "level says it may just send. Write it in their voice; sign with their name."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "enum": ["google", "microsoft", "email"],
+                            "description": "google (Gmail), microsoft (Outlook) or email (their own domain)"},
+                "label": {"type": "string", "description": "The account's name, as for read_email"},
+                "to": {"type": "string", "description": "Email address, or several separated by commas"},
+                "subject": {"type": "string"},
+                "body": {"type": "string", "description": "The message, as plain text"},
+            },
+            "required": ["service", "to", "subject", "body"],
         },
     },
     "list_calendar_events": {
@@ -792,6 +810,7 @@ You have access to the following tool categories:
 
 ### Email & Calendar
 - read_email(service, label, filter) — Read emails (google/microsoft/email)
+- send_email(service, label, to, subject, body) — Send an email (asks the person first)
 - list_calendar_events(service, label, from, to) — List calendar events
 - read_sheets(label, spreadsheet_id) — Read Google Sheets info
 - list_zoom_meetings(label, page_size) — List Zoom meetings
