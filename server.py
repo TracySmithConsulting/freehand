@@ -946,6 +946,52 @@ async def delete_team_member(member_id: str):
     return {"status": "deleted"}
 
 
+# ── Web search (core/tools/web_search.py) ─────────────────────────────
+
+@app.get("/api/web-search", dependencies=[Depends(require_api_key)])
+async def get_web_search():
+    """Which search FreeHand uses. The Brave key is never sent back: only
+    whether one is saved."""
+    from core.tools import web_search
+    s = web_search.settings()
+    return {"provider": s["provider"], "has_brave_key": bool(s["brave_key"]), "searxng_url": s["searxng_url"]}
+
+
+@app.post("/api/web-search", dependencies=[Depends(require_api_key)])
+async def set_web_search(body: dict):
+    from core.tools import web_search
+    current = dict(_settings_file().get("web_search") or {})
+    provider = str(body.get("provider") or "duckduckgo")
+    if provider not in web_search.PROVIDERS:
+        raise HTTPException(status_code=400, detail="Choose DuckDuckGo, Brave Search or SearXNG.")
+    current["provider"] = provider
+    key = str(body.get("brave_key") or "").strip()
+    if key:  # an empty box keeps the saved key
+        current["brave_key"] = key
+    if body.get("forget_brave_key"):
+        current.pop("brave_key", None)
+    url = str(body.get("searxng_url") or "").strip().rstrip("/")
+    if url and not re.match(r"https?://", url):
+        raise HTTPException(status_code=400, detail="Give the SearXNG server's full address, starting with http:// or https://")
+    current["searxng_url"] = url
+    if provider == "brave" and not current.get("brave_key"):
+        raise HTTPException(status_code=400, detail="Paste your Brave Search key first.")
+    if provider == "searxng" and not url:
+        raise HTTPException(status_code=400, detail="Give your SearXNG server's address first.")
+    _save_setting("web_search", current)
+    return await get_web_search()
+
+
+@app.post("/api/web-search/test", dependencies=[Depends(require_api_key)])
+async def test_web_search():
+    """A real search, so the person knows it works."""
+    from core.tools.web_search import web_search
+    out = await web_search("FreeHand accessible AI assistant", 3)
+    if out.get("error"):
+        return {"ok": False, "message": out["error"]}
+    return {"ok": True, "message": f"Search works, using {out['source']}: {len(out['results'])} results."}
+
+
 @app.get("/api/tasks/limits", dependencies=[Depends(require_api_key)])
 async def get_job_limits():
     """How often scheduled jobs may use AI each month, and how often they have."""

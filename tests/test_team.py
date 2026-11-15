@@ -123,8 +123,8 @@ def test_talking_to_a_team_member_uses_their_setup(thandi, llm):
     first = calls[0]
     assert first["messages"][0]["content"].startswith("You are Thandi")
     assert first["messages"][-1]["content"] == "draft a post about our December specials"
-    assert set(first["tools"]) == {"list_facebook_pages", "post_to_facebook", "extract_text", "get_axtree",
-                                   "take_screenshot", "ask_user"}
+    assert set(first["tools"]) == {"list_facebook_pages", "post_to_facebook", "web_search", "extract_text",
+                                   "get_axtree", "take_screenshot", "ask_user"}
     assert team.usage(thandi)["runs"] == 1 and team.usage(thandi)["tokens"] == 120
     assert team.recent(thandi)[0]["asked"] == "draft a post about our December specials"
 

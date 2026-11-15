@@ -37,16 +37,13 @@ DEFAULT_MONTHLY_LIMIT = 100
 MAX_STEPS = 20
 LOG_KEEP = 200
 
-# FreeHand has no search tool: reading a search engine's results page works.
-SEARCH = "To search the web, read https://html.duckduckgo.com/html/?q=your+search+words with extract_text."
-
 # What a team member may use, in plain words -> FreeHand's tool names.
 TOOL_CHOICES: dict[str, dict] = {
     "email_read": {"label": "Read email", "tools": ["read_email"]},
     "calendar": {"label": "Calendar (read)", "tools": ["list_calendar_events"]},
     "facebook": {"label": "Facebook", "tools": ["list_facebook_pages", "post_to_facebook"]},
     "instagram": {"label": "Instagram", "tools": ["list_instagram_accounts", "post_to_instagram"]},
-    "web": {"label": "Websites (read and search)", "tools": ["extract_text", "get_axtree", "take_screenshot"]},
+    "web": {"label": "Search the web and read websites", "tools": ["web_search", "extract_text", "get_axtree", "take_screenshot"]},
     "documents": {"label": "Word, Excel and PowerPoint files", "tools": ["read_docx", "write_docx", "read_xlsx", "read_pptx"]},
     "sheets": {"label": "Google Sheets", "tools": ["read_sheets", "read_sheet_range"]},
     "zoom": {"label": "Zoom", "tools": ["list_zoom_meetings", "schedule_zoom_meeting"]},
@@ -76,7 +73,7 @@ TEMPLATES: dict[str, dict] = {
         "label": "News summary",
         "job": "A short summary of a topic.",
         "instructions": ("Find the latest news on the topic, and summarise it in five short points, with where "
-                         "each came from. " + SEARCH),
+                         "each came from."),
         "tools": ["web"],
         "model": "cheap",
     },
@@ -84,7 +81,7 @@ TEMPLATES: dict[str, dict] = {
         "label": "Research",
         "job": "Finds and compares information, with sources.",
         "instructions": ("Look things up carefully. Compare the options in plain words, and say where each fact "
-                         "came from. " + SEARCH),
+                         "came from."),
         "tools": ["web", "memory"],
         "model": "",
     },
