@@ -439,7 +439,9 @@ def _tasks_conn() -> sqlite3.Connection:
 
 # Kinds of job (docs/design/scheduled-jobs-and-team-members.md): "do" runs
 # in code with no model at all; "think" asks the model each time.
-KINDS = ("do", "think")
+# "check" runs a cheap check in code, and only tells (or wakes the model)
+# when it finds something (core/checks.py).
+KINDS = ("do", "check", "think")
 
 
 def _ensure_deliver_column(conn: sqlite3.Connection) -> None:
@@ -651,7 +653,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
         rows = conn.execute(
             "SELECT id, title, cron_schedule, next_run, person, deliver_to, fail_count, kind, action FROM tasks "
             "WHERE status = 'pending' AND (next_run IS NULL OR next_run <= ?) "
-            + ("" if llm_ok else "AND kind = 'do' ")
+            + ("" if llm_ok else "AND kind IN ('do', 'check') ")
             + "ORDER BY id LIMIT ?",
             (now_iso, cap),
         ).fetchall()
@@ -660,6 +662,19 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             if row["kind"] == "do":
                 try:
                     result = {"text": run_action(row["action"], row["person"]), "error": None}
+                except Exception as e:
+                    result = {"text": "", "error": str(e)}
+            elif row["kind"] == "check":
+                from core import checks
+                try:
+                    action = json.loads(row["action"] or "{}")
+                    text, kept = _run_coro(checks.run(action, llm_ok=llm_ok))
+                    # What the check saw this time, so next time only new things count.
+                    conn.execute("UPDATE tasks SET action = ? WHERE id = ?", (json.dumps(kept), row["id"]))
+                    conn.commit()  # before the notice is saved, or its write waits on this one
+                    result = {"text": text, "error": None}
+                except checks.CheckError as e:
+                    result = {"text": "", "error": str(e), "plain": str(e)}
                 except Exception as e:
                     result = {"text": "", "error": str(e)}
             else:
@@ -672,7 +687,8 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 # speak up when it's paused, not every 30 seconds.
                 reply = ""
                 if fails >= MAX_FAILURES:
-                    reply = (f"I couldn't do your scheduled task \"{row['title']}\". "
+                    why = f" ({result['plain'].rstrip('.')})" if result.get("plain") else ""
+                    reply = (f"I couldn't do your scheduled task \"{row['title']}\"{why}. "
                              f"I tried {fails} times, so I've stopped trying. To try again, "
                              "add it again under Scheduled jobs.")
             if reply:

@@ -8,7 +8,12 @@ person's own time zone (from their browser), the schedule_job tool, the
 Scheduled jobs screen with plain choices, and the one-time tidy-up of old
 tasks. A job the model sets up is saved straight away, because the person
 asked for it, and the reply says what was saved; it can be paused or
-deleted on the Scheduled jobs screen. Tracy's answers to
+deleted on the Scheduled jobs screen. Step 3 is built (core/checks.py):
+checks for new emails (Gmail and Outlook; sender, subject and first lines)
+and for web pages that change or start to mention some words, every hour
+by default. Only public websites are checked. With "think", the model gets
+only the instructions and what was found, and no tools. Numbers crossing a
+line and files appearing in a folder are left for later. Tracy's answers to
 the open questions are marked **Decided**, and listed at the end.
 
 Two related ideas:

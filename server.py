@@ -843,7 +843,8 @@ async def get_tasks():
     for task in tasks:
         # In plain words, for the Scheduled jobs list.
         task["description"] = schedule_job.describe(task["cron_schedule"], task["next_run"], task["status"], tz=tz)
-        task["free"] = task.get("kind") == "do"
+        task["free"] = task.get("kind") in ("do", "check")
+        task["cost"] = schedule_job.cost(task.get("kind") or "think", task.get("action"))
     return tasks
 
 
@@ -869,7 +870,12 @@ async def create_task(body: dict):
         tz = scheduler.local_tz()
         try:
             job = schedule_job.build({**body, "what": title}, tz=tz)
-        except ValueError as e:
+            if job["kind"] == "check":
+                from core import checks
+                checks.validate(job["action"])
+        except Exception as e:  # ValueError or checks.CheckError: plain words
+            if not isinstance(e, ValueError) and type(e).__name__ != "CheckError":
+                raise
             raise HTTPException(status_code=400, detail=str(e))
         created = create_scheduled_task(job["title"], job["cron"], deliver_to={"channel": "web"},
                                         kind=job["kind"], action=job["action"], run_at=job["run_at"])

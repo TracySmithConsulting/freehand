@@ -7,6 +7,10 @@ both understand the same things:
 - **What:** "remind" (a message, word for word) and "todos" (the person's
   to-do list) run in code with no model, so they're free however often
   they run. "think" asks the model each time, for jobs that need work.
+- **Checks:** "check_email" (new emails from a sender, or with some words)
+  and "check_page" (a web page changed, or now mentions some words). Code
+  checks, which is free; the person is told, or the model woken, only when
+  something is found (core/checks.py).
 - **When:** once (today, tomorrow, a weekday, a date, or in N minutes), or
   every day, every weekday, every week on a day, every month on a date, at
   a time in the person's own time zone. Code does the date maths, which
@@ -20,8 +24,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 TOOL = "schedule_job"
-TYPES = ("remind", "todos", "think")
-REPEATS = ("once", "daily", "weekdays", "weekly", "monthly")
+TYPES = ("remind", "todos", "check_email", "check_page", "think")
+CHECK_TYPES = ("check_email", "check_page")
+REPEATS = ("once", "hourly", "daily", "weekdays", "weekly", "monthly")
 DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 CHANNELS = ("telegram", "slack", "whatsapp")
 
@@ -29,6 +34,7 @@ KEYWORDS = {
     "remind", "reminder", "reminders", "schedule", "scheduled", "every", "daily", "weekly",
     "monthly", "tomorrow", "tonight", "later", "minutes", "hour", "hours", "alarm",
     "weekday", "weekdays", "morning", "evening", "o'clock", "oclock", *DAYS,
+    "hourly", "watch", "monitor", "notify", "alert", "changes", "changed",
 }
 
 
@@ -48,6 +54,10 @@ def schema() -> dict:
                 "Set up something for FreeHand to do later, once or on a repeat. "
                 "type 'remind' sends a reminder message and 'todos' sends the person's to-do list: "
                 "both are free (no AI runs), so use them whenever the job is only a message. "
+                "'check_email' (new emails from a sender or with some words) and 'check_page' (a web page "
+                "changes, or starts to mention some words) are free to check: code checks, and the person is "
+                "told only when something is found. With then='think', you're asked about what was found, "
+                "following 'instructions'. Checks repeat, every hour by default. "
                 "Use 'think' only when the job needs work at the time, like a summary or a draft. "
                 "Give times in the person's own time; code works out the dates. "
                 "Afterwards, tell the person the summary this returns."
@@ -64,6 +74,11 @@ def schema() -> dict:
                     "in_minutes": {"type": "integer", "description": "For 'once': instead of date and time, this many minutes from now."},
                     "weekday": {"type": "string", "enum": list(DAYS), "description": "For 'weekly'."},
                     "day_of_month": {"type": "integer", "description": "For 'monthly': 1 to 28."},
+                    "sender": {"type": "string", "description": "For 'check_email': part of the sender's name or address, e.g. 'fnb'."},
+                    "words": {"type": "string", "description": "For checks: words to look for, separated by commas. Any one counts."},
+                    "url": {"type": "string", "description": "For 'check_page': the page's full address."},
+                    "then": {"type": "string", "enum": ["tell", "think"], "description": "For checks: 'tell' (default, free) or 'think'."},
+                    "instructions": {"type": "string", "description": "For checks with then='think': what to do with what's found."},
                 },
                 "required": ["type", "what"],
             },
@@ -115,7 +130,29 @@ def build(spec: dict, tz=None, now: Optional[datetime] = None) -> dict:
     if not what:
         raise ValueError("Say what the job is.")
     action = None
-    if kind == "remind":
+    if kind in CHECK_TYPES:
+        then = str(spec.get("then") or "tell").strip().lower()
+        if then not in ("tell", "think"):
+            then = "tell"
+        action = {"type": "check", "check": "email" if kind == "check_email" else "page",
+                  "words": str(spec.get("words") or "").strip()[:200], "then": then,
+                  "instructions": str(spec.get("instructions") or "").strip()[:500]}
+        if kind == "check_email":
+            action["sender"] = str(spec.get("sender") or "").strip()[:100]
+            action["account"] = str(spec.get("account") or "").strip()[:100]
+            if not action["sender"] and not action["words"]:
+                raise ValueError("Say who the email is from, or which words to look for.")
+        else:
+            url = str(spec.get("url") or "").strip()
+            if url and "://" not in url:
+                url = "https://" + url
+            if not re.match(r"https?://[^\s/]+\.[^\s]+", url):
+                raise ValueError("Give the web page's full address, for example https://example.com/tickets")
+            action["url"] = url[:500]
+        # A check that runs once only notes what's there now: it needs a repeat.
+        if str(spec.get("repeat") or "once").strip().lower() == "once":
+            spec = {**spec, "repeat": "hourly"}
+    elif kind == "remind":
         action = {"type": "remind", "text": str(spec.get("message") or what).strip()[:500]}
     elif kind == "todos":
         action = {"type": "todos"}
@@ -145,7 +182,9 @@ def build(spec: dict, tz=None, now: Optional[datetime] = None) -> dict:
                     raise ValueError("That time has already passed. Choose a time in the future.")
     else:
         hour, minute = _time(spec.get("time") or "09:00")
-        if repeat == "daily":
+        if repeat == "hourly":
+            cron = f"{minute} * * * *"
+        elif repeat == "daily":
             cron = f"{minute} {hour} * * *"
         elif repeat == "weekdays":
             cron = f"{minute} {hour} * * 1-5"
@@ -163,7 +202,23 @@ def build(spec: dict, tz=None, now: Optional[datetime] = None) -> dict:
                 raise ValueError("Choose a day from 1 to 28, so it happens every month.")
             cron = f"{minute} {hour} {dom} * *"
     return {"title": what, "cron": cron, "run_at": run_at,
-            "kind": "think" if kind == "think" else "do", "action": action}
+            "kind": "think" if kind == "think" else "check" if kind in CHECK_TYPES else "do",
+            "action": action}
+
+
+def cost(kind: str, action=None) -> str:
+    """What a job costs, in plain words."""
+    if kind == "do":
+        return "Free."
+    if kind == "check":
+        from core import checks
+        if isinstance(action, str):
+            try:
+                action = json.loads(action)
+            except ValueError:
+                action = {}
+        return checks.cost(action or {})
+    return "Uses AI each time."
 
 
 def _ordinal(n: int) -> str:
@@ -191,6 +246,8 @@ def describe(cron: str, next_run: Optional[str], status: str = "pending", tz=Non
             return "Done"
         return "Once, " + _when(nxt) if nxt else "Once, as soon as possible"
     parts = cron.split()
+    if len(parts) == 5 and parts[0].isdigit() and parts[1:] == ["*", "*", "*", "*"]:
+        return "Every hour" if parts[0] == "0" else f"Every hour, at {int(parts[0])} minutes past"
     simple = len(parts) == 5 and parts[0].isdigit() and parts[1].isdigit() and parts[3] == "*"
     if simple:
         at = f"{int(parts[1]):02d}:{int(parts[0]):02d}"
@@ -220,15 +277,29 @@ def run_tool(args: dict, source: str = "", caller_id: str = "") -> str:
     tz = scheduler.local_tz()
     try:
         job = build(args, tz=tz)
+        if job["kind"] == "check":
+            from core import checks
+            checks.validate(job["action"])
     except ValueError as e:
+        return json.dumps({"saved": False, "problem": str(e)})
+    except Exception as e:  # checks.CheckError: plain words already
         return json.dumps({"saved": False, "problem": str(e)})
     created = scheduler.create_task(job["title"], job["cron"], deliver_to=target(source, caller_id),
                                     kind=job["kind"], action=job["action"], run_at=job["run_at"])
     summary = describe(created["cron_schedule"], created["next_run"], tz=tz)
-    free = job["kind"] == "do"
+    free = job["kind"] != "think"
+    note = {"do": "Free, no AI needed."}.get(job["kind"]) or cost(job["kind"], job["action"])
+    if job["kind"] == "check":
+        note += " The first check only notes what's there now; after that, only new things count."
+    # So the reply doesn't promise what FreeHand can't do.
+    facts = ["To stop or change it, the person uses the Scheduled jobs screen (Pause or Delete); "
+             "it can't be stopped from the chat yet."]
+    if job["action"] and job["action"].get("check") == "email":
+        facts.append("The check sees each email's sender, subject and first few lines, not the whole email.")
     return json.dumps({
         "saved": True,
-        "summary": f"{job['title']}: {summary}. " + ("Free, no AI needed." if free else "This uses AI each time it runs."),
+        "summary": f"{job['title']}: {summary}. {note}",
+        "facts_for_your_reply": " ".join(facts),
         "free": free,
         "time_zone_known": tz is not timezone.utc,
     })
