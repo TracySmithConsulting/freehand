@@ -1,0 +1,30 @@
+# The test guard (scripts/guard_tests.py): a pull request may not have fewer
+# tests than the branch it goes into, or switch tests off with skip/xfail,
+# unless a maintainer adds the label "tests-removed-on-purpose".
+name: Test guard
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+jobs:
+  test-guard:
+    name: test guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compare the tests with the branch this goes into
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python scripts/guard_tests.py "$BASE_SHA" HEAD
