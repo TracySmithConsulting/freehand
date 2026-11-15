@@ -112,6 +112,10 @@
       scroll-margin-top: 4.5rem;
     }
 
+    .update-notice {
+      margin: 0.5rem 1rem; padding: 0.75rem 1rem; border: 2px solid currentColor; border-radius: 6px;
+    }
+    .update-notice p { margin: 0 0 0.5rem; }
     .skip-link {
       position: absolute;
       left: 1rem;
@@ -962,6 +966,13 @@
     <span id="show-all-hint" class="sr-only">Off: just talking to FreeHand, your scribble pad and tasks. On: memory, skills, connections, settings and the rest as well.</span>
   </header>
   <a class="skip-link" href="#command">Skip to main content</a>
+  <!-- Shown when FreeHand was updated while this page was open -->
+  <div id="update-notice" class="update-notice" role="alert" hidden>
+    <p>FreeHand has been updated. Reload the page to use the new version. Anything you've typed and not sent
+      yet will be lost, so send it first.</p>
+    <button type="button" id="update-reload">Reload now</button>
+    <button type="button" class="secondary" id="update-later">Later</button>
+  </div>
 
   <nav aria-label="Main navigation">
     <ul>
@@ -1871,6 +1882,37 @@
           return res;
         });
       }
+
+      // ---- Was FreeHand updated while this page was open? ----
+      // The page knows its own version; FreeHand says which one it serves
+      // now. When they differ, offer a reload (never reload by itself:
+      // the person may be in the middle of typing).
+      (function() {
+        var mine = '__FREEHAND_PAGE_VERSION__';
+        var notice = document.getElementById('update-notice');
+        if (!notice || mine.indexOf('__') === 0) return;  // opened as a file, not from FreeHand
+        var dismissed = '', lastCheck = 0;
+        function check() {
+          if (Date.now() - lastCheck < 30000) return;
+          lastCheck = Date.now();
+          apiFetch('/api/page-version', { cache: 'no-store' })
+            .then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) {
+              if (!d || !d.version || d.version === mine || d.version === dismissed) return;
+              notice.hidden = false;  // role="alert": read out once, without moving the focus
+              notice.dataset.version = d.version;
+            })
+            .catch(function() {});  // FreeHand restarting: try again later
+        }
+        document.getElementById('update-reload').onclick = function() { location.reload(); };
+        document.getElementById('update-later').onclick = function() {
+          dismissed = notice.dataset.version || '';
+          notice.hidden = true;
+        };
+        setInterval(check, 5 * 60 * 1000);
+        document.addEventListener('visibilitychange', function() { if (!document.hidden) check(); });
+        window.addEventListener('focus', check);
+      })();
 
       // ---- Status Region ----
       const statusRegion = document.getElementById('status-region');

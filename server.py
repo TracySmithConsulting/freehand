@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import sys
 from importlib import resources as importlib_resources
@@ -765,14 +765,36 @@ async def startup_event():
             print(f"[FreeHand] Token expired for {conn['service']} ({conn['label']}) — user should reconnect")
 
 
+PAGE_VERSION_MARK = "__FREEHAND_PAGE_VERSION__"
+
+
+def _page() -> tuple[str, str]:
+    """The console page and its version: a fingerprint of the file, so any
+    change to it (an update) is a new version."""
+    import hashlib
+    static_path = importlib_resources.files("freehand").joinpath("static", "index.html")
+    text = static_path.read_text(encoding="utf-8")
+    return text, hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
 @app.get("/")
 async def root():
     try:
-        static_path = importlib_resources.files("freehand").joinpath("static", "index.html")
-        # "no-cache" = check with FreeHand each time (cheap: unchanged pages
-        # come back as 304). Without it, browsers kept showing the console
-        # from before an update, so fixes seemed not to work.
-        return FileResponse(str(static_path), headers={"Cache-Control": "no-cache"})
+        text, version = _page()
+    except Exception:
+        raise HTTPException(status_code=404, detail="Static files not found")
+    # "no-cache" = check with FreeHand each time. Without it, browsers kept
+    # showing the console from before an update, so fixes seemed not to
+    # work. The page is told its own version, so a tab left open across an
+    # update can notice and offer to reload (/api/page-version).
+    return HTMLResponse(text.replace(PAGE_VERSION_MARK, version), headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/api/page-version")
+async def page_version():
+    """Which console page FreeHand serves now. Nothing private, so no key."""
+    try:
+        return {"version": _page()[1]}
     except Exception:
         raise HTTPException(status_code=404, detail="Static files not found")
 
