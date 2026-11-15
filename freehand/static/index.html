@@ -1895,7 +1895,7 @@
         function check() {
           if (Date.now() - lastCheck < 30000) return;
           lastCheck = Date.now();
-          fetch('/api/page-version', { cache: 'no-store' })
+          apiFetch('/api/page-version', { cache: 'no-store' })
             .then(function(r) { return r.ok ? r.json() : null; })
             .then(function(d) {
               if (!d || !d.version || d.version === mine || d.version === dismissed) return;
