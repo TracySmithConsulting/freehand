@@ -1,6 +1,8 @@
 # The granny installer: FreeHand for people who've never installed anything
 
-Status: design agreed (Nov 2026), nothing built yet. Tracy's answers are
+Status: design agreed (Nov 2026). Step 1 is built: GitHub publishes
+FreeHand's image and the WhatsApp bridge's (.github/workflows/images.yml),
+and install/compose.yml runs FreeHand from published images only. Tracy's answers are
 marked **Decided**, and listed at the end.
 
 ## The goal

@@ -1,0 +1,127 @@
+# FreeHand, installed from ready-made images (docs/design/granny-installer.md).
+#
+# This is what the installers set up: the FreeHand app on Windows, and the
+# one-line install on Linux. Nothing is built: every service is a published
+# image, so no source code is needed. Developers use ../compose.yml, which
+# builds FreeHand from the code instead.
+#
+# The folder this file is in holds:
+#   compose.yml  this file
+#   .env         the secrets the installer makes (random, never shared)
+#   vault/       FreeHand's data: memories, settings, connections
+#
+#   docker compose pull       download (or update) the images
+#   docker compose up -d      start FreeHand
+#   docker compose down       stop it (your data stays)
+#
+# FREEHAND_VERSION picks the version: "latest" (the newest release) unless
+# the .env says otherwise.
+#
+# tests/test_install_compose.py checks this stays in step with ../compose.yml.
+
+services:
+  open-connector:
+    # Gmail, Outlook, calendars, Zoom and the other connections.
+    image: ghcr.io/oomol-lab/open-connector@sha256:61e5e29a9ae7d8e817e8050d062ed57134e069cea3e7eef7cb15349c11b7a76d
+    container_name: freehand-open-connector
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    environment:
+      - PORT=3001
+      - OOMOL_CONNECT_ORIGIN=http://localhost:3001
+      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:?OC_ADMIN_TOKEN is not set (the installer makes it)}
+      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set (the installer makes it)}
+      - OOMOL_CONNECT_ENCRYPTION_KEY=${OC_ENCRYPTION_KEY:?OC_ENCRYPTION_KEY is not set (the installer makes it)}
+    volumes:
+      - oc-data:/app/data
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  hindsight:
+    # Long-term memory. It thinks with FreeHand's own AI model, through
+    # FreeHand, so the person sets a model up only once.
+    image: ghcr.io/vectorize-io/hindsight@sha256:50311d02b4d5d2b7c5242bd336edf8735df8374eaad496a92f49c83b37d2aa06
+    container_name: freehand-hindsight
+    restart: unless-stopped
+    environment:
+      - HINDSIGHT_API_LLM_PROVIDER=openai
+      - HINDSIGHT_API_LLM_BASE_URL=http://freehand:8000/internal/llm/v1
+      - HINDSIGHT_API_LLM_API_KEY=${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set (the installer makes it)}
+      - HINDSIGHT_API_LLM_MODEL=freehand
+      - HINDSIGHT_API_WORKER_ID=freehand
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8888/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+  freehand:
+    image: ghcr.io/tracysmithconsulting/freehand:${FREEHAND_VERSION:-latest}
+    container_name: freehand-app
+    restart: unless-stopped
+    user: "${FREEHAND_USER:-0:0}"
+    depends_on:
+      open-connector:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      - OOMOL_CONNECT_BASE_URL=http://open-connector:3001
+      - OOMOL_CONNECT_CONSOLE_URL=http://localhost:3001
+      - OOMOL_CONNECT_RUNTIME_TOKEN=${OC_RUNTIME_TOKEN:?OC_RUNTIME_TOKEN is not set (the installer makes it)}
+      - OOMOL_CONNECT_ADMIN_TOKEN=${OC_ADMIN_TOKEN:?OC_ADMIN_TOKEN is not set (the installer makes it)}
+      - FREEHAND_BRIDGE_URL=http://whatsapp-bridge:8765
+      - FREEHAND_HINDSIGHT_URL=http://hindsight:8888
+      - FREEHAND_MEMORY_BANK=freehand
+      - FREEHAND_VOICE_MODEL_DIR=/models
+      - FREEHAND_LLM_PROXY_TOKEN=${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set (the installer makes it)}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
+    volumes:
+      - voice-models:/models
+      - ./vault:/app/vault
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+
+  whatsapp-bridge:
+    # Connects FreeHand to WhatsApp, once the person links it. Only FreeHand
+    # can reach it.
+    image: ghcr.io/tracysmithconsulting/freehand-whatsapp-bridge:${FREEHAND_VERSION:-latest}
+    container_name: freehand-whatsapp-bridge
+    restart: unless-stopped
+    environment:
+      - BRIDGE_IN_DOCKER=1
+      - BRIDGE_HOST=0.0.0.0
+      - BRIDGE_PORT=8765
+      - FREEHAND_URL=http://freehand:8000
+      - WHATSAPP_AUTH_DIR=/data/auth_info_baileys
+      - BRIDGE_SECRET=${BRIDGE_SECRET:-}
+    volumes:
+      # The linked-device session: treat it like a password.
+      - whatsapp-session:/data/auth_info_baileys
+
+volumes:
+  oc-data:
+    name: freehand-oc-data
+  hindsight-data:
+    name: freehand-hindsight-data
+  voice-models:
+    name: freehand-voice-models
+  whatsapp-session:
+    name: freehand-whatsapp-session
