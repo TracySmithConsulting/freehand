@@ -56,11 +56,14 @@ RUN pip install --no-cache-dir ".[voice,browser]"
 FROM python:3.11-slim AS runtime
 
 # Build-args let the host's UID/GID match the in-container freehand
-# user. Round 10: default 0:0 for Windows-host compatibility (kept);
-# Linux hosts override at build time with
+# user. Linux hosts override at build time with
 # --build-arg UID=$(id -u) --build-arg GID=$(id -g).
-ARG UID=0
-ARG GID=0
+# Default 1000 (Nov 2026): 0 clashed with the root group, so a build
+# without build-args (the published image) failed. Which user FreeHand
+# runs as is set when it starts (compose.yml "user:", 0:0 by default
+# for Windows hosts), not here.
+ARG UID=1000
+ARG GID=1000
 
 WORKDIR /app
 
