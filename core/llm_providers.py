@@ -24,8 +24,8 @@ PROVIDERS: list[dict] = [
         "key_url": "https://openrouter.ai/settings/keys",
         "signin": True,
         "default_model": "openrouter/auto",
-        "blurb": "One account for models from many companies (Claude, GPT, Gemini, MiniMax and more). Easiest: sign in, no key to copy.",
-        "steps": ["Choose Sign in with OpenRouter.", "Create an account or sign in, and add some credit.", "Approve FreeHand. That's it."],
+        "blurb": "One account for models from many companies (Claude, GPT, Gemini, MiniMax and more). Easiest: sign in, no key to copy. Free models need no credit.",
+        "steps": ["Choose Sign in with OpenRouter.", "Create an account or sign in. For free models, no credit is needed.", "Approve FreeHand. That's it."],
     },
     {
         "id": "openai",
@@ -122,6 +122,21 @@ PROVIDERS: list[dict] = [
         "default_model": "llama3.2",
         "blurb": "Runs models on this computer, free and private. Needs a fairly powerful computer, and Ollama installed.",
         "steps": ["Install Ollama from its website.", "Download a model in Ollama, for example llama3.2.", "Choose it here. No key is needed."],
+    },
+    {
+        # Nov 2026: a generous free allowance (about 40 requests a minute),
+        # meant for trying things out. Suggested as a free backup in the
+        # first-run setup (core/first_run.py), which picks a model from the
+        # account's own list and tests it.
+        "id": "nvidia",
+        "name": "NVIDIA (free models)",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "key_prefixes": ["nvapi-"],
+        "key_url": "https://build.nvidia.com/settings/api-keys",
+        "default_model": "meta/llama-3.3-70b-instruct",
+        "blurb": "Strong open models with a generous free allowance, meant for trying things out. Needs a free NVIDIA developer account with a phone number.",
+        "steps": ["Open the key page and create a free NVIDIA developer account (it asks for your phone number).",
+                  "Choose Generate API Key.", "Copy the key (it starts with nvapi-) and paste it here."],
     },
     {
         "id": "agnes",

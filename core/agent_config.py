@@ -824,8 +824,13 @@ def _build_system_prompt(query: str = "") -> str:
         pass
     imported_str = "\n".join(imported_lines) if imported_lines else "  (none)"
 
+    try:
+        from core.first_run import prompt_line as _name_line
+        name_line = _name_line()
+    except Exception:
+        name_line = ""
     return f"""You are FreeHand, a local AI agent that helps users with their tasks.
-{_now_line()}
+{_now_line()}{name_line}
 ## Your Capabilities
 
 You have access to the following tool categories:

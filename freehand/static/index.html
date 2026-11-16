@@ -112,6 +112,8 @@
       scroll-margin-top: 4.5rem;
     }
 
+    .welcome { border: 2px solid currentColor; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; }
+    .welcome fieldset label { display: block; margin-top: 0.5rem; font-weight: 600; }
     .update-notice {
       margin: 0.5rem 1rem; padding: 0.75rem 1rem; border: 2px solid currentColor; border-radius: 6px;
     }
@@ -1000,6 +1002,87 @@
       <button type="button" id="signin-banner-settings">Go to Settings</button>
     </div>
 
+    <!-- The first-run setup (core/first_run.py): shown while FreeHand has no AI model. -->
+    <section id="welcome" class="welcome" aria-labelledby="welcome-heading" hidden>
+      <h2 id="welcome-heading" tabindex="-1">Welcome to FreeHand</h2>
+      <p id="welcome-progress" class="hint"></p>
+
+      <div class="welcome-step" data-step="name">
+        <p>FreeHand is an assistant you talk to in your own words. Before it can help, it needs a few
+          minutes of setting up. You can come back to anything later in Settings.</p>
+        <div class="form-group">
+          <label for="welcome-name">What should FreeHand call you?</label>
+          <input type="text" id="welcome-name" autocomplete="given-name" maxlength="60">
+        </div>
+        <button type="button" data-next="name">Next</button>
+      </div>
+
+      <div class="welcome-step" data-step="model" hidden>
+        <h3 tabindex="-1">How should FreeHand think?</h3>
+        <p>FreeHand uses an AI model to understand you and to answer. The model runs at an AI company
+          (or on this computer). Choose one:</p>
+        <fieldset>
+          <legend>Choose how FreeHand thinks</legend>
+          <label><input type="radio" name="welcome-way" value="free" checked>
+            Free, to try FreeHand (recommended)</label>
+          <p class="hint">An OpenRouter account, with its free models. Free for about 15 to 20 questions a
+            day, and no card is needed. If you like FreeHand, a one-off US$10 (about R180) of credit at
+            OpenRouter raises that to a few hundred a day.</p>
+          <label><input type="radio" name="welcome-way" value="paid"> The best results (paid)</label>
+          <p class="hint">OpenRouter with credit, for the best models. Usually about R50 to R200 a month
+            for everyday use, paid to OpenRouter.</p>
+          <label><input type="radio" name="welcome-way" value="ollama"> On this computer, free and private</label>
+          <p class="hint">Needs a powerful computer, and the free Ollama app with a model downloaded.</p>
+          <label><input type="radio" name="welcome-way" value="key"> I've been given a key</label>
+          <p class="hint">For example by the person who set FreeHand up for you.</p>
+        </fieldset>
+        <div id="welcome-way-signin">
+          <p>A window opens at OpenRouter. Sign in (or create an account, for example with Google), then
+            approve FreeHand. When the window closes, come back here.</p>
+          <button type="button" id="welcome-signin">Sign in with OpenRouter</button>
+        </div>
+        <div id="welcome-way-ollama" hidden>
+          <p>Install Ollama from ollama.com, start it, and download a model in it (for example llama3.2).
+            Then check here.</p>
+          <button type="button" id="welcome-ollama">Check Ollama</button>
+        </div>
+        <div id="welcome-way-key" hidden>
+          <div class="form-group">
+            <label for="welcome-key">The key</label>
+            <input type="password" id="welcome-key" autocomplete="off">
+          </div>
+          <button type="button" id="welcome-key-check">Check it</button>
+        </div>
+        <p id="welcome-model-result" role="status" aria-live="polite"></p>
+        <button type="button" data-next="model" hidden id="welcome-model-next">Next</button>
+      </div>
+
+      <div class="welcome-step" data-step="backup" hidden>
+        <h3 tabindex="-1">A backup, so FreeHand keeps going (optional)</h3>
+        <p>Free accounts have a daily limit. A second free account as a backup means FreeHand switches
+          to it when the first one runs out or doesn't answer. NVIDIA's is the most generous.</p>
+        <ol id="welcome-backup-steps"></ol>
+        <p><a id="welcome-backup-link" href="https://build.nvidia.com/settings/api-keys" target="_blank" rel="noopener">
+          Open NVIDIA's key page (opens in a new tab)</a></p>
+        <div class="form-group">
+          <label for="welcome-backup-key">The NVIDIA key (it starts with nvapi-)</label>
+          <input type="password" id="welcome-backup-key" autocomplete="off">
+        </div>
+        <button type="button" id="welcome-backup-check">Check and add</button>
+        <button type="button" class="secondary" data-next="backup">Skip this</button>
+        <p id="welcome-backup-result" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="welcome-step" data-step="try" hidden>
+        <h3 tabindex="-1">You're ready</h3>
+        <p id="welcome-ready"></p>
+        <p>Try asking: "What can you help me with?" Later, you can connect your email and calendar under
+          Connections, and get help on your computer with the FreeHand Helper.</p>
+        <button type="button" id="welcome-try">Ask it now</button>
+        <button type="button" class="secondary" id="welcome-finish">Close the setup</button>
+      </div>
+    </section>
+
     <!-- Only shown while something is waiting for the user's OK. -->
     <section id="approvals-section" class="approvals-waiting" aria-labelledby="approvals-heading" hidden>
       <h2 id="approvals-heading">Waiting for your approval</h2>
@@ -1882,6 +1965,111 @@
           return res;
         });
       }
+
+      // ---- The first-run setup (core/first_run.py) ----
+      // Shown while FreeHand has no AI model. One step at a time; each new
+      // step's heading gets the focus, so a screen reader reads it.
+      (function() {
+        var box = document.getElementById('welcome');
+        if (!box || !box.querySelector) return;
+        var order = ['name', 'model', 'backup', 'try'];
+        function el(id) { return document.getElementById(id) || {}; }
+        function say(id, text) { el(id).textContent = text; }
+        function show(step) {
+          [].forEach.call(box.querySelectorAll('.welcome-step'), function(s) { s.hidden = s.dataset.step !== step; });
+          say('welcome-progress', 'Step ' + (order.indexOf(step) + 1) + ' of ' + order.length);
+          var target = box.querySelector('.welcome-step[data-step="' + step + '"] h3') || el('welcome-heading');
+          if (target.focus) target.focus();
+          if (step === 'name') { var n = el('welcome-name'); if (n.focus) n.focus(); }
+        }
+        function post(url, body) {
+          return apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+            .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
+        }
+        function way() { var r = box.querySelector('input[name="welcome-way"]:checked'); return r ? r.value : 'free'; }
+        function modelReady(message) {
+          say('welcome-model-result', message);
+          el('welcome-model-next').hidden = false;
+          if (el('welcome-model-next').focus) el('welcome-model-next').focus();
+        }
+        box.addEventListener('change', function(e) {
+          if (!e.target || e.target.name !== 'welcome-way') return;
+          var w = way();
+          el('welcome-way-signin').hidden = !(w === 'free' || w === 'paid');
+          el('welcome-way-ollama').hidden = w !== 'ollama';
+          el('welcome-way-key').hidden = w !== 'key';
+          say('welcome-model-result', '');
+        });
+        box.addEventListener('click', function(e) {
+          var next = e.target && e.target.dataset && e.target.dataset.next;
+          if (!next) return;
+          if (next === 'name') {
+            var name = (el('welcome-name').value || '').trim();
+            (name ? post('/api/setup/name', { name: name }) : Promise.resolve()).then(function() { show('model'); })
+              .catch(function() { show('model'); });
+          } else {
+            show(order[order.indexOf(next) + 1]);
+          }
+        });
+        el('welcome-signin').onclick = function() {
+          var free = way() === 'free';
+          say('welcome-model-result', 'Opening OpenRouter...');
+          post('/api/llm/openrouter/start', { free: free }).then(function(d) {
+            var win = window.open(d.url, '_blank', 'width=600,height=750');
+            if (!win) { say('welcome-model-result', 'Your browser blocked the window. Allow pop-ups for FreeHand, then try again.'); return; }
+            say('welcome-model-result', 'Sign in at OpenRouter in the new window. When it closes, FreeHand carries on.');
+            var timer = setInterval(function() {
+              if (!win.closed) return;
+              clearInterval(timer);
+              apiFetch('/api/setup').then(function(r) { return r.json(); }).then(function(s) {
+                if (s.model) modelReady('Done. FreeHand now thinks with ' + s.model.service + ' (' + s.model.model + ').');
+                else say('welcome-model-result', "The sign-in didn't finish. Try again, or choose another way.");
+              });
+            }, 1000);
+          }).catch(function(err) { say('welcome-model-result', err.message); });
+        };
+        el('welcome-ollama').onclick = function() {
+          say('welcome-model-result', 'Checking Ollama...');
+          post('/api/setup/ollama', {}).then(function(d) {
+            if (d.ok) modelReady(d.message); else say('welcome-model-result', d.message);
+          }).catch(function(err) { say('welcome-model-result', err.message); });
+        };
+        el('welcome-key-check').onclick = function() {
+          say('welcome-model-result', 'Checking the key: FreeHand is asking the AI a tiny question...');
+          post('/api/setup/key', { key: el('welcome-key').value, role: 'main' }).then(function(d) {
+            el('welcome-key').value = '';
+            if (d.ok) modelReady(d.message); else say('welcome-model-result', d.message);
+          }).catch(function(err) { say('welcome-model-result', err.message); });
+        };
+        el('welcome-backup-check').onclick = function() {
+          say('welcome-backup-result', 'Checking the key...');
+          post('/api/setup/key', { key: el('welcome-backup-key').value, provider: 'nvidia', role: 'backup' }).then(function(d) {
+            el('welcome-backup-key').value = '';
+            say('welcome-backup-result', d.message);
+            if (d.ok) setTimeout(function() { show('try'); }, 1500);
+          }).catch(function(err) { say('welcome-backup-result', err.message); });
+        };
+        function finish() {
+          post('/api/setup/done', {}).catch(function() {});
+          box.hidden = true;
+        }
+        el('welcome-finish').onclick = function() { finish(); showStatus('Setup finished. Settings has everything, if you want to change it.', 'success'); };
+        el('welcome-try').onclick = function() {
+          finish();
+          var input = document.getElementById('command-input');
+          if (input) { input.value = 'What can you help me with?'; input.focus(); }
+          showStatus('The question is in the Command Box. Press Enter to ask it.', 'success');
+        };
+        apiFetch('/api/setup').then(function(r) { return r.ok ? r.json() : null; }).then(function(s) {
+          if (!s || !s.needed) return;
+          var steps = (s.services && s.services.nvidia && s.services.nvidia.steps) || [];
+          var list = el('welcome-backup-steps');
+          steps.forEach(function(step) { var li = document.createElement('li'); li.textContent = step; if (list.appendChild) list.appendChild(li); });
+          if (s.name) el('welcome-name').value = s.name;
+          box.hidden = false;
+          show('name');
+        }).catch(function() {});
+      })();
 
       // ---- Was FreeHand updated while this page was open? ----
       // The page knows its own version; FreeHand says which one it serves
