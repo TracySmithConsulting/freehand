@@ -127,12 +127,16 @@ def test_outlook_meeting_times_are_converted_to_utc(oc):
     assert event["attendees"] == [{"emailAddress": {"address": "a@x.com"}, "type": "required"}]
 
 
-def test_google_meeting_without_offset_gets_a_time_zone(oc):
+def test_google_meeting_without_offset_gets_a_time_zone(oc, monkeypatch):
+    # A time with no zone is the person's own (Nov 2026; it used to be UTC,
+    # so 10:00 landed at 12:00 in South Africa).
+    from zoneinfo import ZoneInfo
+    monkeypatch.setattr("core.scheduler.local_tz", lambda: ZoneInfo("Africa/Johannesburg"))
     calls, _ = oc
     run(it.create_meeting("google", "default", "Plan", "2026-11-13T10:00:00", "2026-11-13T11:00:00"))
     event = calls[0]["input"]["event"]
     assert calls[0]["action"] == "googlecalendar.create_event"
-    assert event["start"] == {"dateTime": "2026-11-13T10:00:00", "timeZone": "UTC"}
+    assert event["start"] == {"dateTime": "2026-11-13T10:00:00+02:00"}
 
 
 def test_sheets_range_reads_values(oc):

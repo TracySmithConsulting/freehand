@@ -42,6 +42,7 @@ TOOL_CHOICES: dict[str, dict] = {
     "email_read": {"label": "Read email", "tools": ["read_email"]},
     "email_send": {"label": "Send email", "tools": ["send_email"]},
     "calendar": {"label": "Calendar (read)", "tools": ["list_calendar_events"]},
+    "calendar_add": {"label": "Add to calendar", "tools": ["create_calendar_event"]},
     "facebook": {"label": "Facebook", "tools": ["list_facebook_pages", "post_to_facebook"]},
     "instagram": {"label": "Instagram", "tools": ["list_instagram_accounts", "post_to_instagram"]},
     "web": {"label": "Search the web and read websites", "tools": ["web_search", "extract_text", "get_axtree", "take_screenshot"]},

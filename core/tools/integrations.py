@@ -163,37 +163,106 @@ def _iso(dt) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _local(value: str):
+    """A date and time from the model, as a time-zone-aware datetime. One
+    without a time zone is the person's own time (it used to be taken as
+    UTC, so "10:00" landed at 12:00 in South Africa). None if unreadable."""
+    from datetime import datetime
+    from core import scheduler
+    try:
+        dt = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=scheduler.local_tz())
+
+
 def _default_window(from_dt: str, to_dt: str) -> tuple:
-    """Default calendar window: now to seven days ahead (was all of 2026)."""
+    """Default calendar window: now to seven days ahead (was all of 2026).
+    Times without a time zone are the person's own."""
     from datetime import datetime, timedelta, timezone
     now = datetime.now(timezone.utc)
-    return from_dt or _iso(now), to_dt or _iso(now + timedelta(days=7))
+    start, end = _local(from_dt) if from_dt else None, _local(to_dt) if to_dt else None
+    return (_iso(start.astimezone(timezone.utc)) if start else from_dt or _iso(now),
+            _iso(end.astimezone(timezone.utc)) if end else to_dt or _iso(now + timedelta(days=7)))
 
 
 def _utc_naive(value: str) -> str:
     """'2026-11-13T10:00:00+02:00' -> '2026-11-13T08:00:00' (UTC, no offset).
 
     Outlook wants a local time plus a time-zone name; FreeHand sends UTC.
-    A value without an offset is taken as UTC already.
+    A value without an offset is the person's own time.
     """
-    from datetime import datetime, timezone
-    try:
-        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
+    from datetime import timezone
+    dt = _local(value)
+    if dt is None:
         return value
-    if dt.tzinfo is not None:
-        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S")
+    return dt.astimezone(timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def _google_time(value: str) -> dict:
-    """Google needs an offset or a time zone; a bare time is taken as UTC."""
+    """Google needs an offset or a time zone; a bare time is the person's own."""
+    dt = _local(value)
+    if dt is None:
+        return {"dateTime": value}
+    return {"dateTime": dt.isoformat()}
+
+
+def _when(value: dict) -> str:
+    """An event's start or end, as the person's own time where it can be."""
     from datetime import datetime
+    from core import scheduler
+    value = value if isinstance(value, dict) else {}
+    if value.get("date"):
+        return value["date"]  # all day
+    raw = str(value.get("dateTime") or "")
+    if not raw:
+        return ""
+    import re
+    # Outlook sends seven decimal places ("08:00:00.0000000"); Python reads at most six.
+    cleaned = re.sub(r"\.(\d{1,6})\d*", r".\1", raw.replace("Z", "+00:00"))
     try:
-        has_tz = datetime.fromisoformat(value.replace("Z", "+00:00")).tzinfo is not None
+        dt = datetime.fromisoformat(cleaned)
     except ValueError:
-        has_tz = True
-    return {"dateTime": value} if has_tz else {"dateTime": value, "timeZone": "UTC"}
+        return raw
+    if dt.tzinfo is None:  # Outlook gives UTC (or the zone named beside it)
+        from datetime import timezone
+        zone = str(value.get("timeZone") or "UTC")
+        try:
+            from zoneinfo import ZoneInfo
+            dt = dt.replace(tzinfo=timezone.utc if zone.upper() == "UTC" else ZoneInfo(zone))
+        except Exception:
+            dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(scheduler.local_tz()).strftime("%Y-%m-%d %H:%M")
+
+
+def slim_event(service: str, e: dict) -> dict:
+    if service == "microsoft":
+        who = [((a.get("emailAddress") or {}).get("address") or "") for a in e.get("attendees") or []]
+        out = {"id": e.get("id"), "title": e.get("subject") or "", "start": _when(e.get("start")),
+               "end": _when(e.get("end")), "all_day": bool(e.get("isAllDay")),
+               "where": (e.get("location") or {}).get("displayName") or "",
+               "notes": (e.get("bodyPreview") or "")[:200]}
+    else:
+        who = [a.get("email") or "" for a in e.get("attendees") or [] if not a.get("self")]
+        out = {"id": e.get("id"), "title": e.get("summary") or "(no title)", "start": _when(e.get("start")),
+               "end": _when(e.get("end")), "all_day": bool((e.get("start") or {}).get("date")),
+               "where": e.get("location") or ("Google Meet" if e.get("hangoutLink") else ""),
+               "notes": (e.get("description") or "")[:200]}
+    who = [w for w in who if w][:10]
+    if who:
+        out["with"] = who
+    return {k: v for k, v in out.items() if v not in ("", None, False)}  # all_day only when it is
+
+
+def slim_events(service: str, data) -> dict:
+    """What the model needs from a calendar: title, when (in the person's
+    own time), where, who and a line of notes. Google sent about 500 tokens
+    per event (links, reminders, conference details)."""
+    if not isinstance(data, dict) or data.get("error"):
+        return data
+    items = data.get("items") if service == "google" else (data.get("value") or data.get("events"))
+    events = [slim_event(service, e) for e in (items or data.get("events") or []) if isinstance(e, dict)]
+    return {"events": events, "count": len(events), "times_are": "the person's own time"}
 
 
 def slim_emails(service: str, data) -> dict:
@@ -291,31 +360,55 @@ async def create_meeting(service: str = "google", label: str = "default", title:
     check = _check_write_permission("create_meeting", service, label)
     if not check.get("allowed"):
         return {"error": "Approval required to create meeting", "approval": check}
-    if not title or not start or not end:
-        return {"error": "title, start, and end are required"}
+    return await create_calendar_event(service, label, title, start, end, attendees)
+
+
+async def create_calendar_event(service: str = "google", label: str = "default", title: str = "",
+                                start: str = "", end: str = "", attendees=None, location: str = "",
+                                description: str = "", duration_minutes=None) -> dict:
+    """Add an event to the person's calendar. The approval is asked once,
+    before this runs (core/agent.py, core/mcp_server.py). Invitations aren't
+    emailed: people are added to the event only."""
+    from datetime import timedelta
+    title = str(title or "").strip()
+    begins = _local(start)
+    if not title or begins is None:
+        return {"error": "Give the event a name and a start, for example 2026-11-20T10:00."}
+    ends = _local(end) if end else None
+    if ends is None:
+        try:
+            minutes = int(duration_minutes or 60)
+        except (TypeError, ValueError):
+            minutes = 60
+        ends = begins + timedelta(minutes=max(5, min(minutes, 24 * 60)))
+    if ends <= begins:
+        return {"error": "The event has to end after it starts."}
     people = _recipients(attendees or [])
     if service == "google":
-        data, err = await _oc_run(service, "calendar", "create_event", {
-            "calendarId": "primary",
-            "event": {
-                "summary": title,
-                "start": _google_time(start),
-                "end": _google_time(end),
-                "attendees": [{"email": a} for a in people],
-            },
-        }, label)
-        return err or data
+        event = {"summary": title, "start": {"dateTime": begins.isoformat()}, "end": {"dateTime": ends.isoformat()}}
+        if people:
+            event["attendees"] = [{"email": a} for a in people]
+        if location:
+            event["location"] = str(location)[:300]
+        if description:
+            event["description"] = str(description)[:3000]
+        data, err = await _oc_run(service, "calendar", "create_event", {"calendarId": "primary", "event": event}, label)
+        return err or {"added": True, **slim_event("google", data or {})}
     if service == "microsoft":
-        data, err = await _oc_run(service, "calendar", "create_event", {
-            "event": {
-                "subject": title,
-                "start": {"dateTime": _utc_naive(start), "timeZone": "UTC"},
-                "end": {"dateTime": _utc_naive(end), "timeZone": "UTC"},
-                "attendees": [{"emailAddress": {"address": a}, "type": "required"} for a in people],
-            },
-        }, label)
-        return err or data
-    return {"error": f"Meeting creation not supported for: {service}"}
+        event = {
+            "subject": title,
+            "start": {"dateTime": _utc_naive(begins.isoformat()), "timeZone": "UTC"},
+            "end": {"dateTime": _utc_naive(ends.isoformat()), "timeZone": "UTC"},
+        }
+        if people:
+            event["attendees"] = [{"emailAddress": {"address": a}, "type": "required"} for a in people]
+        if location:
+            event["location"] = {"displayName": str(location)[:300]}
+        if description:
+            event["body"] = {"contentType": "text", "content": str(description)[:3000]}
+        data, err = await _oc_run(service, "calendar", "create_event", {"event": event}, label)
+        return err or {"added": True, **slim_event("microsoft", data or {})}
+    return {"error": f"Adding events isn't possible for: {service}"}
 
 
 async def list_facebook_pages(service: str = "facebook", label: str = "default") -> dict:
