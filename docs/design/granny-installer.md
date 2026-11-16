@@ -7,7 +7,8 @@ is built (core/first_run.py): while FreeHand has no AI model, its page
 opens at a four-step setup (name; how FreeHand thinks: free OpenRouter,
 paid OpenRouter, Ollama, or a given key; an optional free NVIDIA backup;
 a first question). Every key is tested before it's kept, and NVIDIA is now
-one of FreeHand's services. Tracy's answers are
+one of FreeHand's services. Step 3, part 1 (proving option A2) is done:
+see "Proven on a real PC". Tracy's answers are
 marked **Decided**, and listed at the end.
 
 ## The goal
@@ -145,6 +146,27 @@ Afterwards:
 
 Everything is reachable with the keyboard and a screen reader, as the
 Helper is now.
+
+### Proven on a real PC (16 November 2026)
+
+On Tracy's PC (Windows 11, WSL 2, with Docker Desktop also running), a
+test Linux called FreeHand-test ran FreeHand without Docker Desktop:
+
+1. **The system:** Alpine Linux's minimal system (`alpine-minirootfs-3.24.4-x86_64.tar.gz`, 3.7 MB), downloaded from `dl-cdn.alpinelinux.org` and checked against Alpine's published SHA-256, imported with `wsl --import FreeHand-test <folder> <file> --version 2`.
+2. **The engine:** `apk add docker docker-cli-compose` from Alpine's own package store: Docker 29.9, Compose 5.6, about 100 MB.
+3. **Starting it:** `dockerd`, with its own network ranges (`--bip 172.31.200.1/24 --default-address-pool base=172.31.208.0/20,size=24`) so it can't clash with Docker Desktop or the home network.
+4. **FreeHand:** `install/compose.yml` (FreeHand and OpenConnector, for the test) started, and both were healthy.
+5. **From Windows:** `http://localhost:18000` reached FreeHand inside it. WSL passes localhost ports through to Windows, so the installed FreeHand will be at `http://localhost:8000` as usual.
+6. **The first-run setup:** the new FreeHand showed it (`/api/setup` said `needed: true`).
+7. **Tracy's own FreeHand** (in Docker Desktop) kept running throughout. Everything was removed afterwards (`wsl --unregister`).
+
+What the app has to do because of this:
+
+- **Create the folder before `wsl --import`.** WSL says "path not found" otherwise.
+- **Keep the engine running itself.** Alpine has no service manager under WSL, so `dockerd` only runs while something holds it. The FreeHand app starts `wsl -d FreeHand -- dockerd ...` hidden, and keeps it while the app runs. It starts with Windows.
+- **Make the secrets with real randomness** (.NET `RandomNumberGenerator`). The test used PowerShell's `Get-Random`, which isn't meant for secrets.
+- **The images must be public** on GitHub before an install can download them (they were still private at the time of the test, so the test copied them across from the PC's own Docker).
+- **Downloads for a real install:** about 4 MB for the system, about 100 MB for the engine, then the images (about 2.7 GB for FreeHand and OpenConnector, and 3.8 GB more for Hindsight).
 
 ## First-run setup (needed by every kind of install)
 
