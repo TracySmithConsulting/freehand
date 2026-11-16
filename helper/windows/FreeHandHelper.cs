@@ -44,6 +44,8 @@ namespace FreeHand.Helper
                 return SelfTestOpen(args[1], args[2]);
             if (args.Length == 2 && args[0] == "--selftest-change")
                 return SelfTestChange(args[1]);
+            if (args.Length == 2 && args[0] == "--selftest-engine")
+                return SelfTestEngine(args[1]);
             bool first;
             using (var mutex = new Mutex(true, "FreeHandHelperSingleInstance", out first))
             {
@@ -122,6 +124,31 @@ namespace FreeHand.Helper
                 catch (HelperRefusal ex) { result["bad_id"] = ex.Message; }
                 try { Change.Prepare("fix", new Dictionary<string, object> { { "fix", "format the disk" } }); result["bad_fix"] = "allowed (wrong)"; }
                 catch (HelperRefusal ex) { result["bad_fix"] = ex.Message; }
+                result["ok"] = true;
+            }
+            catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); }
+            File.WriteAllText(outFile, new JavaScriptSerializer().Serialize(result));
+            return result.ContainsKey("error") ? 1 : 0;
+        }
+
+        // FreeHandHelper.exe --selftest-engine out.json: what the installer
+        // would find on this computer (Windows, memory, space, WSL, whether
+        // FreeHand's Linux is there and FreeHand answers). Nothing is changed.
+        static int SelfTestEngine(string outFile)
+        {
+            var result = new Dictionary<string, object>();
+            try
+            {
+                var r = Engine.Check();
+                result["windows_ok"] = r.WindowsOk;
+                result["memory_gb"] = Math.Round(r.MemoryGb, 1);
+                result["free_disk_gb"] = Math.Round(r.FreeDiskGb, 1);
+                result["wsl_ready"] = r.WslReady;
+                result["installed"] = r.Installed;
+                result["running"] = r.Running;
+                result["problems"] = r.Problems;
+                result["warnings"] = r.Warnings;
+                result["root"] = Engine.Root;
                 result["ok"] = true;
             }
             catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); }

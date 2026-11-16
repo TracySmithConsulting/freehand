@@ -13,6 +13,7 @@ if not exist "%NET%\csc.exe" (
   /r:"%NET%\System.dll" /r:"%NET%\System.Core.dll" /r:"%NET%\System.Drawing.dll" /r:"%NET%\System.Windows.Forms.dll" ^
   /r:"%NET%\System.Web.Extensions.dll" /r:"%NET%\System.Security.dll" ^
   /r:"%NET%\WPF\UIAutomationClient.dll" /r:"%NET%\WPF\UIAutomationTypes.dll" /r:"%NET%\WPF\WindowsBase.dll" ^
-  "%~dp0FreeHandHelper.cs"
+  /resource:"%~dp0..\..\install\compose.yml",compose.yml ^
+  "%~dp0FreeHandHelper.cs" "%~dp0Engine.cs"
 if errorlevel 1 exit /b 1
 echo Built %~dp0FreeHandHelper.exe
