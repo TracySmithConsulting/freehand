@@ -1,7 +1,7 @@
 # The granny installer: FreeHand for people who've never installed anything
 
-Status: design only (Nov 2026). Questions for Tracy are marked
-**Question** and gathered at the end; answer them in this file.
+Status: design agreed (Nov 2026), nothing built yet. Tracy's answers are
+marked **Decided**, and listed at the end.
 
 ## The goal
 
@@ -164,11 +164,28 @@ question at a time:
 Then optional steps, each skippable: "Connect your email", "Help on my
 computer", "Telegram or WhatsApp".
 
-**Question:** Which way of getting an AI model should FreeHand suggest
-first for a new person? A free account (for example OpenRouter's free
-models)? A paid one you recommend? Or a key you provide to your clients
-(and charge for)?
+**Decided:** a provider with a good free tier; Tracy asked for the best
+one to be worked out. Compared in November 2026, from independent guides
+(the providers don't all publish their limits, and the guides don't always
+agree). One FreeHand question is usually 2 to 3 AI calls.
 
+| Provider | Free use | For FreeHand |
+|---|---|---|
+| OpenRouter | 50 requests a day; 1,000 a day after a one-off purchase of US$10 of credits; 20 a minute | The easiest sign-up (a Google account works), one key for many models. About 15 to 20 questions a day free. |
+| Google Gemini | Flash models about 20 a day, Flash-Lite about 500 a day (cut in 2026) | Easy for anyone with Gmail, but very little free use, and free use may be used to improve Google's products. |
+| Groq | About 1,000 a day, but only about 6,000 to 8,000 tokens a minute | Too tight a minute: a FreeHand message is about 4,000 tokens, so one question can hit the limit. |
+| NVIDIA NIM | About 40 a minute, no fixed daily cap | The most free use, and strong models, but a developer sign-up with phone verification, and meant for trying things out. |
+
+So the first-run setup **suggests OpenRouter first**, saying plainly that
+the free 50 a day is enough to try FreeHand and that a one-off US$10
+(about R180) makes it 1,000 a day. It then **offers a second free provider
+as a backup** (NVIDIA NIM, or Groq), because FreeHand already switches to
+a backup model when one runs out (Settings, AI model), so two free
+accounts go much further than one. The other choices (a paid model, a
+model on this computer, a key given by a provider) stay.
+
+"Check it" in the setup tries the key for real, so the person knows it
+works whatever the provider has changed since.
 ## What has to be built, in order
 
 1. **Publish FreeHand's image.** GitHub builds it on each release and
@@ -179,8 +196,9 @@ models)? A paid one you recommend? Or a key you provide to your clients
 3. **The FreeHand app installer (A2):** WSL, the engine, the images, the
    tray icon, updates and uninstall. Built on the Helper and its signed
    release pipeline.
-4. **Retire the old installer scripts**, or make them download the new
-   installer.
+4. **The old installer scripts:** `install.ps1` downloads the new
+   installer; `install.sh` becomes the one-line Linux install (the same
+   services, the free Docker engine, the same first-run setup).
 5. **Hosted, polished (C):** a clear way for Tracy to set up a client,
    and a welcome email with their address and the Helper download.
 6. **The website** (freehand.tracysmith.co.za) with the download, when
@@ -188,20 +206,21 @@ models)? A paid one you recommend? Or a key you provide to your clients
 
 Each step is its own pull request, with tests, and is useful on its own.
 
-## Questions for Tracy
+## Decisions (Tracy, Nov 2026)
 
-1. **Who comes first?** People installing at home (option A), or clients
-   on hosted FreeHand (option C)? Or both, as recommended?
-2. **Docker Desktop or FreeHand's own WSL?** A1 is quicker to build, but
-   shows Docker's own screens and needs paid licences for bigger
-   businesses. A2 is more work, but invisible and free. (Recommended: A2.)
-3. **The first AI model:** what should FreeHand suggest to a new person?
-   (See "First-run setup".)
-4. **Mac:** do any of your users or clients need FreeHand on a Mac, now
-   or soon?
-5. **The Helper becomes the FreeHand app:** happy for the Helper to grow
-   into the installer and tray app, with "Help on my computer" as one of
-   its parts?
-6. **Hosting:** would you offer hosted FreeHand to clients as a paid
-   service? That decides how much the hosted setup needs: for example
-   billing, and a page for clients to manage their own account.
+1. **Who comes first:** both, home installs (A) and hosted clients (C).
+2. **The engine:** A2, FreeHand's own WSL, with no Docker Desktop.
+3. **The first AI model:** OpenRouter suggested first, with a second free
+   provider as a backup (see "First-run setup").
+4. **Mac and Linux:** on the roadmap, not now.
+   - **Linux** is where the tinkerers are, and Linux installs are usually
+     one command typed in a terminal. So Linux gets a one-line install
+     (`curl ... | sh`) that sets up the same three services with the free
+     Docker engine, and the same first-run setup in the browser. That's
+     step 4 below (the old scripts become it).
+   - **Mac** gets an installer later, when there are Mac users to try it.
+5. **The Helper becomes the FreeHand app:** yes.
+6. **Paid hosting:** maybe, depending on how FreeHand takes off. So for
+   now, hosting needs only what makes it easy for Tracy to set up and
+   hand over a client (step 5). Billing and a self-service account page
+   wait.
