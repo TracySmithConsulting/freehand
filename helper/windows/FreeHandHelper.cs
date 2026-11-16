@@ -46,6 +46,8 @@ namespace FreeHand.Helper
                 return SelfTestChange(args[1]);
             if (args.Length == 2 && args[0] == "--selftest-engine")
                 return SelfTestEngine(args[1]);
+            if (args.Length == 2 && args[0] == "--selftest-setup")
+                return SelfTestSetup(args[1]);
             bool first;
             using (var mutex = new Mutex(true, "FreeHandHelperSingleInstance", out first))
             {
@@ -60,7 +62,21 @@ namespace FreeHand.Helper
                 ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new MainForm());
+                bool background = Array.IndexOf(args, "--background") >= 0;
+                var settings = Settings.Load();
+                // Someone already using the Helper with a FreeHand elsewhere
+                // carries on as before: no setup screens.
+                if (settings.Mode.Length == 0 && settings.Paired) { settings.Mode = "server"; settings.Save(); }
+                if (settings.Mode.Length == 0 || Array.IndexOf(args, "--setup") >= 0)
+                {
+                    using (var setup = new SetupForm(settings))
+                    {
+                        setup.ShowDialog();
+                        if (setup.Installed) background = true;  // FreeHand opened in the browser
+                    }
+                    if (Settings.Load().Mode.Length == 0) return 0;  // closed without choosing
+                }
+                Application.Run(new MainForm(background));
             }
             return 0;
         }
@@ -149,6 +165,23 @@ namespace FreeHand.Helper
                 result["problems"] = r.Problems;
                 result["warnings"] = r.Warnings;
                 result["root"] = Engine.Root;
+                result["ok"] = true;
+            }
+            catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); }
+            File.WriteAllText(outFile, new JavaScriptSerializer().Serialize(result));
+            return result.ContainsKey("error") ? 1 : 0;
+        }
+
+        // FreeHandHelper.exe --selftest-setup out.json: every setup screen's
+        // words, buttons and first focus, without showing it or changing anything.
+        static int SelfTestSetup(string outFile)
+        {
+            var result = new Dictionary<string, object>();
+            try
+            {
+                Application.EnableVisualStyles();
+                using (var form = new SetupForm(new Settings()) { PreviewOnly = true })
+                    result["screens"] = form.Preview();
                 result["ok"] = true;
             }
             catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); }
@@ -256,6 +289,10 @@ namespace FreeHand.Helper
         public string DeviceId = "";
         public string Name = "";
         public string Token = "";
+        // Where FreeHand runs: "local" (installed on this computer by this
+        // app), "server" (somewhere else: only the Helper part is used), or
+        // "" (not chosen yet: the setup screens open).
+        public string Mode = "";
 
         static string Folder { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FreeHand Helper"); } }
         static string FilePath { get { return Path.Combine(Folder, "settings.json"); } }
@@ -271,6 +308,7 @@ namespace FreeHand.Helper
                 s.Server = Str(d, "server", s.Server);
                 s.DeviceId = Str(d, "device_id", "");
                 s.Name = Str(d, "name", "");
+                s.Mode = Str(d, "mode", "");
                 var sealedToken = Str(d, "token", "");
                 if (sealedToken.Length > 0)
                     s.Token = Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(sealedToken), null, DataProtectionScope.CurrentUser));
@@ -285,7 +323,8 @@ namespace FreeHand.Helper
             var sealedToken = Token.Length > 0
                 ? Convert.ToBase64String(ProtectedData.Protect(Encoding.UTF8.GetBytes(Token), null, DataProtectionScope.CurrentUser))
                 : "";
-            var d = new Dictionary<string, object> { { "server", Server }, { "device_id", DeviceId }, { "name", Name }, { "token", sealedToken } };
+            var d = new Dictionary<string, object> { { "server", Server }, { "device_id", DeviceId }, { "name", Name }, { "token", sealedToken },
+                { "mode", Mode } };
             File.WriteAllText(FilePath, new JavaScriptSerializer().Serialize(d));
         }
 
@@ -317,8 +356,18 @@ namespace FreeHand.Helper
         bool hotkeyOk;
         CancellationTokenSource connection;
 
-        public MainForm()
+        readonly bool startHidden;
+
+        // Started with Windows, or just after installing: by the clock, no window.
+        protected override void SetVisibleCore(bool value)
         {
+            if (startHidden && !IsHandleCreated) { CreateHandle(); value = false; }
+            base.SetVisibleCore(value);
+        }
+
+        public MainForm(bool background = false)
+        {
+            startHidden = background;
             Text = "FreeHand Helper";
             Width = 640; Height = 560;
             StartPosition = FormStartPosition.CenterScreen;
@@ -362,6 +411,16 @@ namespace FreeHand.Helper
             layout.Controls.Add(unpairButton);
 
             var menu = new ContextMenuStrip();
+            if (settings.Mode == "local")
+            {
+                // FreeHand installed on this computer by this app.
+                menu.Items.Add("Open FreeHand", null, delegate { SetupForm.OpenFreeHand(); });
+                menu.Items.Add("Update FreeHand", null, delegate { UpdateLocal(); });
+                menu.Items.Add("Turn FreeHand off", null, delegate { TurnOffLocal(); });
+                menu.Items.Add("Turn FreeHand on", null, delegate { TurnOnLocal(); });
+                menu.Items.Add("Uninstall FreeHand", null, delegate { UninstallLocal(); });
+                menu.Items.Add(new ToolStripSeparator());
+            }
             menu.Items.Add("Stop FreeHand", null, delegate { StopHelping("You pressed Stop."); });
             menu.Items.Add("Open the FreeHand Helper", null, delegate { ShowMe(); });
             menu.Items.Add("Quit", null, delegate { quitting = true; Close(); });
@@ -381,8 +440,94 @@ namespace FreeHand.Helper
             return box;
         }
 
+        // ── FreeHand on this computer (Engine.cs) ───────────────────────
+
+        bool localBusy;
+
+        void TurnOnLocal()
+        {
+            if (localBusy) return;
+            localBusy = true;
+            Task.Run(() =>
+            {
+                try { Engine.Start(); Ui(delegate { trayIcon.ShowBalloonTip(4000, "FreeHand", "FreeHand is on.", ToolTipIcon.Info); }); }
+                catch (Exception ex) { Ui(delegate { Tell("FreeHand couldn't start: " + ex.Message); }); }
+                finally { localBusy = false; }
+            });
+        }
+
+        void TurnOffLocal()
+        {
+            if (localBusy) return;
+            localBusy = true;
+            Task.Run(() =>
+            {
+                try { Engine.Stop(); Ui(delegate { trayIcon.ShowBalloonTip(4000, "FreeHand", "FreeHand is off. Your data is kept. Choose Turn FreeHand on to start it again.", ToolTipIcon.Info); }); }
+                catch (Exception ex) { Ui(delegate { Tell("FreeHand couldn't be turned off: " + ex.Message); }); }
+                finally { localBusy = false; }
+            });
+        }
+
+        void UpdateLocal()
+        {
+            if (localBusy) return;
+            localBusy = true;
+            var work = new WorkForm("Updating FreeHand");
+            work.Show();
+            Task.Run(() =>
+            {
+                try { Engine.Update((pct, text) => work.Say(pct + "%: " + text)); work.Say("Done. You can close this window."); }
+                catch (Exception ex) { work.Say("The update didn't finish: " + ex.Message); }
+                finally { localBusy = false; }
+            });
+        }
+
+        void UninstallLocal()
+        {
+            if (localBusy) return;
+            var answer = OnTop("Uninstall FreeHand from this computer?\r\n\r\nKeep your FreeHand data (memories, connections and settings)? " +
+                "Choose Yes to keep a copy in your Documents folder, No to remove everything, or Cancel to keep FreeHand.",
+                "Uninstall FreeHand", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (answer == DialogResult.Cancel) return;
+            bool keep = answer == DialogResult.Yes;
+            localBusy = true;
+            var work = new WorkForm("Uninstalling FreeHand");
+            work.Show();
+            work.Say(keep ? "Copying your data to your Documents folder, then removing FreeHand..." : "Removing FreeHand...");
+            Task.Run(() =>
+            {
+                try
+                {
+                    var kept = Engine.Uninstall(keep);
+                    SetupForm.StartWithWindows(false);
+                    settings.Mode = "";
+                    settings.Save();
+                    work.Say("FreeHand is uninstalled." + (kept != null ? " Your data is in " + kept + "." : "") + " You can close this window.");
+                }
+                catch (Exception ex) { work.Say("Uninstalling didn't finish: " + ex.Message); }
+                finally { localBusy = false; }
+            });
+        }
+
+        void Tell(string text) { OnTop(text, "FreeHand", MessageBoxButtons.OK, MessageBoxIcon.Information); }
+
+        // This window is often hidden by the clock, and a message owned by a
+        // hidden window can open behind others, where a screen reader user
+        // may never find it. A small top-most owner brings it to the front.
+        static DialogResult OnTop(string text, string title, MessageBoxButtons buttons, MessageBoxIcon icon)
+        {
+            using (var owner = new Form { TopMost = true, ShowInTaskbar = false, StartPosition = FormStartPosition.CenterScreen,
+                FormBorderStyle = FormBorderStyle.None, Size = new Size(1, 1), Opacity = 0 })
+            {
+                owner.Show();
+                owner.Activate();
+                return MessageBox.Show(owner, text, title, buttons, icon, MessageBoxDefaultButton.Button1);
+            }
+        }
+
         void Startup()
         {
+            if (settings.Mode == "local") TurnOnLocal();  // FreeHand runs while this app runs
             hotkeyOk = Native.RegisterHotKey(Handle, 1, Native.MOD_CONTROL | Native.MOD_ALT | Native.MOD_NOREPEAT, Native.VK_ESCAPE);
             if (!hotkeyOk) Log("Ctrl+Alt+Escape is in use by another program, so use the Stop button instead.");
             UpdateView();
