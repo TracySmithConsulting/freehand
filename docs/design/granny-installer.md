@@ -2,7 +2,12 @@
 
 Status: design agreed (Nov 2026). Step 1 is built: GitHub publishes
 FreeHand's image and the WhatsApp bridge's (.github/workflows/images.yml),
-and install/compose.yml runs FreeHand from published images only. Tracy's answers are
+and install/compose.yml runs FreeHand from published images only. Step 2
+is built (core/first_run.py): while FreeHand has no AI model, its page
+opens at a four-step setup (name; how FreeHand thinks: free OpenRouter,
+paid OpenRouter, Ollama, or a given key; an optional free NVIDIA backup;
+a first question). Every key is tested before it's kept, and NVIDIA is now
+one of FreeHand's services. Tracy's answers are
 marked **Decided**, and listed at the end.
 
 ## The goal

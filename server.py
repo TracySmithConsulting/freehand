@@ -533,6 +533,8 @@ _OPENROUTER_PENDING: dict = {}
 
 @app.post("/api/llm/openrouter/start", dependencies=[Depends(require_api_key)])
 async def openrouter_start(request: Request):
+    """Sign in with OpenRouter. {"free": true} (the first-run setup's free
+    choice) makes OpenRouter's free models the main model."""
     import base64
     import hashlib
     import time
@@ -544,7 +546,11 @@ async def openrouter_start(request: Request):
     verifier = _secrets.token_urlsafe(48)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     state = _secrets.token_urlsafe(24)
-    _OPENROUTER_PENDING[state] = {"verifier": verifier, "at": now}
+    try:
+        wants_free = bool((await request.json() or {}).get("free"))
+    except Exception:
+        wants_free = False
+    _OPENROUTER_PENDING[state] = {"verifier": verifier, "at": now, "free": wants_free}
     # OpenRouter allows localhost callbacks on any port.
     port = request.url.port or 8000
     callback = f"http://localhost:{port}/api/llm/openrouter/callback"
@@ -599,11 +605,15 @@ async def openrouter_callback(code: str = "", state: str = "", error: str = ""):
         # Don't throw away the model people had: it becomes the first backup.
         _save_llm_backups([{k: current.get(k, "") for k in ("provider", "model", "api_key", "base_url")},
                            *get_llm_backups()])
-    set_llm_config({"provider": "openrouter", "api_key": key, "base_url": "",
-                    "model": keep_model or llm_providers.get("openrouter")["default_model"]})
+    from core.first_run import FREE_OPENROUTER_MODEL
+    model = FREE_OPENROUTER_MODEL if pending.get("free") else (keep_model or llm_providers.get("openrouter")["default_model"])
+    set_llm_config({"provider": "openrouter", "api_key": key, "base_url": "", "model": model})
     # Like saving a key in Settings: wake the task runner now.
     from core.scheduler import run_due_tasks
     asyncio.get_running_loop().create_task(asyncio.to_thread(run_due_tasks))
+    if pending.get("free"):
+        return _signin_page("Signed in with OpenRouter",
+                            "FreeHand can now use OpenRouter's free models. Close this window to carry on.", True)
     return _signin_page("Signed in with OpenRouter",
                         "FreeHand can now use OpenRouter. Close this window and choose a model in Settings.", True)
 
@@ -966,6 +976,52 @@ async def delete_team_member(member_id: str):
     if not team.delete(member_id):
         raise HTTPException(status_code=404, detail="That team member doesn't exist.")
     return {"status": "deleted"}
+
+
+# ── The first-run setup (core/first_run.py) ───────────────────────────
+
+@app.get("/api/setup", dependencies=[Depends(require_api_key)])
+async def setup_status():
+    from core import first_run
+    out = await asyncio.to_thread(first_run.status)
+    out["services"] = {pid: first_run.provider_for_ui(pid) for pid in ("openrouter", "nvidia", "groq", "google")}
+    return out
+
+
+@app.post("/api/setup/name", dependencies=[Depends(require_api_key)])
+async def setup_name(body: dict):
+    from core import first_run
+    return {"name": first_run.set_name(body.get("name", ""))}
+
+
+@app.post("/api/setup/key", dependencies=[Depends(require_api_key)])
+async def setup_key(body: dict):
+    """Test a key and keep it as the main model or a backup. The key is
+    never sent back."""
+    from core import first_run
+    key = str(body.get("key") or "").strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Paste the key first.")
+    role = "backup" if body.get("role") == "backup" else "main"
+    result = await asyncio.to_thread(first_run.use_key, key, str(body.get("provider") or ""), role,
+                                     bool(body.get("free")))
+    if result.get("ok") and role == "main":
+        from core.scheduler import run_due_tasks
+        asyncio.get_running_loop().create_task(asyncio.to_thread(run_due_tasks))
+    return result
+
+
+@app.post("/api/setup/ollama", dependencies=[Depends(require_api_key)])
+async def setup_ollama(body: dict):
+    from core import first_run
+    return await asyncio.to_thread(first_run.use_ollama, str(body.get("model") or ""))
+
+
+@app.post("/api/setup/done", dependencies=[Depends(require_api_key)])
+async def setup_done():
+    from core import first_run
+    first_run.finish()
+    return {"done": True}
 
 
 # ── Email on the person's own domain (core/tools/own_email.py) ─────────
