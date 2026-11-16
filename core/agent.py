@@ -223,6 +223,16 @@ def parse_tool_call(message: dict) -> Optional[dict]:
     return {"id": tc.get("id", ""), "name": name, "args": args}
 
 
+def _approval_hint(source: str, approval_id) -> str:
+    """Where the person approves it, so the reply doesn't say "reply yes"
+    (Nov 2026: it did, and a "yes" in the chat does nothing)."""
+    if source in ("telegram", "slack", "whatsapp") and approval_id:
+        return (f"It's waiting for their approval. They reply /approve {approval_id} to go ahead, "
+                f"or /deny {approval_id}. A plain yes doesn't approve it.")
+    return ("It's waiting for their approval at the top of FreeHand's page, under Approvals "
+            "(Approve or Deny). A yes in the chat doesn't approve it.")
+
+
 def describe_action(tool: str, args: dict) -> str:
     """What an approval is for, in words the person can decide on: who an
     email goes to and what it says, what a post says. It used to say only
@@ -231,6 +241,14 @@ def describe_action(tool: str, args: dict) -> str:
     if tool == "send_email":
         return (f"Send an email to {args.get('to', '?')}\nSubject: {args.get('subject', '')}\n\n"
                 f"{str(args.get('body', ''))[:1500]}")
+    if tool == "create_calendar_event":
+        from core.tools.integrations import _local
+        begins = _local(args.get("start", ""))
+        when = f"{begins:%A %d %B %Y at %H:%M}" if begins else str(args.get("start", "?"))
+        extra = "".join(f"\n{label}: {args[key]}" for key, label in
+                        (("end", "Ends"), ("duration_minutes", "Minutes"), ("location", "Where"), ("attendees", "With"))
+                        if args.get(key))
+        return f"Add to your calendar: {args.get('title', '?')}\n{when}{extra}"
     if tool in ("post_to_facebook", "post_to_instagram"):
         where = "Facebook" if tool == "post_to_facebook" else "Instagram"
         text = args.get("content") or args.get("caption") or args.get("message") or ""
@@ -286,12 +304,22 @@ async def execute_tool(name: str, args: dict) -> dict:
                                       to=args.get("to", ""), subject=args.get("subject", ""), body=args.get("body", ""))
             return {"content": json.dumps(result, default=str)}
         elif name == "list_calendar_events":
+            from core.tools.integrations import slim_events
+            service = args.get("service", "google")
             result = await list_calendar_events(
-                service=args.get("service", "google"),
+                service=service,
                 label=args.get("label", "default"),
                 from_dt=args.get("from", ""),
                 to_dt=args.get("to", ""),
             )
+            return {"content": json.dumps(slim_events(service, result), default=str)}
+        elif name == "create_calendar_event":
+            from core.tools.integrations import create_calendar_event
+            result = await create_calendar_event(
+                service=args.get("service", "google"), label=args.get("label", "default"),
+                title=args.get("title", ""), start=args.get("start", ""), end=args.get("end", ""),
+                attendees=args.get("attendees"), location=args.get("location", ""),
+                description=args.get("description", ""), duration_minutes=args.get("duration_minutes"))
             return {"content": json.dumps(result, default=str)}
         elif name == "read_sheets":
             result = await read_sheets(
@@ -814,8 +842,9 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
                     source, caller_id, force_confirm=True,
                 )
                 tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps({
-                    "error": f"Waiting for the person's approval for {tool_name}. Tell them it's waiting.",
+                    "error": f"Waiting for the person's approval for {tool_name}.",
                     "approval_id": result.get("approval_id"),
+                    "tell_the_person": _approval_hint(source, result.get("approval_id")),
                 })}
         elif permission == "write":
             # N6: tighten permission for remote sources.
@@ -842,6 +871,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
                         "content": json.dumps({
                             "error": f"Approval required for {tool_name}",
                             "approval_id": result.get("approval_id"),
+                            "tell_the_person": _approval_hint(source, result.get("approval_id")),
                         }),
                     }
                 else:
@@ -874,6 +904,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
                         "content": json.dumps({
                             "error": f"Destructive approval required for {tool_name}",
                             "approval_id": result.get("approval_id"),
+                            "tell_the_person": _approval_hint(source, result.get("approval_id")),
                         }),
                     }
                 else:

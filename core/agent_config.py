@@ -233,6 +233,7 @@ TOOL_REGISTRY: Dict[str, str] = {
     "read_email":         "read",
     "send_email":         "write",
     "list_calendar_events": "read",
+    "create_calendar_event": "write",
     "read_sheets":        "read",
     "read_sheet_range":   "read",
     # Zoom
@@ -478,6 +479,26 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                 "body": {"type": "string", "description": "The message, as plain text"},
             },
             "required": ["service", "to", "subject", "body"],
+        },
+    },
+    "create_calendar_event": {
+        "description": ("Add an event to the person's calendar. Times are their own time, as "
+                        "YYYY-MM-DDTHH:MM. FreeHand asks them first. People listed in attendees are added "
+                        "to the event, but no invitation email is sent."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "service": {"type": "string", "enum": ["google", "microsoft"]},
+                "label": {"type": "string", "description": "The calendar account's name"},
+                "title": {"type": "string"},
+                "start": {"type": "string", "description": "e.g. 2026-11-20T10:00"},
+                "end": {"type": "string", "description": "Optional; or give duration_minutes"},
+                "duration_minutes": {"type": "integer", "description": "Default 60"},
+                "location": {"type": "string"},
+                "attendees": {"type": "string", "description": "Email addresses, separated by commas"},
+                "description": {"type": "string"},
+            },
+            "required": ["service", "title", "start"],
         },
     },
     "list_calendar_events": {
@@ -746,6 +767,18 @@ def build_system_prompt(lean: bool = False, query: str = "") -> str:
     return _re.sub(r"\n{3,}", "\n\n", prompt).strip() + "\n"
 
 
+def _now_line() -> str:
+    """Today's date and time, so "tomorrow" and "Friday at 10" mean the
+    right day (Nov 2026: the model had been guessing)."""
+    try:
+        from core import scheduler
+        tz = scheduler.local_tz()
+        now = datetime.now(timezone.utc).astimezone(tz)
+        return f"Now: {now:%A %d %B %Y, %H:%M} ({getattr(tz, 'key', 'UTC')}). Times you give are in this zone.\n"
+    except Exception:
+        return ""
+
+
 def _build_system_prompt(query: str = "") -> str:
     settings = _load_settings()
     tier = settings.get("tier", "semi_autonomous")
@@ -792,7 +825,7 @@ def _build_system_prompt(query: str = "") -> str:
     imported_str = "\n".join(imported_lines) if imported_lines else "  (none)"
 
     return f"""You are FreeHand, a local AI agent that helps users with their tasks.
-
+{_now_line()}
 ## Your Capabilities
 
 You have access to the following tool categories:
@@ -812,6 +845,7 @@ You have access to the following tool categories:
 - read_email(service, label, filter) — Read emails (google/microsoft/email)
 - send_email(service, label, to, subject, body) — Send an email (asks the person first)
 - list_calendar_events(service, label, from, to) — List calendar events
+- create_calendar_event(service, label, title, start, ...) — Add an event (asks the person first)
 - read_sheets(label, spreadsheet_id) — Read Google Sheets info
 - list_zoom_meetings(label, page_size) — List Zoom meetings
 
