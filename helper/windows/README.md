@@ -22,6 +22,30 @@ every time**, never "for 30 minutes". FreeHand can't run its own commands:
 it can only pick a program's id or one of the four fixes by name. See
 [the design](../../docs/design/computer-helper.md).
 
+## It's becoming the FreeHand app
+
+The Helper is growing into **the FreeHand app**
+([the design](../../docs/design/granny-installer.md)). Started for the
+first time, it asks where FreeHand runs:
+
+- **On this computer:** it installs FreeHand in its own small Linux inside
+  Windows (WSL), with the free Docker engine and no Docker Desktop
+  (`Engine.cs`). It checks the computer first, switches WSL on if needed
+  (Windows asks "allow changes?", then a restart, after which it carries
+  on by itself), downloads and starts FreeHand, and opens it in the
+  browser. Then, by the clock: **Open FreeHand**, **Update FreeHand**,
+  **Turn FreeHand off** and **on**, and **Uninstall FreeHand** (which offers
+  to keep a copy of your data first). It starts with Windows, in the
+  background, unless you switch that off.
+- **On a server:** only the Helper part is used, as before.
+
+If the Helper is already paired, it carries on exactly as before: no setup.
+
+For checking a build: `--selftest-engine out.json` says what an install
+would find on this computer, and `--selftest-setup out.json` builds every
+setup screen and reports its words, buttons and first focus. Neither
+changes anything.
+
 ## Getting it
 
 **Download** [FreeHandHelper.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHandHelper.exe)
