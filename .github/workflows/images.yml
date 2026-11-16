@@ -1,0 +1,92 @@
+# FreeHand's images, ready-made, so an install doesn't need the source code
+# (docs/design/granny-installer.md, step 1).
+#
+#   ghcr.io/tracysmithconsulting/freehand                  FreeHand itself
+#   ghcr.io/tracysmithconsulting/freehand-whatsapp-bridge  the WhatsApp bridge
+#
+# Tags:
+#   - a release (git tag v0.2.0): 0.2.0, 0.2 and latest, for Intel/AMD and
+#     ARM computers;
+#   - every change to main: edge (the newest code, Intel/AMD only, to keep
+#     it quick);
+#   - pull requests: built to check they still build, never published.
+#
+# Only committed files are built (a fresh checkout), and .dockerignore keeps
+# out the vault, .env files, keys and the WhatsApp session anyway.
+name: Images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - pyproject.toml
+      - freehand/bridge/**
+      - install/**
+      - .github/workflows/images.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: freehand
+            context: .
+            file: Dockerfile
+          - name: freehand-whatsapp-bridge
+            context: freehand/bridge
+            file: freehand/bridge/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up building for ARM too
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Sign in to GitHub's package registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Work out the tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/tracysmithconsulting/${{ matrix.name }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable=${{ github.ref == 'refs/heads/main' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.name }}
+            org.opencontainers.image.description=FreeHand, an accessible AI assistant
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build, and publish unless it's a pull request
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
