@@ -3,6 +3,7 @@ name: Publish to PyPI
 on:
   release:
     types: [published]
+  workflow_call:  # from release.yml, after a version tag
   workflow_dispatch:
 
 jobs:
@@ -29,4 +30,4 @@ jobs:
           DISABLE_ID_TOKEN: true
         run: |
           pip install twine
-          twine upload dist/*
+          twine upload --skip-existing dist/*  # already there (sent by hand, or twice): nothing to do
