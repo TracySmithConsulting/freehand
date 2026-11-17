@@ -269,7 +269,12 @@ namespace FreeHand.Helper
                     ShowProblem("Setting up stopped. Nothing is lost: press Back, then Next, and FreeHand carries on from where it stopped.");
                     return;
                 }
-                if (t.IsFaulted) { ShowProblem(t.Exception.GetBaseException().Message + "\r\n\r\nPress Back, then Next, to try again."); return; }
+                if (t.IsFaulted)
+                {
+                    ShowProblem(t.Exception.GetBaseException().Message + "\r\n\r\nPress Back, then Next, to try again. If it keeps happening, send this file to whoever helps you with FreeHand: "
+                        + Engine.LogFile);
+                    return;
+                }
                 settings.Mode = "local";
                 settings.Save();
                 StartWithWindows(true);

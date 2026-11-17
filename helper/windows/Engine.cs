@@ -47,6 +47,21 @@ namespace FreeHand.Helper
 
         public static string Root { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "FreeHand"); } }
 
+        /// What happened while installing, step by step, so a person can send
+        /// it to whoever helps them. It never holds secrets: commands aren't
+        /// written to it, only the steps and what went wrong.
+        public static string LogFile { get { return Path.Combine(Root, "install-log.txt"); } }
+
+        public static void Note(string text)
+        {
+            try
+            {
+                Directory.CreateDirectory(Root);
+                File.AppendAllText(LogFile, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + text + Environment.NewLine);
+            }
+            catch (Exception) { }
+        }
+
         // ── Checks ──────────────────────────────────────────────────────
 
         public class Readiness
@@ -135,8 +150,11 @@ namespace FreeHand.Helper
         /// Everything after WSL is on: the Linux, the engine, FreeHand's
         /// settings and images, then start it. Safe to run again: each step
         /// is skipped if it's already done.
-        public static void Install(Action<int, string> progress, CancellationToken cancel)
+        public static void Install(Action<int, string> report, CancellationToken cancel)
         {
+            Action<int, string> progress = (pct, text) => { Note(pct + "%: " + text); report(pct, text); };
+            Note("Installing, on Windows build " + WindowsBuild() + string.Format(" with {0:0.0} GB of memory.", TotalMemoryGb()));
+            Note("WSL: " + Run("wsl.exe", "--version", 30).Text.Trim().Replace("\r", "").Replace("\n", "; "));
             if (!WslReady()) throw new EngineError("WSL isn't switched on yet. Press Install again to switch it on.");
             if (!DistroExists())
             {
@@ -152,7 +170,8 @@ namespace FreeHand.Helper
             if (Sh("command -v dockerd >/dev/null && echo yes", 30).Text.Trim() != "yes")
             {
                 progress(15, "Downloading the engine that runs FreeHand (about 100 MB)...");
-                Must(Sh("apk update && apk add --no-progress docker docker-cli-compose", 1800),
+                // A download stopped part-way last time may still be running.
+                Must(Sh("pkill -x apk 2>/dev/null; for i in 1 2 3; do apk update && apk add --no-progress docker docker-cli-compose && exit 0; sleep 10; done; exit 1", 3600),
                     "The engine couldn't be downloaded. Check the internet connection, then press Install again");
             }
             cancel.ThrowIfCancellationRequested();
@@ -176,10 +195,30 @@ namespace FreeHand.Helper
             var dir = Path.Combine(Root, "download");
             Directory.CreateDirectory(dir);
             var file = Path.Combine(dir, AlpineFile);
-            using (var web = new WebClient())
+            for (int attempt = 1; ; attempt++)
             {
-                var task = web.DownloadFileTaskAsync(new Uri(AlpineUrl), file);
-                while (!task.Wait(500)) if (cancel.IsCancellationRequested) { web.CancelAsync(); cancel.ThrowIfCancellationRequested(); }
+                try
+                {
+                    using (var web = new WebClient())
+                    {
+                        var task = web.DownloadFileTaskAsync(new Uri(AlpineUrl), file);
+                        while (!task.Wait(500)) if (cancel.IsCancellationRequested) { web.CancelAsync(); cancel.ThrowIfCancellationRequested(); }
+                    }
+                    break;
+                }
+                catch (AggregateException ex)
+                {
+                    var why = ex.GetBaseException();
+                    Note("The Linux download didn't work (try " + attempt + "): " + why.Message);
+                    if (attempt >= 3)
+                    {
+                        var web = why as WebException;
+                        if (web != null && (web.Status == WebExceptionStatus.NameResolutionFailure || web.Status == WebExceptionStatus.ConnectFailure))
+                            throw new EngineError("This computer couldn't reach the internet to download FreeHand's Linux. Check the connection, then try again.");
+                        throw new EngineError("FreeHand's Linux couldn't be downloaded: " + why.Message + " Try again in a little while.");
+                    }
+                    Thread.Sleep(5000);
+                }
             }
             if (Sha256(file) != AlpineSha256)
             {
@@ -231,12 +270,17 @@ namespace FreeHand.Helper
             var psi = new ProcessStartInfo("wsl.exe", "-d " + Distro + " -- sh -c \"mkdir -p /var/log; exec dockerd " + DockerdArgs + " > /var/log/dockerd.log 2>&1\"")
             { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden };
             engine = Process.Start(psi);
-            for (int i = 0; i < 30; i++)
+            // An older computer can take a few minutes to start it the first time.
+            var until = DateTime.Now.AddMinutes(4);
+            while (DateTime.Now < until)
             {
-                Thread.Sleep(1000);
+                Thread.Sleep(3000);
                 if (Sh("docker info >/dev/null 2>&1 && echo yes", 30).Text.Trim() == "yes") return;
+                if (engine.HasExited) break;  // it stopped by itself: waiting longer won't help
             }
-            throw new EngineError("The engine that runs FreeHand didn't start. Restarting the computer usually helps.");
+            var why = Sh("tail -n 25 /var/log/dockerd.log", 30).Text.Trim();
+            Note("The engine didn't start. Its last words:" + Environment.NewLine + why);
+            throw new EngineError("The engine that runs FreeHand didn't start. Restarting the computer usually helps." + Reason(why));
         }
 
         /// Start FreeHand (when the app starts with Windows, for example).
@@ -333,9 +377,21 @@ namespace FreeHand.Helper
             if (o.Code != 0)
             {
                 var detail = o.Text.Trim();
+                Note(plain + ". " + detail);
                 if (detail.Length > 300) detail = detail.Substring(detail.Length - 300);
                 throw new EngineError(plain + "." + (detail.Length > 0 ? " (Details: " + detail + ")" : ""));
             }
+        }
+
+        /// The engine's own reason, when it's one a person can do something about.
+        static string Reason(string log)
+        {
+            var l = log.ToLowerInvariant();
+            if (l.Contains("iptables") || l.Contains("nf_tables") || l.Contains("kernel"))
+                return " (The engine says this computer's Linux is missing a part it needs. Updating WSL can fix that: the FreeHand team can help.)";
+            if (l.Contains("no space left"))
+                return " (The computer's disk is full. Free some space, then try again.)";
+            return "";
         }
 
         static string Sha256(string file)
