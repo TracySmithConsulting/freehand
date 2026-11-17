@@ -5,7 +5,35 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] — 2026-10-24
+## [0.1.10] — 2026-11-17
+
+The first release with FreeHand's images published, so `latest` exists
+for installers (the FreeHand app's install stopped without it).
+
+### Added
+
+- **Scheduled jobs**: reminders, to-do lists, email and page checks, and
+  thinking jobs, delivered as notices; stopped, changed and removed from
+  the chat; with monthly limits on AI use.
+- **Team members**: named helpers with their own tools, who can be asked
+  directly or given jobs.
+- **Web search** (DuckDuckGo, Brave or SearXNG).
+- **Sending email**, including from your own domain's address.
+- **Adding calendar events**, in the person's own time zone.
+- **The page offers to reload itself** after an update.
+- **A first-run welcome**: name, AI key (OpenRouter first, NVIDIA as a
+  free backup) and model.
+- **The FreeHand app** (Windows): installs FreeHand in its own small
+  Linux with the free Docker engine, no Docker Desktop; setup screens
+  for screen readers; Open, Update, Turn off/on and Uninstall by the clock.
+- **Images on GHCR**: `ghcr.io/tracysmithconsulting/freehand` and
+  `freehand-whatsapp-bridge`, and `install/compose.yml` to run them.
+
+### Changed
+
+- Everyday chats cost less: tools are chosen by topic, and email and
+  calendar results are trimmed.
+
 
 ### Added — multi-tenant provisioning (`scripts/provision_tenant.py`)
 
