@@ -167,7 +167,7 @@ namespace FreeHand.Helper
                 try { File.Delete(file); } catch (Exception) { }
             }
             cancel.ThrowIfCancellationRequested();
-            if (Sh("command -v dockerd >/dev/null && echo yes", 30).Text.Trim() != "yes")
+            if (!Yes("command -v dockerd >/dev/null", 60))
             {
                 progress(15, "Downloading the engine that runs FreeHand (about 100 MB)...");
                 // A download stopped part-way last time may still be running.
@@ -235,7 +235,7 @@ namespace FreeHand.Helper
         {
             Must(Sh("mkdir -p " + AppDir + "/vault", 30), "FreeHand's folder couldn't be made");
             WriteFile(AppDir + "/compose.yml", ComposeFile());
-            if (Sh("test -s " + AppDir + "/.env && echo yes", 30).Text.Trim() != "yes")
+            if (!Yes("test -s " + AppDir + "/.env", 60))
             {
                 var env = new StringBuilder();
                 env.Append("OC_ADMIN_TOKEN=").Append(RandomHex(32)).Append('\n');
@@ -266,20 +266,27 @@ namespace FreeHand.Helper
         /// while something holds it: this app does.
         public static void StartEngine()
         {
-            if (Sh("docker info >/dev/null 2>&1 && echo yes", 30).Text.Trim() == "yes") return;
-            var psi = new ProcessStartInfo("wsl.exe", "-d " + Distro + " -- sh -c \"mkdir -p /var/log; exec dockerd " + DockerdArgs + " > /var/log/dockerd.log 2>&1\"")
-            { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden };
-            engine = Process.Start(psi);
+            if (Yes("docker info >/dev/null 2>&1", 60)) return;
+            if (Yes("pgrep -x dockerd >/dev/null", 60))
+                Note("The engine is already starting; waiting for it rather than starting a second one.");
+            else
+            {
+                Sh("rm -f /var/run/docker.pid", 30);  // left behind if the computer was switched off
+                var psi = new ProcessStartInfo("wsl.exe", "-d " + Distro + " -- sh -c \"mkdir -p /var/log; exec dockerd " + DockerdArgs + " > /var/log/dockerd.log 2>&1\"")
+                { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden };
+                engine = Process.Start(psi);
+            }
             // An older computer can take a few minutes to start it the first time.
             var until = DateTime.Now.AddMinutes(4);
             while (DateTime.Now < until)
             {
                 Thread.Sleep(3000);
-                if (Sh("docker info >/dev/null 2>&1 && echo yes", 30).Text.Trim() == "yes") return;
-                if (engine.HasExited) break;  // it stopped by itself: waiting longer won't help
+                if (Yes("docker info >/dev/null 2>&1", 60)) return;
+                if (engine != null && engine.HasExited) break;  // it stopped by itself: waiting longer won't help
             }
             var why = Sh("tail -n 25 /var/log/dockerd.log", 30).Text.Trim();
             Note("The engine didn't start. Its last words:" + Environment.NewLine + why);
+            Note("What the check saw: " + Sh("docker info 2>&1 | tail -n 15", 60).Text.Trim());
             throw new EngineError("The engine that runs FreeHand didn't start. Restarting the computer usually helps." + Reason(why));
         }
 
@@ -333,7 +340,19 @@ namespace FreeHand.Helper
 
         // ── Helpers ─────────────────────────────────────────────────────
 
-        public class Output { public int Code; public string Text = ""; }
+        // Text is everything, for error messages; Out is only the command's
+        // own answer. On some computers WSL adds notices of its own (about a
+        // proxy, or a Windows path it can't use), so checks read only Out.
+        public class Output { public int Code; public string Text = ""; public string Out = ""; }
+
+        /// Does this check say yes? Only the command's own answer counts.
+        static bool Yes(string check, int seconds)
+        {
+            var o = Sh(check + " && echo yes", seconds);
+            foreach (var line in o.Out.Split('\n'))
+                if (line.Trim() == "yes") return true;
+            return false;
+        }
 
         public static Output Run(string file, string args, int seconds)
         {
@@ -352,7 +371,7 @@ namespace FreeHand.Helper
                     try { p.Kill(); } catch (Exception) { }
                     return new Output { Code = -1, Text = "It took too long." };
                 }
-                return new Output { Code = p.ExitCode, Text = (stdout.Result + stderr.Result).Replace("\0", "") };
+                return new Output { Code = p.ExitCode, Text = (stdout.Result + stderr.Result).Replace("\0", ""), Out = stdout.Result.Replace("\0", "") };
             }
         }
 

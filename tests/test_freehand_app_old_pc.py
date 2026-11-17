@@ -21,7 +21,7 @@ def test_when_the_engine_doesnt_start_it_says_why():
     start = _part("public static void StartEngine()", "public static void Start()")
     assert "tail -n 25 /var/log/dockerd.log" in start
     assert "Reason(why)" in start
-    assert "if (engine.HasExited) break;" in start
+    assert "engine != null && engine.HasExited" in start
 
 
 def test_downloads_are_tried_again():
@@ -43,3 +43,20 @@ def test_there_is_a_log_to_send_and_it_holds_no_secrets():
     assert "Note(" not in run
     write = _part("static void WriteFile(", "static void Must(")
     assert "Note(" not in write
+
+
+def test_checks_read_only_the_commands_own_answer():
+    # On the Dell, "is the engine up?" said no while the engine was running
+    # (its log said it was ready), so a second one was started. WSL's own
+    # notices mixed into the answer are the likely cause.
+    assert 'Out = stdout.Result' in ENGINE
+    assert 'Text.Trim() == "yes"' not in ENGINE and 'Text.Trim() != "yes"' not in ENGINE
+    yes = _part("static bool Yes(", "public static Output Run(")
+    assert "o.Out.Split" in yes
+
+
+def test_a_second_engine_is_never_started():
+    start = _part("public static void StartEngine()", "public static void Start()")
+    assert start.index('Yes("pgrep -x dockerd') < start.index("Process.Start(psi)")
+    assert "rm -f /var/run/docker.pid" in start
+    assert "What the check saw" in start
