@@ -106,7 +106,8 @@ def _pretend(tmp_path, *, docker=True, system="Linux", memory_kb=8000000, os_rel
         path.chmod(path.stat().st_mode | stat.S_IEXEC)
 
     if docker:
-        tool("docker", f'echo "docker $*" >> "{log}"\nexit 0\n')
+        # Like the real one, it talks: that goes to the install log, not the screen.
+        tool("docker", f'echo "docker $*" >> "{log}"\necho "Container freehand-app Started"\nexit 0\n')
     else:
         tool("docker", "exit 1\n")
     for manager in ("apt-get", "dnf", "sudo", "systemctl", "service"):
@@ -148,6 +149,10 @@ if RUNS_HERE:
         calls = log.read_text(encoding="utf-8")
         assert "docker compose pull --quiet" in calls and "docker compose up -d" in calls
         assert calls.index("compose pull") < calls.index("compose up -d")
+        # Docker's own messages are kept out of the way, in the log.
+        assert "Container freehand-app Started" not in r.stdout
+        assert "Container freehand-app Started" in (home / "install-log.txt").read_text(encoding="utf-8")
+        assert "about 7 GB of space" in r.stdout
 
 
     def test_its_secrets_are_random_private_and_kept(tmp_path):

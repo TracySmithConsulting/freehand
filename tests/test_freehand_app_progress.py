@@ -54,7 +54,7 @@ def test_a_bar_only_update_adds_nothing_to_the_list():
 
 
 def test_the_sizes_are_honest():
-    assert "1.8 GB" in SETUP and "6 GB of space" in SETUP
+    assert "1.8 GB" in SETUP and "7 GB of space" in SETUP  # measured Nov 2026: 7.1 GB unpacked
     assert "about 6 GB the first time" not in SETUP
 
 

@@ -43,7 +43,7 @@ namespace FreeHand.Helper
         const string AlpineSha256 = "cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012";
 
         // What FreeHand's images download, compressed (measured on 18 November
-        // 2026: 1.79 GB). Once unpacked they take about 6 GB of disk. Used
+        // 2026: 1.79 GB). Once unpacked they take about 7 GB of disk. Used
         // only to say how far a download has got before every part's size
         // is known; the real sizes take over as they arrive.
         const long DownloadBytes = 1800000000;
@@ -196,7 +196,7 @@ namespace FreeHand.Helper
             WriteSettings();
             progress(28, "Starting the engine...");
             StartEngine(text => progress(28, text));
-            progress(30, "Downloading FreeHand: about 1.8 GB, which takes about 6 GB of space once unpacked. On a slow connection this can take an hour or more. "
+            progress(30, "Downloading FreeHand: about 1.8 GB, which takes about 7 GB of space once unpacked. On a slow connection this can take an hour or more. "
                 + "This list says how far it has got about once a minute.");
             Pull(progress, 30, 89);
             cancel.ThrowIfCancellationRequested();
