@@ -14,8 +14,6 @@ import stat
 import subprocess
 import sys
 
-import pytest
-
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SH = ROOT / "scripts" / "install.sh"
 PS1 = ROOT / "scripts" / "install.ps1"
@@ -23,8 +21,8 @@ SH_TEXT = SH.read_text(encoding="utf-8")
 PS1_TEXT = PS1.read_text(encoding="utf-8")
 LATEST = "https://github.com/TracySmithConsulting/freehand/releases/latest/download/"
 
-on_linux = pytest.mark.skipif(not sys.platform.startswith("linux") or not shutil.which("bash"),
-                              reason="install.sh runs on Linux")
+# install.sh runs on Linux, so the tests that run it are only defined there.
+RUNS_HERE = sys.platform.startswith("linux") and bool(shutil.which("bash"))
 
 
 # ── What they are ───────────────────────────────────────────────────────
@@ -123,41 +121,39 @@ def _run(env):
     return subprocess.run(["bash", str(SH)], env=env, capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
 
 
-@on_linux
-def test_it_sets_up_and_starts_freehand(tmp_path):
-    env, home, log = _pretend(tmp_path)
-    r = _run(env)
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert "FreeHand is ready: http://localhost:8000" in r.stdout
-    assert (home / "compose.yml").read_text(encoding="utf-8") == (ROOT / "install" / "compose.yml").read_text(encoding="utf-8")
-    assert (home / "vault").is_dir()
-    calls = log.read_text(encoding="utf-8")
-    assert "docker compose pull --quiet" in calls and "docker compose up -d" in calls
-    assert calls.index("compose pull") < calls.index("compose up -d")
+if RUNS_HERE:
+    def test_it_sets_up_and_starts_freehand(tmp_path):
+        env, home, log = _pretend(tmp_path)
+        r = _run(env)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "FreeHand is ready: http://localhost:8000" in r.stdout
+        assert (home / "compose.yml").read_text(encoding="utf-8") == (ROOT / "install" / "compose.yml").read_text(encoding="utf-8")
+        assert (home / "vault").is_dir()
+        calls = log.read_text(encoding="utf-8")
+        assert "docker compose pull --quiet" in calls and "docker compose up -d" in calls
+        assert calls.index("compose pull") < calls.index("compose up -d")
 
 
-@on_linux
-def test_its_secrets_are_random_private_and_kept(tmp_path):
-    env, home, _ = _pretend(tmp_path)
-    assert _run(env).returncode == 0
-    env_file = home / ".env"
-    first = env_file.read_text(encoding="utf-8")
-    values = dict(line.split("=", 1) for line in first.splitlines())
-    assert set(values) == {"OC_ADMIN_TOKEN", "OC_RUNTIME_TOKEN", "OC_ENCRYPTION_KEY", "FREEHAND_LLM_PROXY_TOKEN", "BRIDGE_SECRET"}
-    for name in ("OC_ADMIN_TOKEN", "OC_RUNTIME_TOKEN", "FREEHAND_LLM_PROXY_TOKEN", "BRIDGE_SECRET"):
-        assert len(values[name]) == 64 and int(values[name], 16) >= 0, name
-    assert len(base64.b64decode(values["OC_ENCRYPTION_KEY"])) == 32
-    assert len(set(values.values())) == 5
-    assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
-    # Running it again (an update) keeps them.
-    assert _run(env).returncode == 0
-    assert env_file.read_text(encoding="utf-8") == first
+    def test_its_secrets_are_random_private_and_kept(tmp_path):
+        env, home, _ = _pretend(tmp_path)
+        assert _run(env).returncode == 0
+        env_file = home / ".env"
+        first = env_file.read_text(encoding="utf-8")
+        values = dict(line.split("=", 1) for line in first.splitlines())
+        assert set(values) == {"OC_ADMIN_TOKEN", "OC_RUNTIME_TOKEN", "OC_ENCRYPTION_KEY", "FREEHAND_LLM_PROXY_TOKEN", "BRIDGE_SECRET"}
+        for name in ("OC_ADMIN_TOKEN", "OC_RUNTIME_TOKEN", "FREEHAND_LLM_PROXY_TOKEN", "BRIDGE_SECRET"):
+            assert len(values[name]) == 64 and int(values[name], 16) >= 0, name
+        assert len(base64.b64decode(values["OC_ENCRYPTION_KEY"])) == 32
+        assert len(set(values.values())) == 5
+        assert stat.S_IMODE(env_file.stat().st_mode) == 0o600
+        # Running it again (an update) keeps them.
+        assert _run(env).returncode == 0
+        assert env_file.read_text(encoding="utf-8") == first
 
 
-@on_linux
-def test_it_says_so_plainly_on_a_mac(tmp_path):
-    env, home, _ = _pretend(tmp_path, system="Darwin")
-    r = _run(env)
-    assert r.returncode == 1
-    assert "FreeHand for Mac comes later" in r.stdout
-    assert not home.exists()
+    def test_it_says_so_plainly_on_a_mac(tmp_path):
+        env, home, _ = _pretend(tmp_path, system="Darwin")
+        r = _run(env)
+        assert r.returncode == 1
+        assert "FreeHand for Mac comes later" in r.stdout
+        assert not home.exists()
