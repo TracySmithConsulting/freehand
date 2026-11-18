@@ -171,6 +171,18 @@ def reset(token) -> None:
         pass
 
 
+def approvals_scope(person_id: Optional[str] = None) -> Optional[str]:
+    """Whose approvals this person sees and answers in the console: their
+    own (the person id), or everyone's (None) for the owner.
+
+    The owner sees everyone's for now because the console is theirs: a
+    member can't sign in to it yet, and a risky request can only be
+    approved there, not from chat. Once each person signs in, this narrows
+    to "administrators see shared connections" (docs/design/people.md)."""
+    person_id = person_id or current()
+    return None if person_id == OWNER_ID else person_id
+
+
 def memory_tags(person_id: Optional[str] = None) -> list[str]:
     """Hindsight tags for something this person said or asked to remember."""
     return [f"person:{person_id or current()}"]

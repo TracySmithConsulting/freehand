@@ -223,11 +223,14 @@ def change(row: dict, changes: dict, tz=None, now: Optional[datetime] = None) ->
 def set_paused(job_id: int, paused: bool) -> Optional[str]:
     """Pause or resume. Resuming works out its next time again. Returns the
     new status, or None if there's no such job."""
-    from core import scheduler
+    from core import people, scheduler
     conn = scheduler._tasks_conn()
     try:
         scheduler._ensure_deliver_column(conn)
-        row = conn.execute("SELECT cron_schedule, next_run FROM tasks WHERE id = ?", (job_id,)).fetchone()
+        people.ensure_person_column(conn, "tasks")
+        # Only the current person's own job; anyone else's is "no such job".
+        row = conn.execute("SELECT cron_schedule, next_run FROM tasks WHERE id = ? AND person = ?",
+                           (job_id, people.current())).fetchone()
         if row is None:
             return None
         if paused:
@@ -246,10 +249,10 @@ def set_paused(job_id: int, paused: bool) -> Optional[str]:
 
 
 def _delete(job_id: int) -> None:
-    from core import scheduler
+    from core import people, scheduler
     conn = scheduler._tasks_conn()
     try:
-        conn.execute("DELETE FROM tasks WHERE id = ?", (job_id,))
+        conn.execute("DELETE FROM tasks WHERE id = ? AND person = ?", (job_id, people.current()))
         conn.commit()
     finally:
         conn.close()

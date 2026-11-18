@@ -49,14 +49,18 @@ def _now() -> datetime:
 
 
 def history(key: str) -> list[dict]:
-    """Recent exchanges as chat messages, oldest first. [] after a long gap."""
+    """Recent exchanges as chat messages, oldest first. [] after a long gap.
+
+    Only the current person's: a chat (the console, say) can be shared by
+    several people, and each one's turns are their own."""
+    from core import people
     try:
         conn = _conn()
         try:
             rows = conn.execute(
                 "SELECT user_text, reply_text, created_at FROM conversation_turns "
-                "WHERE conversation = ? ORDER BY id DESC LIMIT ?",
-                (key, MAX_TURNS),
+                "WHERE conversation = ? AND person = ? ORDER BY id DESC LIMIT ?",
+                (key, people.current(), MAX_TURNS),
             ).fetchall()
         finally:
             conn.close()
@@ -102,11 +106,14 @@ def add_turn(key: str, user_text: str, reply_text: str, person: str = "owner") -
 
 
 def clear(key: str) -> None:
-    """Start a fresh conversation (for a future "New conversation" button)."""
+    """Start a fresh conversation (for a future "New conversation" button).
+    Only the current person's turns go."""
+    from core import people
     try:
         conn = _conn()
         try:
-            conn.execute("DELETE FROM conversation_turns WHERE conversation = ?", (key,))
+            conn.execute("DELETE FROM conversation_turns WHERE conversation = ? AND person = ?",
+                         (key, people.current()))
             conn.commit()
         finally:
             conn.close()
