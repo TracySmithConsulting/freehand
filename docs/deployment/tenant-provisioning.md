@@ -7,6 +7,42 @@ shared between customers.
 
 This document describes `scripts/provision_tenant.py`, which sets that up.
 
+## Setting up a client, step by step
+
+1. **Pick a name, an address and a port.** For example `acme`,
+   `acme.example.com` and `8100` (each tenant takes the port and the
+   next one; `--list` shows which are used).
+2. **Point the address at the server:** two DNS records,
+   `acme.example.com` and `connect.acme.example.com` (where the client
+   connects email and calendars).
+3. **One command** on the server:
+
+   ```bash
+   python scripts/provision_tenant.py --customer acme --hostname acme.example.com --port 8100 --start
+   ```
+
+   It writes the tenant, downloads FreeHand's published images (about
+   1.8 GB the first time; later tenants share them), starts it and waits
+   until it answers.
+4. **Reload Caddy** (the command is in the output), so the address works.
+5. **Back up the key copy** it names, somewhere you control.
+6. **Send the welcome.** The end of the output is a ready-made message
+   for the client: their address, user name and password, what happens
+   the first time, and the FreeHand app for help on their own computer.
+   It's also saved as `WELCOME.txt`, without the password (only its hash
+   is kept), for sending the password separately.
+
+The client's FreeHand opens at its own welcome setup, where they choose
+how it thinks, so no AI key is needed beforehand.
+
+**Updating:** `--update acme` downloads the newest images and restarts
+that tenant; `--update all` does every tenant. Their data stays. A
+tenant's `.env` can pin `FREEHAND_VERSION` (for example `0.1.10`) to
+stay on one version.
+
+**Trying unreleased changes:** `--from-source` builds FreeHand from this
+checkout instead of using the published images.
+
 ## Why a separate box per customer
 
 FreeHand resolves all per-customer state from `VAULT_DIR`, a module-level
@@ -32,9 +68,10 @@ That creates, under `~/freehand-tenants/acme-corp/`:
 | `.env` | Per-tenant secrets: OpenConnector tokens, the OC encryption key |
 | `composio.env` | Blank unless the customer uses Composio; then **their own** Composio project key |
 | `vault/encryption.key` | The tenant's Fernet key - **back this up** |
-| `vault/settings.json` | Settings skeleton; the customer adds their LLM key |
+| `vault/settings.json` | Settings skeleton; the client chooses their AI model in the welcome setup |
 | `Caddyfile.site` | The tenant's vhost: TLS, basic auth, access log |
 | `TENANT.md` | Human-readable summary of the tenant |
+| `WELCOME.txt` | The message for the client, without the password |
 
 The Fernet key is also copied to `~/freehand-key-backups/<customer>/`.
 **Store that copy somewhere you control, not only on the box** - losing the
@@ -215,9 +252,10 @@ opened to the internet:
 - **Older tenants:** tenants made before this change need the
   `@freehand_helper` block in their Caddy site file. Run the script again,
   or copy the block from a new site file, then reload Caddy.
-- **Setting up a customer:** send them the download link, sign in to their
-  console with them, open Help on my computer, Add a computer, and read
-  them the code and address.
+- **Setting up a customer:** the welcome message has the app's download
+  link and the steps (choose "Somewhere else", then Help on my computer,
+  Add a computer). Sign in to their console with them the first time if
+  they'd like help, and read them the code and address.
 
 ## Destroying a tenant
 

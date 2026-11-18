@@ -230,8 +230,10 @@ works whatever the provider has changed since.
    services, the free Docker engine, the same first-run setup).
    Both come from the newest release (`releases/latest/download/`), with
    the `compose.yml` that `install.sh` sets up.
-5. **Hosted, polished (C):** a clear way for Tracy to set up a client,
+5. **Built (Nov 2026).** **Hosted, polished (C):** a clear way for Tracy to set up a client,
    and a welcome email with their address and the Helper download.
+   `provision_tenant.py --start` does it in one command from the
+   published images, and prints the welcome (docs/deployment/tenant-provisioning.md).
 6. **The website** (freehand.tracysmith.co.za) with the download, when
    there's something to download.
 
