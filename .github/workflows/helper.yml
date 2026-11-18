@@ -1,6 +1,10 @@
-# The FreeHand Helper for Windows (helper/windows): build it on every
-# change, sign it through SignPath when that's set up, and publish it when
-# a helper-v* tag is pushed (for example helper-v0.4.0).
+# The FreeHand app for Windows (helper/windows, which grew from the
+# FreeHand Helper): build it on every change, sign it through SignPath when
+# that's set up, and publish it when a helper-v* tag is pushed (for example
+# helper-v0.5.0). It's published as FreeHand.exe, and also under its old
+# name, FreeHandHelper.exe, so links and Helpers already out there keep
+# working. The fixed download address is
+#   https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHand.exe
 #
 # Signing (free for open source, from SignPath Foundation) switches on by
 # itself once these repository secrets exist:
@@ -98,14 +102,19 @@ jobs:
           else
             note="Not signed yet, so Windows may warn that it's from an unknown publisher."
           fi
-          body="The FreeHand Helper for Windows: lets FreeHand look, act and make changes on this computer, asking first. Download FreeHandHelper.exe and open it. ${note}"
+          if [ "$SIGNED" != "true" ]; then
+            note="${note} Choose More info, then Run anyway."
+          fi
+          body="The FreeHand app for Windows. Download FreeHand.exe and open it. It installs FreeHand on this computer (in its own small Linux, no Docker Desktop needed), or connects to a FreeHand that's already running elsewhere, and lets FreeHand look, act and make changes on this computer, asking first. Windows 10 (version 2004 or newer) or 11. ${note} (FreeHandHelper.exe is the same program under its old name.)"
+          cp out/FreeHandHelper.exe out/FreeHand.exe
           # This version, without taking "Latest" from FreeHand's own releases.
-          gh release create "$tag" out/FreeHandHelper.exe --repo "$GITHUB_REPOSITORY" \
-            --title "FreeHand Helper ${tag#helper-v}" --notes "$body" --latest=false
+          gh release create "$tag" out/FreeHand.exe out/FreeHandHelper.exe --repo "$GITHUB_REPOSITORY" \
+            --title "FreeHand app ${tag#helper-v}" --notes "$body" --latest=false
           # And a fixed address the FreeHand console links to.
           if ! gh release view helper-latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create helper-latest --repo "$GITHUB_REPOSITORY" --title "FreeHand Helper (latest)" \
-              --notes "Always the newest FreeHand Helper. ${note}" --latest=false --target "$GITHUB_SHA"
+            gh release create helper-latest --repo "$GITHUB_REPOSITORY" --title "FreeHand app (latest)" \
+              --notes "Always the newest FreeHand app. ${note}" --latest=false --target "$GITHUB_SHA"
           fi
-          gh release edit helper-latest --repo "$GITHUB_REPOSITORY" --notes "Always the newest FreeHand Helper (${tag}). ${note}"
-          gh release upload helper-latest out/FreeHandHelper.exe --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit helper-latest --repo "$GITHUB_REPOSITORY" --title "FreeHand app (latest)" \
+            --notes "Always the newest FreeHand app (${tag}). ${body}"
+          gh release upload helper-latest out/FreeHand.exe out/FreeHandHelper.exe --repo "$GITHUB_REPOSITORY" --clobber

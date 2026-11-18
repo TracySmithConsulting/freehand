@@ -22,7 +22,7 @@ def test_people_already_using_the_helper_see_no_setup():
 
 
 def test_hosted_freehand_needs_only_the_helper():
-    assert "On a server: I was given a web address for my FreeHand" in SETUP
+    assert "Somewhere else: FreeHand already runs on a server, or was set up another way" in SETUP
     assert 'settings.Mode = "server"' in SETUP
 
 
@@ -71,3 +71,14 @@ def test_the_preview_changes_nothing():
     done = SETUP[SETUP.index("void Done(string first)"):]
     assert done.index("if (!PreviewOnly)") < done.index("settings.Save()")
     assert "if (!PreviewOnly) StartWithWindows(auto.Checked)" in SETUP
+
+
+def test_the_app_is_published_as_freehand_exe_and_old_links_still_work():
+    workflow = (ROOT / ".github" / "workflows" / "helper.yml").read_text(encoding="utf-8")
+    assert "cp out/FreeHandHelper.exe out/FreeHand.exe" in workflow
+    assert "gh release upload helper-latest out/FreeHand.exe out/FreeHandHelper.exe" in workflow
+    link = "releases/download/helper-latest/FreeHand.exe"
+    for doc in ("README.md", "helper/windows/README.md", "freehand/static/index.html"):
+        text = (ROOT / doc).read_text(encoding="utf-8")
+        assert link in text, doc
+        assert "helper-latest/FreeHandHelper.exe" not in text, doc

@@ -37,7 +37,7 @@ first time, it asks where FreeHand runs:
   **Turn FreeHand off** and **on**, and **Uninstall FreeHand** (which offers
   to keep a copy of your data first). It starts with Windows, in the
   background, unless you switch that off.
-- **On a server:** only the Helper part is used, as before.
+- **Somewhere else** (FreeHand already runs on a server, or was set up another way): only the Helper part is used, as before.
 
 If the Helper is already paired, it carries on exactly as before: no setup.
 
@@ -51,8 +51,9 @@ changes anything.
 
 ## Getting it
 
-**Download** [FreeHandHelper.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHandHelper.exe)
-and open it. GitHub builds it from the code here, and it will be signed
+**Download** [FreeHand.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHand.exe)
+and open it. (It used to be called `FreeHandHelper.exe`; that name still
+downloads the same program.) GitHub builds it from the code here, and it will be signed
 through [SignPath](../../docs/code-signing-policy.md) once that's set up.
 Until then, Windows may say "Windows protected your PC": choose **More
 info**, then **Run anyway**.

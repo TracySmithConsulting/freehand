@@ -43,14 +43,28 @@ asked every time. **Ctrl+Alt+Escape stops it** at once. It never types
 passwords, never acts in Windows' security screens or FreeHand's own
 console, and can't run commands of its own.
 
-**Download:** [FreeHandHelper.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHandHelper.exe)
-(Windows 10 and 11, nothing else to install). Then, in FreeHand, open Help on
-my computer and press Add a computer. More in the
+**Download:** [FreeHand.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHand.exe)
+(Windows 10 and 11, nothing else to install). When it asks where FreeHand
+runs, choose **Somewhere else**. Then, in FreeHand, open Help on my
+computer and press Add a computer. More in the
 [Helper guide](helper/windows/README.md).
 
 ## Install
 
-### One-command install (recommended)
+### Windows: the FreeHand app (easiest)
+
+**Download [FreeHand.exe](https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHand.exe)** and open it.
+It checks the computer, switches on what Windows needs (one "allow
+changes?" and a restart), downloads FreeHand (about 1.8 GB), and opens it
+in the browser. No Docker Desktop, terminal or licence needed, and every
+screen works with a screen reader. Windows 10 (version 2004 or newer) or
+11, with about 12 GB of free space.
+
+Until it's signed, Windows may say "Windows protected your PC": choose
+**More info**, then **Run anyway**. More in the
+[FreeHand app guide](helper/windows/README.md).
+
+### One-command install
 
 **Windows (PowerShell):**
 ```powershell
