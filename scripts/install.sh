@@ -15,6 +15,8 @@
 #   FREEHAND_YES=1        don't ask before installing the Docker engine
 #   FREEHAND_COMPOSE_URL  where compose.yml comes from (default: the
 #                         newest FreeHand release)
+# (FREEHAND_MEMINFO and FREEHAND_OS_RELEASE stand in for /proc/meminfo and
+# /etc/os-release, for the tests.)
 #
 # docs/design/granny-installer.md, step 4.
 
@@ -38,6 +40,21 @@ case "$(uname -s)" in
     Darwin*) stop "this is the Linux install. FreeHand for Mac comes later. Until then, a Mac with Docker Desktop can run install/compose.yml from FreeHand's code." ;;
     *) stop "this install is for Linux." ;;
 esac
+
+# Enough memory? FreeHand uses about 1.3 GB running (its memory alone about
+# 1 GB). On less than 2 GB, even installing the engine can be stopped by
+# Linux halfway, so say so first and change nothing.
+mem_kb="$(awk '/^MemTotal:/ {print $2}' "${FREEHAND_MEMINFO:-/proc/meminfo}" 2>/dev/null || true)"
+if [ -n "$mem_kb" ] && [ "$mem_kb" -lt 1800000 ]; then
+    stop "this computer has about $(awk -v k="$mem_kb" 'BEGIN {printf "%.1f", k / 1048576}') GB of memory, and FreeHand needs at least 2 GB (4 GB or more is better). Nothing was changed."
+fi
+
+# Which Linux this is, from /etc/os-release.
+os_field() { sed -n "s/^$1=//p" "${FREEHAND_OS_RELEASE:-/etc/os-release}" 2>/dev/null | head -n 1 | tr -d '"'; }
+OS_ID="$(os_field ID)"
+OS_LIKE="$(os_field ID_LIKE)"
+OS_NAME="$(os_field PRETTY_NAME)"
+OS_NAME="${OS_NAME:-this Linux}"
 
 if [ "$(id -u)" -eq 0 ]; then
     SUDO=""
@@ -75,6 +92,19 @@ install_engine() {
     # The engine from this Linux's own packages: the free Docker engine,
     # nothing downloaded from elsewhere and run.
     local install=""
+    # Oracle Linux, Rocky, AlmaLinux, Red Hat and CentOS don't have the
+    # Docker engine in their own packages (Fedora does), so say so plainly
+    # rather than failing partway.
+    # (Oracle Linux calls itself Fedora-like, so its own ID comes first.)
+    local rhel_family=""
+    case "$OS_ID" in
+        fedora) ;;
+        ol|rhel|rocky|almalinux|centos) rhel_family=yes ;;
+        *) case " $OS_LIKE " in *" rhel "*|*" centos "*) rhel_family=yes ;; esac ;;
+    esac
+    if [ -n "$rhel_family" ]; then
+        stop "the Docker engine isn't in $OS_NAME's own packages. Install it with Docker's guide (https://docs.docker.com/engine/install/rhel/), then run this again. On Ubuntu or Debian, this install sets up Docker itself."
+    fi
     if command -v apt-get >/dev/null 2>&1; then
         install="apt-get update && apt-get install -y docker.io docker-compose-v2"
     elif command -v dnf >/dev/null 2>&1; then
