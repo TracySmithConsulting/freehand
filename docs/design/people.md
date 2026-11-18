@@ -123,6 +123,26 @@ In a sensible order:
    answer: save a private and a shared memory on the same topic, recall
    as another person, and look. If summaries leak, use a memory bank per
    person plus one shared bank instead: simpler to trust, but more to run.
+
+   **Built (November 2026): separation.** Recall, the Memory page,
+   correcting and forgetting (also "forget that ..." in chat) reach only
+   the person's own memories and the shared pool (`long_memory._scope`).
+   Someone else's memory is "not found".
+   - A member's match is `any_strict`, so untagged memories never reach
+     them.
+   - The owner's match is `any`, so it also takes the untagged ones.
+     Those are from before people existed, so they're the owner's,
+     the same rule as the rows in the database. That replaced tagging
+     them: no one's existing memory bank is changed.
+   - **Checked against a real Hindsight**, in a throwaway bank. With an
+     owner's, a member's, a shared and an untagged memory on overlapping
+     topics, the member recalled only their own and the shared facts and
+     summaries. The owner recalled theirs, the shared and the untagged,
+     and none of the member's. Hindsight builds summaries per tag set
+     ("combined" scoping), so they don't mix. No separate banks needed.
+
+   Not built yet: "share this" (saving with `shared`), and the Memory
+   page showing yours and the shared pool separately.
 3. **Chats, tasks and approvals filtered by person.** Each person sees only
    their own. Administrators can see approvals for shared connections.
    Scheduled tasks run as the person who made them.

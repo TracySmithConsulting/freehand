@@ -174,15 +174,42 @@ def status() -> dict:
     return {"enabled": True, "reachable": code == 200, "bank_id": bank_id(), "url": base_url()}
 
 
+def _scope(person_id: Optional[str] = None) -> tuple[list, str]:
+    """Whose memories this person may recall, list or change: their own
+    (tag ``person:<id>``) and the shared pool (tag ``shared``).
+
+    A member's match is strict: Hindsight's default, "any", also returns
+    memories with no tags at all. Those are from before FreeHand had
+    people, so they're the owner's, and only the owner's match includes
+    them. Hindsight builds its summaries (observations) per tag set, so a
+    summary never mixes one person's memories into another's (checked
+    against a real Hindsight, November 2026)."""
+    from core import people
+    person_id = person_id or people.current()
+    return [f"person:{person_id}", "shared"], ("any" if person_id == people.OWNER_ID else "any_strict")
+
+
+def _visible(memory_id: str) -> bool:
+    """Whether the current person may change or forget this memory."""
+    code, data = _call("GET", _bank_path(f"/memories/{urllib.parse.quote(memory_id, safe='')}"))
+    if code != 200 or not isinstance(data, dict):
+        return False
+    tags, match = _scope()
+    have = set(data.get("tags") or [])
+    return bool(have & set(tags)) or (not have and match == "any")
+
+
 def recall(query: str, max_tokens: int = 600, timeout: float = 6.0) -> list[str]:
     """Short lines FreeHand should know for this message. [] on any problem."""
     if not enabled() or not (query or "").strip():
         return []
     if not _ensure_bank():
         return []
+    tags, match = _scope()
     code, data = _call(
         "POST", _bank_path("/memories/recall"),
-        {"query": query[:2000], "max_tokens": max_tokens, "prefer_observations": True},
+        {"query": query[:2000], "max_tokens": max_tokens, "prefer_observations": True,
+         "tags": tags, "tags_match": match},
         timeout=timeout,
     )
     if code != 200 or not isinstance(data, dict):
@@ -207,9 +234,8 @@ def retain(text: str, context: str = "", wait: bool = False) -> dict:
         return {"error": "That looks like a password or key, so FreeHand won't keep it in memory."}
     if not _ensure_bank():
         return {"error": "FreeHand's memory (Hindsight) isn't reachable right now."}
-    # Whose memory this is (core/people.py). Recall doesn't filter on it
-    # yet; it's there so a shared pool and private memories can be told
-    # apart once FreeHand has several people (docs/design/people.md).
+    # Whose memory this is (core/people.py). Recall, the Memory page and
+    # forgetting only reach the person's own and the shared pool (_scope).
     from core import people
     item = {"content": text[:8000], "tags": people.memory_tags(),
             "metadata": {"person": people.current()}}
@@ -231,10 +257,12 @@ def list_facts(limit: int = 50, offset: int = 0, query: str = "") -> dict:
     items = []
     for fact_type in EDITABLE_TYPES:
         # Fetch generously: duplicates are merged below.
-        params = {"type": fact_type, "state": "valid", "limit": min(1000, (limit + offset) * 2)}
+        tags, match = _scope()
+        params = {"type": fact_type, "state": "valid", "limit": min(1000, (limit + offset) * 2),
+                  "tags": tags, "tags_match": match}
         if query:
             params["q"] = query
-        code, data = _call("GET", _bank_path("/memories/list?" + urllib.parse.urlencode(params)))
+        code, data = _call("GET", _bank_path("/memories/list?" + urllib.parse.urlencode(params, doseq=True)))
         if code != 200 or not isinstance(data, dict):
             return {"error": "FreeHand couldn't read its memory right now.", "items": []}
         for m in data.get("items") or []:
@@ -266,6 +294,8 @@ def update_fact(memory_id: str, text: str) -> dict:
         return {"error": "The memory can't be empty. Use Forget to remove it."}
     if looks_secret(text):
         return {"error": "That looks like a password or key, so FreeHand won't keep it in memory."}
+    if not _visible(memory_id):  # someone else's is "not found", like a wrong id
+        return {"error": "FreeHand couldn't find that memory."}
     code, data = _call("PATCH", _bank_path(f"/memories/{urllib.parse.quote(memory_id, safe='')}"),
                        {"text": text[:2000]}, timeout=60.0)
     if code == 200:
@@ -274,6 +304,8 @@ def update_fact(memory_id: str, text: str) -> dict:
 
 
 def forget_fact(memory_id: str, reason: str = "Forgotten at the user's request") -> dict:
+    if not _visible(memory_id):  # someone else's is "not found", like a wrong id
+        return {"error": "FreeHand couldn't find that memory."}
     mid = urllib.parse.quote(memory_id, safe="")
     # Hindsight also builds summary "observations" from facts. Retiring a
     # fact left those in place, so a forgotten fact could still be recalled
@@ -292,7 +324,8 @@ def forget_matching(description: str) -> dict:
         return {"error": "FreeHand's memory (Hindsight) isn't reachable right now."}
     code, data = _call(
         "POST", _bank_path("/memories/recall"),
-        {"query": description[:1000], "types": list(EDITABLE_TYPES), "max_tokens": 300},
+        {"query": description[:1000], "types": list(EDITABLE_TYPES), "max_tokens": 300,
+         "tags": _scope()[0], "tags_match": _scope()[1]},
     )
     results = (data or {}).get("results") if code == 200 and isinstance(data, dict) else None
     if not results:
