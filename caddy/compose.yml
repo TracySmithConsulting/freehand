@@ -1,0 +1,53 @@
+# The one Caddy on a hosted server: HTTPS, the password and an access log
+# in front of every client's FreeHand (docs/deployment/tenant-provisioning.md).
+#
+# Start it once per server with:
+#
+#   python3 scripts/provision_tenant.py --setup-proxy
+#
+# which makes the shared `freehand-proxy` network first. It needs nothing
+# from FreeHand's own settings (.env), so it works on a fresh server.
+#
+# Caddy reaches each client over `freehand-proxy`, by container name
+# (freehand-app-<client>:8000). Not through the host: a client's ports are
+# published on the host's 127.0.0.1 only, which no container can reach on a
+# Linux server.
+
+name: freehand-proxy
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: freehand-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    volumes:
+      # The shared Caddyfile imports every client's site from ./sites.
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
+      # Caddy's own state (TLS certificates, ACME account) must persist
+      # across restarts or it re-requests certificates on every boot.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - freehand-proxy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:2019/config/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  freehand-proxy:
+    name: freehand-proxy
+    external: true
+
+volumes:
+  caddy-data:
+    # Deleting this volume makes every client's certificate be issued again.
+    name: freehand-caddy-data
+  caddy-config:
+    name: freehand-caddy-config

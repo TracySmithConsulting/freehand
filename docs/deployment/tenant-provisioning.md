@@ -9,6 +9,19 @@ This document describes `scripts/provision_tenant.py`, which sets that up.
 
 ## Setting up a client, step by step
 
+**Once per server:** get FreeHand's code onto it (`git clone
+https://github.com/TracySmithConsulting/freehand.git`), install Docker,
+and start the shared Caddy that every client's address goes through:
+
+```bash
+python3 scripts/provision_tenant.py --setup-proxy
+```
+
+It makes the shared `freehand-proxy` network and starts Caddy from
+`caddy/compose.yml` on ports 80 and 443. It needs nothing else set up first.
+
+Then, for each client:
+
 1. **Pick a name, an address and a port.** For example `acme`,
    `acme.example.com` and `8100` (each tenant takes the port and the
    next one; `--list` shows which are used).
@@ -18,15 +31,16 @@ This document describes `scripts/provision_tenant.py`, which sets that up.
 3. **One command** on the server:
 
    ```bash
-   python scripts/provision_tenant.py --customer acme --hostname acme.example.com --port 8100 --start
+   python3 scripts/provision_tenant.py --customer acme --hostname acme.example.com --port 8100 --start
    ```
 
    It writes the tenant, downloads FreeHand's published images (about
-   1.8 GB the first time; later tenants share them), starts it and waits
-   until it answers.
-4. **Reload Caddy** (the command is in the output), so the address works.
-5. **Back up the key copy** it names, somewhere you control.
-6. **Send the welcome.** The end of the output is a ready-made message
+   1.8 GB the first time; later tenants share them), starts it, waits
+   until it answers, and adds its address to Caddy. If Caddy isn't
+   running, it stops before writing anything and says to run
+   `--setup-proxy`.
+4. **Back up the key copy** it names, somewhere you control.
+5. **Send the welcome.** The end of the output is a ready-made message
    for the client: their address, user name and password, what happens
    the first time, and the FreeHand app for help on their own computer.
    It's also saved as `WELCOME.txt`, without the password (only its hash
@@ -108,19 +122,19 @@ and rejected.
 
 ## The shared Caddy
 
-One Caddy container serves every tenant on the box. It is defined in the
-repo's `compose.yml` behind the `proxy` profile:
-
-```bash
-docker compose --profile proxy up -d
-```
+One Caddy container (`freehand-caddy`) serves every tenant on the box. It
+has its own compose file, `caddy/compose.yml`, so it doesn't need FreeHand's
+own `.env`, and `--setup-proxy` starts it (once per server; safe to run
+again).
 
 The shared `caddy/Caddyfile` imports every tenant vhost from
-`caddy/sites/*.site`. The script writes each tenant's `Caddyfile.site`; copy
-it into the shared sites directory and reload Caddy:
+`caddy/sites/*.site`. With `--start`, the script copies the tenant's
+`Caddyfile.site` there as `<hostname>.site`, checks the configuration and
+reloads Caddy; if Caddy refuses it, it's taken out again so the other
+tenants keep working. `--destroy` removes it. By hand:
 
 ```bash
-cp ~/freehand-tenants/acme-corp/Caddyfile.site caddy/sites/acme.example.com.site
+cp ~/freehand-tenants/acme/Caddyfile.site caddy/sites/acme.example.com.site
 docker exec freehand-caddy caddy reload --config /etc/caddy/Caddyfile
 ```
 
@@ -133,13 +147,17 @@ certificate issuance for *every* site, including named vhosts - Caddy's own
 automation policies. The per-tenant vhosts use explicit `https://` addresses
 so Caddy issues and renews their certificates itself.
 
-**Caddy cannot reach a tenant on `127.0.0.1`.** Caddy runs in a container,
-so its `127.0.0.1` is *its own* loopback, not the host's. A tenant's
-FreeHand port is published on the **host's** `127.0.0.1`, so a vhost that
-proxies to `127.0.0.1:8100` returns **502**. The vhosts therefore proxy to
-`host.docker.internal:8100`, and the Caddy service carries
-`extra_hosts: ["host.docker.internal:host-gateway"]` so that name resolves
-to the host.
+**Caddy reaches tenants over a shared network, by name.** A tenant's ports
+are published on the **host's** `127.0.0.1` only, and Caddy runs in a
+container, so it can't reach them through the host: `127.0.0.1` is Caddy's
+own loopback, and on a Linux server `host.docker.internal` is the Docker
+bridge address, not the host's loopback. Every request got **502** that way
+(found by a real test in Nov 2026; it only worked on Docker Desktop).
+Instead, each tenant's FreeHand and OpenConnector join the shared external
+network `freehand-proxy`, and the vhost proxies to
+`freehand-app-<tenant>:8000` and `freehand-oc-<tenant>:3001`. The tenant's
+memory and WhatsApp bridge stay on its own network. The loopback ports are
+still there, for checking a tenant from the server itself.
 
 **Chat webhooks skip the password.** Telegram and Slack cannot send
 basic-auth credentials, so the vhost exempts exactly `POST /api/gateway/telegram`

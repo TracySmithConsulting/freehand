@@ -247,10 +247,25 @@ class TestBuildCompose:
         assert "admintest123" not in compose
         assert "runttest123" not in compose
 
-    def test_repo_compose_gives_caddy_the_host_gateway_mapping(self):
-        """Without it, every tenant proxy returns 502 (verified live)."""
-        base = (PROJECT_ROOT / "compose.yml").read_text(encoding="utf-8")
-        assert "host.docker.internal:host-gateway" in base
+    def test_caddy_has_its_own_compose_on_the_shared_network(self):
+        """Caddy starts on a fresh server without FreeHand's .env, and
+        reaches tenants over freehand-proxy (a real Linux test, Nov 2026,
+        got 502 through host.docker.internal)."""
+        caddy = (PROJECT_ROOT / "caddy" / "compose.yml").read_text(encoding="utf-8")
+        assert "container_name: freehand-caddy" in caddy
+        assert "name: freehand-proxy\n    external: true" in caddy
+        assert "./Caddyfile:/etc/caddy/Caddyfile:ro" in caddy and "./sites:/etc/caddy/sites:ro" in caddy
+        assert "${" not in caddy  # nothing from FreeHand's own settings
+        assert "host-gateway" not in caddy
+        main = (PROJECT_ROOT / "compose.yml").read_text(encoding="utf-8")
+        assert "freehand-caddy" not in main and "profiles:" not in main
+
+    def test_freehand_and_its_console_join_the_proxy_network_only(self, compose):
+        services = compose.split("\nvolumes:", 1)[0]
+        blocks = dict(re.findall(r"\n  ([a-z-]+):\n(.*?)(?=\n  [a-z-]+:\n|\Z)", services, re.S))
+        assert "- freehand-proxy" in blocks["freehand"] and "- freehand-proxy" in blocks["open-connector"]
+        assert "freehand-proxy" not in blocks["hindsight"] and "freehand-proxy" not in blocks["whatsapp-bridge"]
+        assert "networks:\n  freehand-proxy:\n" in compose and "external: true" in compose
 
     def test_uses_service_name_not_localhost_for_oc(self, compose):
         # FreeHand reaches OC over compose DNS; localhost would be the
@@ -400,8 +415,10 @@ class TestBuildCaddySite:
         # FreeHand's API is POST-heavy.
         assert "redir https://acme.example.com{uri} 308" in site
 
-    def test_proxies_to_the_tenant_port(self, site):
-        assert "reverse_proxy host.docker.internal:8100" in site
+    def test_proxies_to_the_tenant_container_by_name(self, site):
+        assert "reverse_proxy freehand-app-acme_corp:8000" in site
+        # Not through the host: on a Linux server that's a 502.
+        assert "host.docker.internal" not in site
 
     def test_does_not_proxy_to_caddys_own_loopback(self, site):
         """Caddy runs in a container; its 127.0.0.1 is not the host's.
@@ -745,6 +762,8 @@ def test_provisioning_writes_the_welcome_and_can_start_it(tmp_path, monkeypatch)
 
     monkeypatch.setattr(pt.subprocess, "run", fake_run)
     monkeypatch.setattr(pt, "wait_until_answering", lambda port, seconds=300: True)
+    monkeypatch.setattr(pt, "caddy_running", lambda: True)
+    monkeypatch.setattr(pt, "CADDY_DIR", tmp_path / "caddy")
     printed = []
     monkeypatch.setattr(pt, "log", lambda msg: printed.append(msg))
 
@@ -759,6 +778,11 @@ def test_provisioning_writes_the_welcome_and_can_start_it(tmp_path, monkeypatch)
     assert ["docker", "compose", "pull", "--quiet"] in compose_calls
     assert ["docker", "compose", "up", "-d"] in compose_calls
     assert all(cwd == str(base) for c, cwd in calls if c[:2] == ["docker", "compose"])
+    # Its address is added to Caddy: copied in, checked, reloaded.
+    installed = tmp_path / "caddy" / "sites" / "acme.example.com.site"
+    assert installed.read_text(encoding="utf-8") == (base / "Caddyfile.site").read_text(encoding="utf-8")
+    caddy_calls = [c for c, _ in calls if c[:3] == ["docker", "exec", "freehand-caddy"]]
+    assert [c[4] for c in caddy_calls] == ["validate", "reload"]
 
 
 def test_update_all_updates_every_tenant(tmp_path, monkeypatch):
@@ -770,3 +794,97 @@ def test_update_all_updates_every_tenant(tmp_path, monkeypatch):
     assert pt.update("all") == 0
     assert started == [("acme", 8100), ("beta", 8200)]
     assert pt.update("nobody") == 1
+
+
+# ── The shared Caddy on a real server (Nov 2026) ─────────────────────────
+
+
+def _fake_docker(monkeypatch, answers=None):
+    """Record docker commands; answer by command prefix."""
+    from scripts import provision_tenant as pt
+    calls = []
+
+    class Proc:
+        def __init__(self, code=0, out=""):
+            self.returncode, self.stdout, self.stderr = code, out, ""
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        for prefix, (code, out) in (answers or {}).items():
+            if " ".join(cmd).startswith(prefix):
+                return Proc(code, out)
+        return Proc()
+
+    monkeypatch.setattr(pt.subprocess, "run", fake_run)
+    return calls
+
+
+def test_starting_a_client_needs_caddy_first_and_writes_nothing(tmp_path, monkeypatch):
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "TENANTS_ROOT", tmp_path / "tenants")
+    monkeypatch.setattr(pt, "BACKUP_ROOT", tmp_path / "backups")
+    monkeypatch.setattr(pt, "port_in_use", lambda port: False)
+    _fake_docker(monkeypatch, {"docker inspect": (1, "")})  # no Caddy
+    with pytest.raises(pt.ProvisionError) as err:
+        pt.provision("acme", "acme.example.com", 8100, False, "tenant", start=True)
+    assert "--setup-proxy" in str(err.value)
+    assert not (tmp_path / "tenants").exists() and not (tmp_path / "backups").exists()
+
+
+def test_setup_proxy_makes_the_network_and_starts_caddy(tmp_path, monkeypatch):
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "CADDY_DIR", tmp_path / "caddy")
+    monkeypatch.setattr(pt, "log", lambda msg: None)
+    calls = _fake_docker(monkeypatch, {"docker network inspect": (1, ""),
+                                       "docker inspect": (0, "true\n")})
+    assert pt.setup_proxy() == 0
+    assert ["docker", "network", "create", "freehand-proxy"] in calls
+    up = [c for c in calls if c[:2] == ["docker", "compose"]]
+    assert up == [["docker", "compose", "-f", str(tmp_path / "caddy" / "compose.yml"), "up", "-d"]]
+    assert "import /etc/caddy/sites/*.site" in (tmp_path / "caddy" / "Caddyfile").read_text(encoding="utf-8")
+    assert (tmp_path / "caddy" / "sites").is_dir()
+
+
+def test_a_site_caddy_refuses_is_taken_out_again(tmp_path, monkeypatch):
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "TENANTS_ROOT", tmp_path / "tenants")
+    monkeypatch.setattr(pt, "CADDY_DIR", tmp_path / "caddy")
+    monkeypatch.setattr(pt, "log", lambda msg: None)
+    (tmp_path / "tenants" / "acme").mkdir(parents=True)
+    (tmp_path / "tenants" / "acme" / "Caddyfile.site").write_text("broken {", encoding="utf-8")
+    _fake_docker(monkeypatch, {"docker exec freehand-caddy caddy validate": (1, "")})
+    assert pt.install_site("acme", "acme.example.com") is False
+    assert not (tmp_path / "caddy" / "sites" / "acme.example.com.site").exists()
+
+
+def test_destroying_a_client_takes_its_address_out_of_caddy(tmp_path, monkeypatch):
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "TENANTS_ROOT", tmp_path / "tenants")
+    monkeypatch.setattr(pt, "BACKUP_ROOT", tmp_path / "backups")
+    monkeypatch.setattr(pt, "CADDY_DIR", tmp_path / "caddy")
+    monkeypatch.setattr(pt, "log", lambda msg: None)
+    base = tmp_path / "tenants" / "acme"
+    base.mkdir(parents=True)
+    (base / "TENANT.md").write_text("- FreeHand port: 8100\n- URL: https://acme.example.com\n", encoding="utf-8")
+    site = tmp_path / "caddy" / "sites" / "acme.example.com.site"
+    site.parent.mkdir(parents=True)
+    site.write_text("site", encoding="utf-8")
+    calls = _fake_docker(monkeypatch, {"docker inspect": (0, "true\n")})
+    assert pt.destroy("acme", True) == 0
+    assert not site.exists() and not base.exists()
+    assert ["docker", "exec", "freehand-caddy", "caddy", "reload", "--config", "/etc/caddy/Caddyfile"] in calls
+
+
+def test_without_caddy_the_advice_is_one_that_works(tmp_path, monkeypatch):
+    """It used to say "re-run provisioning", which refuses an existing tenant."""
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "TENANTS_ROOT", tmp_path / "tenants")
+    monkeypatch.setattr(pt, "BACKUP_ROOT", tmp_path / "backups")
+    monkeypatch.setattr(pt, "port_in_use", lambda port: False)
+    monkeypatch.setattr(pt, "hash_password", lambda: (None, "pw"))
+    printed = []
+    monkeypatch.setattr(pt, "log", lambda msg: printed.append(msg))
+    assert pt.provision("acme", "acme.example.com", 8100, False, "tenant") == 0
+    out = "\n".join(printed)
+    assert "re-run provisioning" not in out
+    assert "--setup-proxy" in out and "--destroy acme --confirm" in out

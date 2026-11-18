@@ -112,6 +112,14 @@ BRIDGE_IMAGE = "ghcr.io/tracysmithconsulting/freehand-whatsapp-bridge:${FREEHAND
 # The FreeHand app for Windows (help on the client's own computer).
 APP_DOWNLOAD = "https://github.com/TracySmithConsulting/freehand/releases/download/helper-latest/FreeHand.exe"
 CADDY_CONTAINER = "freehand-caddy"
+# The one Caddy on a server reaches each tenant over this shared Docker
+# network, by container name. Not through the host: a tenant's ports are
+# published on the host's 127.0.0.1 only, which a container can't reach on
+# a Linux server (host.docker.internal is the bridge address there; it only
+# happened to work on Docker Desktop). Found by a real test, Nov 2026.
+PROXY_NETWORK = "freehand-proxy"
+# caddy/compose.yml, caddy/Caddyfile and caddy/sites/*.site.
+CADDY_DIR = REPO_ROOT / "caddy"
 
 # Ports FreeHand/OpenConnector need per tenant.
 RESERVED_PORTS = {8000, 3001, 8765, 5432, 6379, 80, 443}
@@ -422,6 +430,10 @@ services:
     volumes:
       # OC keeps its data in /app/data (OOMOL_CONNECT_DATA_DIR), not /data.
       - oc-data:/app/data
+    networks:
+      - default
+      # Caddy reaches the console here, as freehand-oc-{safe}:3001.
+      - {PROXY_NETWORK}
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3001/health"]
       interval: 10s
@@ -511,6 +523,10 @@ services:
         required: false
     volumes:
       - ./vault:/app/vault
+    networks:
+      - default
+      # Caddy reaches FreeHand here, as freehand-app-{safe}:8000.
+      - {PROXY_NETWORK}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()"]
       interval: 10s
@@ -529,6 +545,14 @@ volumes:
   whatsapp-session:
     # Per-tenant WhatsApp link. Named so --destroy can find and remove it.
     name: freehand-whatsapp-{safe}
+
+networks:
+  {PROXY_NETWORK}:
+    # Shared with the server's one Caddy (caddy/compose.yml). Only this
+    # tenant's FreeHand and console join it; its memory and WhatsApp
+    # bridge stay on the tenant's own network.
+    name: {PROXY_NETWORK}
+    external: true
 """
 
 
@@ -676,13 +700,15 @@ def build_caddy_site(
     The plain-HTTP block redirects to HTTPS, and the catch-all :80 abort in
     the shared Caddyfile stops unknown hosts being served a certificate.
 
-    The upstream is addressed as host.docker.internal, NOT 127.0.0.1. Caddy
-    runs in a container, so its own loopback is Caddy's - not the host's.
-    A tenant's FreeHand port is published on the HOST's 127.0.0.1, so
-    proxying to 127.0.0.1 from inside Caddy returns 502 (verified with
-    curl against a real Caddy container). The compose service that runs
-    Caddy adds the host-gateway mapping that makes the hostname resolve to
-    the host.
+    The upstreams are the tenant's containers by name, over the shared
+    freehand-proxy network: freehand-app-<log_name>:8000 and
+    freehand-oc-<log_name>:3001 (log_name is the tenant's container
+    suffix). Not 127.0.0.1 (Caddy's own loopback, inside its container),
+    and not host.docker.internal: the tenant's ports are published on the
+    host's 127.0.0.1 only, and on a Linux server host.docker.internal is
+    the Docker bridge address, so every request got 502. That only worked
+    on Docker Desktop. freehand_port and oc_port stay as arguments: the
+    console block is written only when oc_port is given.
 
     Note `basic_auth`, not `basicauth` - the latter is deprecated in Caddy 2
     and logs a deprecation warning on every load.
@@ -703,6 +729,8 @@ def build_caddy_site(
     The console can't live under a path on FreeHand's address: both use
     /api and the site root.
     """
+    app = f"freehand-app-{log_name}:8000"
+    console = f"freehand-oc-{log_name}:3001"
     connect_block = ""
     if oc_port and connect_hostname:
         connect_block = f"""
@@ -716,7 +744,7 @@ https://{connect_hostname} {{
 \tbasic_auth {{
 \t\t{auth_user} {auth_hash}
 \t}}
-\treverse_proxy host.docker.internal:{oc_port}
+\treverse_proxy {console}
 
 \tlog {{
 \t\toutput file /var/log/caddy/{log_name}-connect.log {{
@@ -751,7 +779,7 @@ https://{hostname} {{
 \t\tpath /api/gateway/telegram /api/gateway/slack
 \t}}
 \thandle @chat_webhooks {{
-\t\treverse_proxy host.docker.internal:{freehand_port}
+\t\treverse_proxy {app}
 \t}}
 
 \t# The FreeHand Helper (docs/design/computer-helper.md) on the client's
@@ -763,7 +791,7 @@ https://{hostname} {{
 \t\tpath /api/helper/pair /api/helper/connect
 \t}}
 \thandle @freehand_helper {{
-\t\treverse_proxy host.docker.internal:{freehand_port}
+\t\treverse_proxy {app}
 \t}}
 
 \thandle {{
@@ -772,7 +800,7 @@ https://{hostname} {{
 \t\t\t{auth_user} {auth_hash}
 \t\t}}
 
-\t\treverse_proxy host.docker.internal:{freehand_port} {{
+\t\treverse_proxy {app} {{
 \t\t\t# Agent actions can be slow; don't let the proxy cut them off.
 \t\t\ttransport http {{
 \t\t\t\tread_timeout 300s
@@ -884,6 +912,9 @@ Put THIS customer's own Composio project key in `composio.env`, then run
     cd {tenant_dir(customer)}
     docker compose up -d
 
+(It joins the `{PROXY_NETWORK}` network, which `--setup-proxy` makes once
+per server.)
+
 ## Reload Caddy after adding a vhost
 
     docker exec {CADDY_CONTAINER} caddy reload --config /etc/caddy/Caddyfile
@@ -976,6 +1007,7 @@ def wait_until_answering(port: int, seconds: int = 300) -> bool:
 def start_tenant(customer: str, port: int) -> bool:
     """Download (or update) a tenant's images and start it. True once it
     answers."""
+    ensure_proxy_network()
     log("\nDownloading FreeHand's images (the first time is about 1.8 GB)...")
     pulled = compose_in(customer, "pull", "--quiet")
     if pulled.returncode != 0:
@@ -989,6 +1021,85 @@ def start_tenant(customer: str, port: int) -> bool:
         return True
     log(f"It started, but isn't answering on 127.0.0.1:{port} yet. "
         f"'docker compose logs freehand' in {tenant_dir(customer)} says why.")
+    return False
+
+
+def _docker(*args: str, timeout: int = 60) -> subprocess.CompletedProcess | None:
+    """Run ``docker ARGS``; None when Docker isn't there at all."""
+    try:
+        return subprocess.run(["docker", *args], capture_output=True, text=True,
+                              check=False, timeout=timeout)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def caddy_running() -> bool:
+    """Is the server's shared Caddy (caddy/compose.yml) running?"""
+    proc = _docker("inspect", "-f", "{{.State.Running}}", CADDY_CONTAINER)
+    return bool(proc and proc.returncode == 0 and proc.stdout.strip() == "true")
+
+
+def ensure_proxy_network() -> bool:
+    """Make the shared freehand-proxy network if it isn't there yet."""
+    found = _docker("network", "inspect", PROXY_NETWORK)
+    if found is None:
+        return False
+    if found.returncode == 0:
+        return True
+    made = _docker("network", "create", PROXY_NETWORK)
+    if made is not None and made.returncode == 0:
+        log(f"Made the shared network '{PROXY_NETWORK}'.")
+        return True
+    return False
+
+
+def setup_proxy() -> int:
+    """Once per server: the shared network and the one Caddy in front of
+    every tenant (caddy/compose.yml). It needs nothing from FreeHand's own
+    settings. Safe to run again."""
+    if not ensure_proxy_network():
+        log(f"ERROR: couldn't make the Docker network '{PROXY_NETWORK}'. Is Docker running?")
+        return 2
+    (CADDY_DIR / "sites").mkdir(parents=True, exist_ok=True)
+    main = CADDY_DIR / "Caddyfile"
+    if not main.exists():
+        main.write_text(build_caddy_main(), encoding="utf-8")
+    log("Starting Caddy (it answers on ports 80 and 443)...")
+    up = subprocess.run(["docker", "compose", "-f", str(CADDY_DIR / "compose.yml"), "up", "-d"],
+                        capture_output=True, text=True, check=False, timeout=900)
+    if up.returncode != 0:
+        log("ERROR: Caddy didn't start:\n" + (up.stderr or up.stdout)[-800:])
+        return 2
+    if not caddy_running():
+        log(f"ERROR: Caddy started but isn't running. 'docker logs {CADDY_CONTAINER}' says why.")
+        return 2
+    log("Caddy is running. Now set up a client with --customer ... --start.")
+    return 0
+
+
+def reload_caddy() -> tuple[bool, str]:
+    """Check Caddy's configuration, then load it. (ok, Caddy's message)."""
+    for action in ("validate", "reload"):
+        proc = _docker("exec", CADDY_CONTAINER, "caddy", action, "--config", "/etc/caddy/Caddyfile")
+        if proc is None or proc.returncode != 0:
+            return False, ((proc.stderr or proc.stdout) if proc else "Docker isn't available")[-600:]
+    return True, ""
+
+
+def install_site(customer: str, hostname: str) -> bool:
+    """Put a tenant's Caddyfile.site where Caddy reads it, and reload. If
+    Caddy refuses it, it's taken out again so the other tenants' sites
+    keep working."""
+    site = CADDY_DIR / "sites" / f"{hostname}.site"
+    site.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(tenant_dir(customer) / "Caddyfile.site", site)
+    ok, why = reload_caddy()
+    if ok:
+        log(f"Caddy now serves https://{hostname} (once its DNS points here).")
+        return True
+    site.unlink(missing_ok=True)
+    reload_caddy()
+    log(f"Caddy didn't accept the site, so it was taken out again:\n{why}")
     return False
 
 
@@ -1070,6 +1181,16 @@ def provision(
             log(f"  {line}")
         return 0
 
+    # On the server for real: the client's password is made by Caddy, and
+    # their site is added to Caddy, so it must be running first. Checked
+    # before anything is written, so there's nothing to undo.
+    if start and hostname and not caddy_running():
+        raise ProvisionError(
+            "The server's Caddy isn't running, and it's needed to set up the "
+            "client's password and address. Run this once first:\n"
+            "  python3 scripts/provision_tenant.py --setup-proxy"
+        )
+
     log("Provisioning FreeHand tenant...\n")
     for line in plan:
         log(f"  {line}")
@@ -1144,11 +1265,9 @@ def provision(
             log(
                 "        permission warning above if you staged this on Windows)."
             )
-            log(
-                "        Hash it with:  docker exec "
-                f"{CADDY_CONTAINER} caddy hash-password --plaintext '<pw>'"
-            )
-            log("        then re-run provisioning, or paste the hash into Caddyfile.site.")
+            log("        This tenant has no Caddy site yet. It's new, so nothing")
+            log("        is lost by starting again: run --setup-proxy, then")
+            log(f"        --destroy {customer} --confirm, then provision it again.")
     else:
         auth_password = ""
 
@@ -1178,6 +1297,8 @@ def provision(
 
     if start:
         start_tenant(customer, freehand_port)
+        if hostname and hashed:
+            install_site(customer, hostname)
         log("\nDone.")
     else:
         log("\nDone. Nothing is running yet. To start it:\n")
@@ -1247,7 +1368,17 @@ def destroy(customer: str, confirm: bool) -> int:
         return 1
 
     stop_containers(customer)
+    hostname = load_tenants().get(customer, {}).get("hostname", "")
+    hostname = hostname.split("://", 1)[-1].strip("/")
     shutil.rmtree(base)
+
+    # Its address stops being served too.
+    site = CADDY_DIR / "sites" / f"{hostname}.site" if hostname else None
+    if site and site.exists():
+        site.unlink()
+        if caddy_running():
+            reload_caddy()
+        log(f"Removed its Caddy site ({hostname}).")
 
     # Remove the per-tenant OC, memory and WhatsApp volumes too; they hold
     # that customer's OpenConnector state, memories and WhatsApp link,
@@ -1351,6 +1482,11 @@ def main() -> int:
         metavar="CUSTOMER",
         help='Update a tenant to the newest images ("all" for every tenant)',
     )
+    parser.add_argument(
+        "--setup-proxy",
+        action="store_true",
+        help="Once per server: the shared network and Caddy (caddy/compose.yml)",
+    )
     parser.add_argument("--list", action="store_true", help="List tenants")
     parser.add_argument("--destroy", metavar="CUSTOMER", help="Destroy a tenant")
     parser.add_argument(
@@ -1360,6 +1496,9 @@ def main() -> int:
 
     if args.list:
         return list_tenants()
+
+    if args.setup_proxy:
+        return setup_proxy()
 
     if args.update:
         try:
