@@ -41,6 +41,12 @@ def test_the_linux_install_never_runs_a_downloaded_script():
     assert "< /dev/tty" in SH_TEXT  # it can ask even through curl | bash
 
 
+def test_the_linux_install_checks_memory_before_changing_anything():
+    body = SH_TEXT.split("set -euo pipefail", 1)[1]
+    assert body.index("MemTotal") < body.index("have_engine || install_engine")
+    assert "needs at least 2 GB" in SH_TEXT
+
+
 def test_the_linux_install_has_unix_line_endings():
     assert b"\r\n" not in SH.read_bytes()
 
@@ -83,11 +89,16 @@ def test_releases_carry_the_install_files_and_the_readme_points_at_them():
 
 # ── Running install.sh ──────────────────────────────────────────────────
 
-def _pretend(tmp_path, *, docker=True, system="Linux"):
-    """A folder of pretend commands, and the environment to run with them."""
+def _pretend(tmp_path, *, docker=True, system="Linux", memory_kb=8000000, os_release='ID=ubuntu\nPRETTY_NAME="Ubuntu 24.04 LTS"\n'):
+    """A folder of pretend commands, and the environment to run with them.
+    docker=False: a docker that isn't working, so the engine is needed."""
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     log = tmp_path / "log.txt"
+    meminfo = tmp_path / "meminfo"
+    meminfo.write_text(f"MemTotal:       {memory_kb} kB\nMemFree:          100000 kB\n", encoding="utf-8")
+    release = tmp_path / "os-release"
+    release.write_text(os_release, encoding="utf-8")
 
     def tool(name, body):
         path = bin_dir / name
@@ -96,6 +107,10 @@ def _pretend(tmp_path, *, docker=True, system="Linux"):
 
     if docker:
         tool("docker", f'echo "docker $*" >> "{log}"\nexit 0\n')
+    else:
+        tool("docker", "exit 1\n")
+    for manager in ("apt-get", "dnf", "sudo", "systemctl", "service"):
+        tool(manager, f'echo "{manager} $*" >> "{log}"\nexit 0\n')
     tool("curl", f'''echo "curl $*" >> "{log}"
 out=""
 while [ $# -gt 0 ]; do
@@ -113,7 +128,8 @@ exit 0
     tool("uname", f'echo {system}\n')
     home = tmp_path / "freehand"
     env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
-    env.update(PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}", FREEHAND_HOME=str(home), HOME=str(tmp_path))
+    env.update(PATH=f"{bin_dir}{os.pathsep}{env.get('PATH', '')}", FREEHAND_HOME=str(home), HOME=str(tmp_path),
+               FREEHAND_MEMINFO=str(meminfo), FREEHAND_OS_RELEASE=str(release))
     return env, home, log
 
 
@@ -149,6 +165,34 @@ if RUNS_HERE:
         # Running it again (an update) keeps them.
         assert _run(env).returncode == 0
         assert env_file.read_text(encoding="utf-8") == first
+
+
+    def test_on_a_computer_with_too_little_memory_it_stops_first(tmp_path):
+        env, home, log = _pretend(tmp_path, docker=False, memory_kb=510000)  # Oracle's free "Micro"
+        r = _run(env)
+        assert r.returncode == 1
+        assert "about 0.5 GB of memory, and FreeHand needs at least 2 GB" in r.stdout
+        assert not home.exists() and not log.exists()  # nothing installed, nothing downloaded
+
+
+    def test_on_oracle_linux_it_says_where_docker_comes_from(tmp_path):
+        env, home, log = _pretend(tmp_path, docker=False, os_release=(
+            'NAME="Oracle Linux Server"\nID="ol"\nID_LIKE="fedora"\nPRETTY_NAME="Oracle Linux Server 9.8"\n'))
+        env["FREEHAND_YES"] = "1"
+        r = _run(env)
+        assert r.returncode == 1
+        assert "isn't in Oracle Linux Server 9.8's own packages" in r.stdout
+        assert "docs.docker.com/engine/install/rhel" in r.stdout
+        assert not log.exists()  # no package manager was run
+
+
+    def test_on_ubuntu_without_docker_it_installs_it_from_ubuntus_packages(tmp_path):
+        env, _, log = _pretend(tmp_path, docker=False)
+        env["FREEHAND_YES"] = "1"
+        r = _run(env)
+        # The pretend engine still doesn't work afterwards, so it stops there.
+        assert "apt-get install -y docker.io docker-compose-v2" in r.stdout
+        assert "apt-get" in log.read_text(encoding="utf-8")
 
 
     def test_it_says_so_plainly_on_a_mac(tmp_path):
