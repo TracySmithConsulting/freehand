@@ -5,6 +5,20 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.12] — 2026-11-18
+
+### Changed
+
+- **The one-line Linux install checks first**: on a computer with less
+  than 2 GB of memory it stops before changing anything, and says why.
+  On Oracle Linux, Rocky, AlmaLinux, Red Hat and CentOS, which don't
+  have the Docker engine in their own packages, it says so and points
+  to Docker's guide, instead of failing partway.
+- **Separate users, before separating**: a person's work stays theirs
+  in other threads and scheduled jobs; Telegram and Slack go by who
+  wrote, not the chat; the settings file can't make a second owner or
+  let in an unknown role; chat approvals are the requester's own.
+
 ## [0.1.11] — 2026-11-18
 
 ### Added
