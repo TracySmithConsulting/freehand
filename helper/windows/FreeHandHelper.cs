@@ -48,6 +48,8 @@ namespace FreeHand.Helper
                 return SelfTestEngine(args[1]);
             if (args.Length == 2 && args[0] == "--selftest-setup")
                 return SelfTestSetup(args[1]);
+            if (args.Length == 3 && args[0] == "--selftest-pull")
+                return SelfTestPull(args[1], args[2]);
             bool first;
             using (var mutex = new Mutex(true, "FreeHandHelperSingleInstance", out first))
             {
@@ -145,6 +147,20 @@ namespace FreeHand.Helper
             catch (Exception ex) { result["ok"] = false; result["error"] = ex.ToString(); }
             File.WriteAllText(outFile, new JavaScriptSerializer().Serialize(result));
             return result.ContainsKey("error") ? 1 : 0;
+        }
+
+        // FreeHandHelper.exe --selftest-pull reports.txt out.txt: feeds the
+        // engine's recorded download reports (docker compose --progress json
+        // pull) through the installer's meter, saying something at every
+        // step, and writes what a person would hear. Changes nothing.
+        static int SelfTestPull(string input, string output)
+        {
+            var heard = new List<string>();
+            var meter = new Engine.PullMeter((pct, text) => heard.Add(pct + (text == null ? "" : " " + text)), 30, 89, 0);
+            foreach (var line in File.ReadAllLines(input)) meter.Feed(line);
+            heard.Add("heard=" + meter.Heard + " shown=" + meter.Shown);
+            File.WriteAllLines(output, heard.ToArray());
+            return 0;
         }
 
         // FreeHandHelper.exe --selftest-engine out.json: what the installer
@@ -476,7 +492,7 @@ namespace FreeHand.Helper
             work.Show();
             Task.Run(() =>
             {
-                try { Engine.Update((pct, text) => work.Say(pct + "%: " + text)); work.Say("Done. You can close this window."); }
+                try { Engine.Update((pct, text) => { if (text != null) work.Say(pct + "%: " + text); }); work.Say("Done. You can close this window."); }
                 catch (Exception ex) { work.Say("The update didn't finish: " + ex.Message); }
                 finally { localBusy = false; }
             });

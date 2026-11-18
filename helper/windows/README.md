@@ -43,7 +43,10 @@ If the Helper is already paired, it carries on exactly as before: no setup.
 
 For checking a build: `--selftest-engine out.json` says what an install
 would find on this computer, and `--selftest-setup out.json` builds every
-setup screen and reports its words, buttons and first focus. Neither
+setup screen and reports its words, buttons and first focus, and
+`--selftest-pull reports.txt out.txt` feeds recorded download reports
+(`docker compose --progress json pull`) through the install's progress
+meter and writes what a person would hear. None of them
 changes anything.
 
 ## Getting it

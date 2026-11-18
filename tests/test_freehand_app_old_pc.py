@@ -12,13 +12,13 @@ def _part(start, end):
 
 
 def test_the_engine_gets_minutes_not_seconds_to_start():
-    start = _part("public static void StartEngine()", "public static void Start()")
+    start = _part("public static void StartEngine(", "public static void Start()")
     assert "AddMinutes(4)" in start
     assert "i < 30" not in start
 
 
 def test_when_the_engine_doesnt_start_it_says_why():
-    start = _part("public static void StartEngine()", "public static void Start()")
+    start = _part("public static void StartEngine(", "public static void Start()")
     assert "tail -n 25 /var/log/dockerd.log" in start
     assert "Reason(why)" in start
     assert "engine != null && engine.HasExited" in start
@@ -56,7 +56,7 @@ def test_checks_read_only_the_commands_own_answer():
 
 
 def test_a_second_engine_is_never_started():
-    start = _part("public static void StartEngine()", "public static void Start()")
+    start = _part("public static void StartEngine(", "public static void Start()")
     assert start.index('Yes("pgrep -x dockerd') < start.index("Process.Start(psi)")
     assert "rm -f /var/run/docker.pid" in start
     assert "What the check saw" in start
