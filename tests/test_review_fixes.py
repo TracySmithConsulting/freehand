@@ -183,7 +183,7 @@ class TestGatewayRunsAgent:
         security.set_tier("full_access")
         seen = {}
 
-        async def fake_run_agent(command, source="", caller_id=""):
+        async def fake_run_agent(command, source="", caller_id="", person=None):
             seen.update(command=command, source=source, caller_id=caller_id)
             return {"text": "Here are your meetings.", "tools_used": [], "error": None}
 
@@ -195,7 +195,7 @@ class TestGatewayRunsAgent:
     def test_agent_error_is_reported(self, monkeypatch):
         security.set_tier("full_access")
 
-        async def fake_run_agent(command, source="", caller_id=""):
+        async def fake_run_agent(command, source="", caller_id="", person=None):
             return {"text": "", "tools_used": [], "error": "LLM API error 401: bad key"}
 
         monkeypatch.setattr(agent, "run_agent", fake_run_agent)

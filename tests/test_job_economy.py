@@ -88,7 +88,7 @@ def test_the_scheduler_runs_think_jobs_small_with_a_step_limit(db, monkeypatch):
     from core import scheduler
     asked = {}
 
-    async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False):
+    async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
         asked.update(max_turns=max_turns, job=job)
         return {"text": "Summary.", "error": None, "usage": {"prompt_tokens": 1000, "completion_tokens": 200}}
     monkeypatch.setattr("core.agent.run_agent", fake_run_agent)
@@ -143,7 +143,7 @@ def test_the_use_is_shown_in_plain_words():
 def counted(db, monkeypatch):
     runs = []
 
-    async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False):
+    async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
         runs.append(command)
         return {"text": "Summary.", "error": None, "usage": {"prompt_tokens": 10, "completion_tokens": 5}}
     monkeypatch.setattr("core.agent.run_agent", fake_run_agent)

@@ -492,7 +492,8 @@ async def execute_tool(name: str, args: dict) -> dict:
 
 
 async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_id: str = "",
-                    job: bool = False, member: Optional[dict] = None) -> dict:
+                    job: bool = False, member: Optional[dict] = None,
+                    person: Optional[str] = None) -> dict:
     """Run the agent loop: call LLM, execute tools, return final response.
 
     ``job=True`` is a scheduled job (core/scheduler.py): short instructions
@@ -507,9 +508,11 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     Everything this run stores (chat history, tasks, approvals, memories)
     is tagged with whose message it is (core/people.py). The gateways only
     let known people in, so an unknown caller here is the owner (console,
-    CLI, tests)."""
+    CLI, tests). ``person`` says whose it is directly: a scheduled job is
+    its maker's, and a chat message is its sender's (in a group, the chat
+    isn't the person)."""
     from core import people
-    token = people.set_current(people.person_for(source, caller_id) or people.OWNER_ID)
+    token = people.set_current(person or people.person_for(source, caller_id) or people.OWNER_ID)
     try:
         if member is None and not job:
             from core import team
@@ -1036,14 +1039,15 @@ def _record_command(command: str) -> None:
         conn.close()
 
 
-async def run_command(command: str, source: str = "", caller_id: str = "") -> dict:
+async def run_command(command: str, source: str = "", caller_id: str = "",
+                      person: Optional[str] = None) -> dict:
     """Record a command and run the agent on it.
 
     Single entry point shared by POST /api/agent/command and the chat
     gateways, so both behave identically.
     """
     _record_command(command)
-    return await run_agent(command, source=source, caller_id=caller_id)
+    return await run_agent(command, source=source, caller_id=caller_id, person=person)
 
 
 async def _run_tool(name: str, args: dict) -> dict:

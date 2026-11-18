@@ -139,7 +139,7 @@ class TestTaskExecutor:
         monkeypatch.setattr(agent_mod, "run_agent", None)  # replaced below
         calls = []
 
-        async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False):
+        async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
             calls.append(command)
             return {"text": "done", "tools_used": [], "error": None}
 
@@ -162,7 +162,7 @@ class TestTaskExecutor:
         from core.scheduler import create_task, run_due_tasks, _iso_utc
         from datetime import datetime, timezone
 
-        async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False):
+        async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
             return {"text": "done", "tools_used": [], "error": None}
 
         monkeypatch.setattr("core.agent.run_agent", fake_run_agent)
@@ -194,7 +194,7 @@ class TestTaskExecutor:
     def test_run_due_tasks_records_failure(self, isolated_vault, monkeypatch):
         from core.scheduler import create_task, run_due_tasks
 
-        async def failing_agent(command, max_turns=5, source="", caller_id="", job=False):
+        async def failing_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
             return {"text": "", "tools_used": [], "error": "LLM API error 500"}
 
         monkeypatch.setattr("core.agent.run_agent", failing_agent)
@@ -214,7 +214,7 @@ class TestTaskExecutor:
     def test_run_due_tasks_per_tick_cap(self, isolated_vault, monkeypatch):
         from core.scheduler import run_due_tasks, create_task
 
-        async def fake_agent(command, max_turns=5, source="", caller_id="", job=False):
+        async def fake_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
             return {"text": "ok", "tools_used": [], "error": None}
 
         monkeypatch.setattr("core.agent.run_agent", fake_agent)

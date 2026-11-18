@@ -85,6 +85,21 @@ tagged as the owner's.
    is found when recalling with that tag, and not when recalling with
    `person:owner`. That's how private and shared memories will be kept apart
    in a single memory bank.
+5. **Before separating (Nov 2026), from a review.** Five things would have
+   quietly undone the separation, each by running a person's work as the
+   owner. They're fixed, with tests that work as Thandi
+   (`tests/test_people_before_separation.py`):
+   - Work handed to another thread keeps its person (`people.carry`): the
+     Composio and MCP tool paths and the scheduler.
+   - A scheduled job runs as the person who made it. If they're no longer
+     on this FreeHand, the job doesn't run (it pauses after a few tries).
+   - The settings file can't make a second owner, and an unknown role
+     (a typo such as "chlid") isn't let in, rather than becoming a member.
+   - Telegram and Slack go by who wrote, not the chat. A Telegram group is
+     answered only if the owner allowed that group, and only for people
+     FreeHand knows, each as themselves; a group can't be someone's
+     personal link.
+   - A chat approval can only be answered by the person who asked.
 
 ## Still to build (the full version)
 
@@ -99,6 +114,15 @@ In a sensible order:
 
    Before turning on filtering, tag the existing untagged memories
    `person:owner`, so they don't vanish from recall.
+
+   Recall must ask for a **strict** tag match (`any_strict`, `all_strict`
+   or `exact`). Hindsight's default, `any`, also returns memories with no
+   tags, and a mistyped mode quietly falls back to it. Test that Thandi
+   can't recall an untagged memory, and that Hindsight's summaries (built
+   from several memories) don't mix a private one into someone else's
+   answer: save a private and a shared memory on the same topic, recall
+   as another person, and look. If summaries leak, use a memory bank per
+   person plus one shared bank instead: simpler to trust, but more to run.
 3. **Chats, tasks and approvals filtered by person.** Each person sees only
    their own. Administrators can see approvals for shared connections.
    Scheduled tasks run as the person who made them.
@@ -111,6 +135,35 @@ In a sensible order:
 6. **Roles and permissions:** what members may do, set per person.
 7. **Families:** the child role, parents' approvals, limits and oversight
    (see "Families and children" below).
+8. **When someone leaves** (see below).
+
+Write the isolation tests first and let them fail: as Thandi, nothing of
+the owner's appears in chats, tasks, approvals, memories or files, also
+through the thread hops and scheduled jobs. Then build until they pass.
+
+## When someone leaves
+
+Removing a person is a decision, not just deleting a line of settings, so
+FreeHand asks the administrator what should happen and then does all of it:
+
+- **Straight away:** their chat links (Telegram, WhatsApp, Slack) and
+  their sign-in stop working, and their personal connections (their own
+  mailbox, calendar and other sign-ins) are disconnected, so nothing can
+  act as them any more. Their scheduled jobs stop (they already don't run
+  for someone who's no longer listed).
+- **The administrator chooses** what of theirs is kept for the office (for
+  example their tasks, or notes they wrote for the team) and what is
+  deleted. What they shared stays shared. Their private chats and
+  memories are deleted unless the administrator keeps them, and the person
+  should be told which.
+- **Delete everything about a person:** one action that removes their
+  chats, tasks, approvals, memories, files and connections. A privacy
+  request under POPIA will need it.
+
+**Recycled phone numbers.** WhatsApp links are matched by number, and
+phone companies give old numbers to new people. Removing a person's links
+when they leave is the main protection. For more, a new number could be
+asked for a one-time code from the console the first time it writes.
 
 ## Families and children
 
@@ -150,7 +203,12 @@ choice for each child:
 - **Summaries:** a weekly "what they used FreeHand for". This suits teenagers.
 - **Alerts only:** parents are told only when something worrying comes up. If a
   child says they're being hurt or are in danger, FreeHand answers kindly, gives
-  helpline numbers, and tells a parent.
+  helpline numbers, and tells a parent. This depends on the AI noticing, so,
+  like the guidance below, it isn't watertight, and the setup says so.
+
+A child's request for a parent's approval that no parent answers is
+**refused after a time limit**, never allowed by default. The quiet hours
+and limits apply to everything done for the child, scheduled jobs too.
 
 Whichever is chosen, FreeHand tells the child honestly what their parents can
 see. Hidden monitoring breaks trust.

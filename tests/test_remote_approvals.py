@@ -60,7 +60,7 @@ def executed(monkeypatch):
 def agent_calls(monkeypatch):
     calls = []
 
-    async def fake_run_agent(command, source="", caller_id=""):
+    async def fake_run_agent(command, source="", caller_id="", person=None):
         calls.append(command)
         return {"text": f"agent: {command}", "tools_used": [], "error": None}
 
