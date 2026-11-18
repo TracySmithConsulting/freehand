@@ -69,7 +69,7 @@ def test_console_gets_its_own_password_protected_vhost():
     site = pt.build_caddy_site("acme.example.com", 8100, "tenant", "$2y$04$abc", "acme_corp",
                                8101, "connect.acme.example.com")
     connect = site.split("https://connect.acme.example.com {", 1)[1]
-    assert connect.index("basic_auth {") < connect.index("reverse_proxy host.docker.internal:8101")
+    assert connect.index("basic_auth {") < connect.index("reverse_proxy freehand-oc-acme_corp:3001")
     assert "redir https://connect.acme.example.com{uri} 308" in site
     # FreeHand's own vhost is unchanged: still exactly one password there.
     freehand = site.split("https://connect.acme.example.com {", 1)[0]
