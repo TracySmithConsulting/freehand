@@ -17,6 +17,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import agent_config
 from core import database
+from core import people
 from core.security import get_current_tier, approve_from_remote, deny_from_remote
 from core.memory import sync_vault_to_sqlite
 from core.scheduler import process_scribble, create_task, append_scribble
@@ -316,8 +317,8 @@ async def _route_to_agent(text: str, source: str = "", caller_id: str = "") -> s
         if not arg.isdigit():
             return f"Use: /{verb} <id>"
         if verb == "approve":
-            return await approve_from_remote(int(arg), source, str(caller_id))
-        return deny_from_remote(int(arg), source, str(caller_id))
+            return await approve_from_remote(int(arg), source, str(caller_id), people.current())
+        return deny_from_remote(int(arg), source, str(caller_id), people.current())
 
     if text.startswith("/tier"):
         # Changing the permission tier is a local-only operation. A remote
@@ -383,7 +384,7 @@ async def _handle_agent_command(text: str, source: str, caller_id: str, tier) ->
     # every chat command silently answered "Command processed."
     from core.agent import run_command
     try:
-        data = await run_command(text, source=source, caller_id=caller_id)
+        data = await run_command(text, source=source, caller_id=caller_id, person=people.current())
     except Exception as e:
         return f"Error: {str(e)[:200]}"
     if data.get("error"):
@@ -446,13 +447,25 @@ def _spawn(coro) -> asyncio.Task:
     return task
 
 
-async def _reply_in_background(source: str, caller_id: str, text: str, send) -> None:
+def _as_sender(source: str, caller_id: str, sender: str = ""):
+    """Make the rest of this message the sender's (core/people.py).
+
+    ``caller_id`` is the chat the reply goes to; ``sender`` is who wrote,
+    which differs in a Telegram group or a Slack channel. Returns a token
+    for people.reset()."""
+    return people.set_current(people.person_for(source, sender or caller_id) or people.OWNER_ID)
+
+
+async def _reply_in_background(source: str, caller_id: str, text: str, send, sender: str = "") -> None:
     """Run one chat message through the agent and send the reply."""
+    token = _as_sender(source, caller_id, sender)
     try:
         response = await _route_to_agent(text, source=source, caller_id=caller_id)
     except Exception as e:  # never leave the person without an answer
         log.exception("%s message failed", source)
         response = f"Error: {str(e)[:200]}"
+    finally:
+        people.reset(token)
     await send(caller_id, response)
 
 
@@ -487,10 +500,19 @@ async def _telegram_download(file_id: str) -> Optional[bytes]:
         return None
 
 
-async def _reply_to_voice_in_background(source: str, caller_id: str, audio: dict, download, send) -> None:
+async def _reply_to_voice_in_background(source: str, caller_id: str, audio: dict, download, send,
+                                        sender: str = "") -> None:
     """A voice note: turn it into text on this computer (core/voice.py),
     answer it, and start the reply with what was heard, so people can tell
     if FreeHand misheard."""
+    token = _as_sender(source, caller_id, sender)
+    try:
+        await _voice_reply(source, caller_id, audio, download, send)
+    finally:
+        people.reset(token)
+
+
+async def _voice_reply(source: str, caller_id: str, audio: dict, download, send) -> None:
     from core import voice
     data = await download(audio["file_id"])
     if not data:
@@ -517,13 +539,23 @@ async def handle_telegram_update(update: dict, *, from_polling: bool = False) ->
     from polling (core/telegram_poll.py), and answer in the background."""
     message = update.get("message", {})
     chat_id = str(message.get("chat", {}).get("id", ""))
+    # Who wrote. In a private chat it's the chat ID; in a group everyone
+    # shares the chat, so the person is the sender.
+    sender = str(message.get("from", {}).get("id", "") or chat_id)
+    group = message.get("chat", {}).get("type", "private") != "private"
     text = (message.get("text") or "").strip()
     audio = _telegram_voice(message)
     if not text and not audio:
         return {"ok": True}
 
+    if group:
+        # A group is answered only if the owner allowed that group (a
+        # group can't be someone's personal link), and only for people
+        # FreeHand knows, each as themselves.
+        if not _telegram_group_allowed(chat_id, sender):
+            return {"ok": True}
     # N12a: allow_from check (second layer after the secret token)
-    if not _check_allow_from("telegram", chat_id):
+    elif not _check_allow_from("telegram", chat_id):
         settings = _load_settings()
         nobody_allowed = not (settings.get("telegram_allow_from") or settings.get("telegram_chat_whitelist"))
         if from_polling and nobody_allowed and chat_id and chat_id not in _told_unknown_chats:
@@ -541,10 +573,20 @@ async def handle_telegram_update(update: dict, *, from_polling: bool = False) ->
         return {"ok": True, "duplicate": True}
 
     if audio:
-        _spawn(_reply_to_voice_in_background("telegram", chat_id, audio, _telegram_download, _telegram_send_message))
+        _spawn(_reply_to_voice_in_background("telegram", chat_id, audio, _telegram_download,
+                                             _telegram_send_message, sender=sender))
     else:
-        _spawn(_reply_in_background("telegram", chat_id, text, _telegram_send_message))
+        _spawn(_reply_in_background("telegram", chat_id, text, _telegram_send_message, sender=sender))
     return {"ok": True, "queued": True}
+
+
+def _telegram_group_allowed(chat_id: str, sender: str) -> bool:
+    """A Telegram group: the owner listed the group itself, and the sender
+    is someone FreeHand knows (the owner or a person)."""
+    settings = _load_settings()
+    if people.identity("telegram", chat_id) not in people._legacy_allow("telegram", settings):
+        return False
+    return people.person_for("telegram", sender, settings) is not None
 
 
 async def handle_telegram_webhook(update: dict) -> dict:
@@ -597,7 +639,8 @@ async def handle_slack_webhook(body: str, headers: dict) -> dict:
         return {"ok": True, "duplicate": True}
 
     channel = event.get("channel", "")
-    _spawn(_reply_in_background("slack", channel, text, _slack_send_message))
+    # The reply goes to the channel; the message is the user's.
+    _spawn(_reply_in_background("slack", channel, text, _slack_send_message, sender=user_id))
     return {"ok": True, "queued": True}
 
 

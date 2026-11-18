@@ -202,7 +202,8 @@ def _run_async(coro):
             result.append(asyncio.run(coro))
         except Exception as exc:
             error.append(exc)
-    thread = threading.Thread(target=runner)
+    from core import people
+    thread = threading.Thread(target=people.carry(runner))  # as the same person
     thread.start()
     thread.join()
     if error:

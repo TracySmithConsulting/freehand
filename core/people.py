@@ -30,13 +30,19 @@ import sqlite3
 from typing import Optional
 
 OWNER_ID = "owner"
+# The roles a person in settings may have. There is one owner, and the
+# settings file can't make another. An unknown role (a typo, or a role
+# from a newer FreeHand) doesn't get in at all, rather than getting a
+# member's rights: when the child role comes, "chlid" must not be a member.
+ROLES = ("member",)
 CHANNELS = ("telegram", "whatsapp", "slack")
 PERSON_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 # The person the current request is for. Set once per agent run; read by
 # whatever stores something (a task, an approval, a memory) so the person
 # doesn't have to be passed through every function. asyncio.to_thread
-# copies it into worker threads.
+# copies it into worker threads; threading.Thread and thread pools don't,
+# so work sent there goes through carry() (or it would run as the owner).
 _current: contextvars.ContextVar[str] = contextvars.ContextVar("freehand_person", default=OWNER_ID)
 
 
@@ -70,13 +76,29 @@ def list_people(settings: Optional[dict] = None) -> list[dict]:
         pid = str(p.get("id") or "").strip().lower()
         if not PERSON_ID_RE.match(pid) or pid == OWNER_ID or any(q["id"] == pid for q in out):
             continue
+        role = str(p.get("role") or "member").strip().lower()
+        if role not in ROLES:
+            _warn_role(pid, role)
+            continue
         out.append({
             "id": pid,
             "name": str(p.get("name") or pid).strip(),
-            "role": "member" if p.get("role") != "owner" else "owner",
+            "role": role,
             **{ch: [str(x) for x in (p.get(ch) or [])] for ch in CHANNELS},
         })
     return out
+
+
+_warned_roles: set = set()
+
+
+def _warn_role(pid: str, role: str) -> None:
+    if (pid, role) not in _warned_roles:
+        _warned_roles.add((pid, role))
+        import logging
+        logging.getLogger(__name__).warning(
+            "Person %r in settings has the role %r, which FreeHand doesn't know, so they "
+            "aren't let in. The roles are: %s.", pid, role, ", ".join(ROLES))
 
 
 def get(person_id: str, settings: Optional[dict] = None) -> Optional[dict]:
@@ -130,6 +152,16 @@ def current() -> str:
 def set_current(person_id: Optional[str]):
     """Set the person for this request. Returns a token for reset()."""
     return _current.set(person_id or OWNER_ID)
+
+
+def carry(fn):
+    """fn, made to run in another thread as the current person.
+
+    A new thread (threading.Thread, a thread pool, run_in_executor) starts
+    without the current person, so without this, work a person asked for
+    would run there as the owner. asyncio.to_thread already carries it."""
+    ctx = contextvars.copy_context()
+    return lambda *args, **kwargs: ctx.run(fn, *args, **kwargs)
 
 
 def reset(token) -> None:

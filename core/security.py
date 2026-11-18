@@ -475,8 +475,7 @@ def _get_approval(approval_id: int) -> Optional[dict]:
     conn = _get_conn()
     conn.row_factory = sqlite3.Row
     cur = conn.execute(
-        "SELECT id, action_type, description, payload, status, created_at "
-        "FROM approvals WHERE id = ?",
+        "SELECT * FROM approvals WHERE id = ?",
         (approval_id,),
     )
     row = cur.fetchone()
@@ -550,11 +549,17 @@ async def re_execute_approval(approval_id: int, approver: str = "local") -> dict
     return {"re_executed": True, "tool": tool, "result": result}
 
 
-def _remote_ownership_refusal(row: Optional[dict], source: str, caller_id: str) -> Optional[str]:
+def _remote_ownership_refusal(row: Optional[dict], source: str, caller_id: str,
+                              person: Optional[str] = None) -> Optional[str]:
     """Check a chat user may act on this approval: it must exist, be pending,
-    and have been requested from this same channel and chat."""
+    and have been requested from this same channel and chat, and (when the
+    gateway knows who's asking) by this same person: in a group chat,
+    everyone shares the chat."""
     if row is None or row.get("status") != "pending":
         return "That approval was not found or has already been handled."
+    if person is not None and str(row.get("person") or "owner") != person:
+        return ("You can only approve or deny your own requests from chat. "
+                "Use the FreeHand web console for others.")
     payload = _payload_of(row)
     if (
         str(payload.get("source", "")) != source
@@ -595,10 +600,11 @@ def _summarise_result(result: Optional[dict], cap: int = 500) -> str:
     return content if len(content) <= cap else content[:cap] + "..."
 
 
-async def approve_from_remote(approval_id: int, source: str, caller_id: str) -> str:
+async def approve_from_remote(approval_id: int, source: str, caller_id: str,
+                              person: Optional[str] = None) -> str:
     """/approve from a chat gateway. Returns the reply text for the chat."""
     row = _get_approval(approval_id)
-    refusal = _remote_ownership_refusal(row, source, caller_id)
+    refusal = _remote_ownership_refusal(row, source, caller_id, person)
     if refusal:
         return refusal
 
@@ -630,9 +636,10 @@ async def approve_from_remote(approval_id: int, source: str, caller_id: str) -> 
     return f"Approved #{approval_id}. Ran {tool}:\n{_summarise_result(outcome.get('result'))}"
 
 
-def deny_from_remote(approval_id: int, source: str, caller_id: str) -> str:
+def deny_from_remote(approval_id: int, source: str, caller_id: str,
+                     person: Optional[str] = None) -> str:
     """/deny from a chat gateway. Same ownership rule as approve."""
-    refusal = _remote_ownership_refusal(_get_approval(approval_id), source, caller_id)
+    refusal = _remote_ownership_refusal(_get_approval(approval_id), source, caller_id, person)
     if refusal:
         return refusal
     try:

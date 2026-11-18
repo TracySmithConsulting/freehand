@@ -83,8 +83,9 @@ def _run_coro(coro):
     except RuntimeError:
         return asyncio.run(coro)
     import concurrent.futures
+    from core import people
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-        return pool.submit(asyncio.run, coro).result()
+        return pool.submit(people.carry(asyncio.run), coro).result()  # as the same person
 
 
 def _load_settings() -> dict:
@@ -724,6 +725,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
     conn = _tasks_conn()
     executed = 0
     failed = 0
+    before = None
     try:
         people.ensure_person_column(conn, "tasks")
         _ensure_deliver_column(conn)
@@ -736,8 +738,17 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             (now_iso, cap),
         ).fetchall()
         tz = local_tz()
+        before = people.set_current(people.current())  # put back when done
         for row in rows:
-            if row["kind"] == "do":
+            # A job runs as the person who set it up, so it sees their
+            # things, not the owner's. Someone who's no longer on this
+            # FreeHand has their jobs stop (paused after a few tries).
+            person = row["person"] or people.OWNER_ID
+            people.set_current(person)
+            if people.get(person) is None:
+                result = {"text": "", "error": "person gone",
+                          "plain": "the person who set it up is no longer on this FreeHand"}
+            elif row["kind"] == "do":
                 try:
                     result = {"text": run_action(row["action"], row["person"]), "error": None}
                 except Exception as e:
@@ -777,7 +788,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 # team member: its own setup and limits (core/team.py).
                 as_member = {"member": _member_for(row)} if row["team_member"] else {}
                 result = _run_coro(run_agent(_due_prompt(row["title"]), max_turns=JOB_STEPS,
-                                             source="cli", job=True, **as_member))
+                                             source="cli", job=True, person=person, **as_member))
                 _add_usage(conn, row["id"], result.get("usage"), now)
             error = result.get("error")
             reply = (result.get("text") or "").strip()
@@ -823,6 +834,8 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 )
         conn.commit()
     finally:
+        if before is not None:
+            people.reset(before)
         conn.close()
     return {"executed": executed, "failed": failed,
             "skipped": None if llm_ok else "llm_not_configured"}

@@ -26,7 +26,7 @@ def fake_agent(monkeypatch):
     calls = []
     reply = {"text": "Reminder: phone the dentist.", "tools_used": [], "error": None}
 
-    async def run_agent(command, max_turns=5, source="", caller_id="", job=False):
+    async def run_agent(command, max_turns=5, source="", caller_id="", job=False, person=None):
         calls.append(command)
         return dict(reply)
 
@@ -137,7 +137,10 @@ def test_a_success_resets_the_failure_count(db, fake_agent):
 def test_notices_belong_to_the_person_whose_task_it_was(db, fake_agent):
     from core import notices
     from core.scheduler import create_task, run_due_tasks
-    from core import people
+    from core import agent_config, people
+    s = agent_config._load_settings()
+    s["people"] = [{"id": "sam", "name": "Sam"}]
+    agent_config._save_settings(s)
     token = people.set_current("sam")
     try:
         create_task("Sam's reminder", "")

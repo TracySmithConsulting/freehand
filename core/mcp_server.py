@@ -185,7 +185,8 @@ def _run_async_in_thread(coro):
         except Exception as e:
             result_box["error"] = e
 
-    t = threading.Thread(target=_runner, daemon=True)
+    from core import people
+    t = threading.Thread(target=people.carry(_runner), daemon=True)  # as the same person
     t.start()
     t.join()
     if result_box["error"] is not None:
