@@ -218,10 +218,18 @@ class TestBuildCompose:
         assert "127.0.0.1:8000:8000" not in compose
         assert "127.0.0.1:3001:3001" not in compose
 
-    def test_build_context_points_at_the_repo(self, tmp_path):
-        compose = pt.build_compose("acme-corp", 8100, 8101, tmp_path)
+    def test_uses_the_published_images_by_default(self, compose):
+        # Nov 2026: no build on the server, so no checkout and no minutes of
+        # building per tenant.
+        assert "image: ghcr.io/tracysmithconsulting/freehand:${FREEHAND_VERSION:-latest}" in compose
+        assert "image: ghcr.io/tracysmithconsulting/freehand-whatsapp-bridge:${FREEHAND_VERSION:-latest}" in compose
+        assert "build:" not in compose
+
+    def test_from_source_builds_from_the_repo(self, tmp_path):
+        compose = pt.build_compose("acme-corp", 8100, 8101, tmp_path, from_source=True)
         assert f'context: "{tmp_path.as_posix()}"' in compose
         assert "dockerfile: Dockerfile" in compose
+        assert "ghcr.io/tracysmithconsulting/freehand:" not in compose
 
     def test_vault_bind_is_relative_to_the_tenant_dir(self, compose):
         assert "./vault:/app/vault" in compose
@@ -677,7 +685,9 @@ def test_each_tenant_gets_its_own_whatsapp_bridge():
     doc = yaml.safe_load(pt.build_compose("acme", 8100, 3100, Path("/repo")))
     wa = doc["services"]["whatsapp-bridge"]
     assert "ports" not in wa
-    assert wa["build"]["context"] == "/repo/freehand/bridge"
+    assert wa["image"].startswith("ghcr.io/tracysmithconsulting/freehand-whatsapp-bridge:")
+    built = yaml.safe_load(pt.build_compose("acme", 8100, 3100, Path("/repo"), from_source=True))
+    assert built["services"]["whatsapp-bridge"]["build"]["context"] == "/repo/freehand/bridge"
     assert wa["container_name"] == "freehand-whatsapp-acme"
     assert "BRIDGE_SECRET=${BRIDGE_SECRET}" in wa["environment"]
     assert "FREEHAND_URL=http://freehand:8000" in wa["environment"]
@@ -695,3 +705,68 @@ def test_freehand_and_its_bridge_share_one_secret_per_tenant():
     a = [l for l in pt.build_env("a", 1, "x").splitlines() if l.startswith("BRIDGE_SECRET=")]
     b = [l for l in pt.build_env("b", 1, "x").splitlines() if l.startswith("BRIDGE_SECRET=")]
     assert a and b and a != b
+
+
+# ── Setting up a client (Nov 2026: granny installer step 5) ─────────────
+
+
+def test_the_welcome_says_where_how_and_what_happens_first():
+    from scripts import provision_tenant as pt
+    w = pt.build_welcome("acme.example.com", "tenant", "pw-123")
+    assert "https://acme.example.com" in w
+    assert "User name:  tenant" in w and "Password:   pw-123" in w
+    assert "helps you choose how it\nthinks" in w
+    assert pt.APP_DOWNLOAD in w and '"Somewhere else"' in w
+    for word in ("API", "container", "port", "Docker", "OAuth"):
+        assert word not in w, word
+
+
+def test_the_saved_welcome_never_holds_the_password():
+    from scripts import provision_tenant as pt
+    w = pt.build_welcome("acme.example.com", "tenant")
+    assert "(I'll send it to you separately)" in w
+
+
+def test_provisioning_writes_the_welcome_and_can_start_it(tmp_path, monkeypatch):
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "TENANTS_ROOT", tmp_path / "tenants")
+    monkeypatch.setattr(pt, "BACKUP_ROOT", tmp_path / "backups")
+    monkeypatch.setattr(pt, "hash_password", lambda: ("$2a$14$hash", "the-password"))
+    monkeypatch.setattr(pt, "port_in_use", lambda port: False)
+    calls = []
+
+    class Done:
+        returncode = 0
+        stdout = stderr = ""
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw.get("cwd")))
+        return Done()
+
+    monkeypatch.setattr(pt.subprocess, "run", fake_run)
+    monkeypatch.setattr(pt, "wait_until_answering", lambda port, seconds=300: True)
+    printed = []
+    monkeypatch.setattr(pt, "log", lambda msg: printed.append(msg))
+
+    assert pt.provision("acme", "acme.example.com", 8100, False, "tenant", start=True) == 0
+
+    base = tmp_path / "tenants" / "acme"
+    saved = (base / "WELCOME.txt").read_text(encoding="utf-8")
+    assert "https://acme.example.com" in saved and "the-password" not in saved
+    out = "\n".join(printed)
+    assert "Password:   the-password" in out  # shown once, to hand over
+    compose_calls = [c for c, cwd in calls if c[:2] == ["docker", "compose"]]
+    assert ["docker", "compose", "pull", "--quiet"] in compose_calls
+    assert ["docker", "compose", "up", "-d"] in compose_calls
+    assert all(cwd == str(base) for c, cwd in calls if c[:2] == ["docker", "compose"])
+
+
+def test_update_all_updates_every_tenant(tmp_path, monkeypatch):
+    from scripts import provision_tenant as pt
+    monkeypatch.setattr(pt, "load_tenants", lambda: {"acme": {"freehand_port": 8100}, "beta": {"freehand_port": 8200}})
+    started = []
+    monkeypatch.setattr(pt, "start_tenant", lambda name, port: started.append((name, port)) or True)
+    monkeypatch.setattr(pt, "log", lambda msg: None)
+    assert pt.update("all") == 0
+    assert started == [("acme", 8100), ("beta", 8200)]
+    assert pt.update("nobody") == 1
