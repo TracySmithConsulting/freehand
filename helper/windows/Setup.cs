@@ -141,7 +141,7 @@ namespace FreeHand.Helper
                 "keep your diary, remind you of things, and help on this computer.\r\n\r\n" +
                 "Where should FreeHand run?");
             here = new RadioButton { Text = "On this computer (install it here)", AutoSize = true, Checked = true };
-            server = new RadioButton { Text = "On a server: I was given a web address for my FreeHand", AutoSize = true };
+            server = new RadioButton { Text = "Somewhere else: FreeHand already runs on a server, or was set up another way", AutoSize = true };
             l.Controls.Add(here);
             l.Controls.Add(server);
             AddButton("Cancel", Close);
@@ -167,7 +167,7 @@ namespace FreeHand.Helper
                 if (r.Problems.Count > 0)
                 {
                     ShowProblem("This computer can't run FreeHand yet:\r\n\r\n- " + string.Join("\r\n- ", r.Problems) +
-                        "\r\n\r\nIf you were given a web address for FreeHand instead, go back and choose \"On a server\".");
+                        "\r\n\r\nIf FreeHand already runs somewhere else, go back and choose \"Somewhere else\".");
                     return;
                 }
                 if (r.Running) { Done("FreeHand is already installed and running on this computer."); return; }
