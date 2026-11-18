@@ -41,10 +41,22 @@ jobs:
           name: dist
           path: dist/
 
+      # The one-line installs come from the newest release, so a person
+      # always gets a tested set:
+      #   releases/latest/download/install.sh   (Linux)
+      #   releases/latest/download/install.ps1  (Windows)
+      #   releases/latest/download/compose.yml  (what install.sh sets up)
+      - name: Add the install files
+        run: |
+          mkdir -p install-files
+          cp scripts/install.sh scripts/install.ps1 install/compose.yml install-files/
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*
+            install-files/*
           generate_release_notes: true
           draft: false
 

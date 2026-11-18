@@ -225,9 +225,11 @@ works whatever the provider has changed since.
 3. **The FreeHand app installer (A2):** WSL, the engine, the images, the
    tray icon, updates and uninstall. Built on the Helper and its signed
    release pipeline.
-4. **The old installer scripts:** `install.ps1` downloads the new
+4. **Built (Nov 2026).** **The old installer scripts:** `install.ps1` downloads the new
    installer; `install.sh` becomes the one-line Linux install (the same
    services, the free Docker engine, the same first-run setup).
+   Both come from the newest release (`releases/latest/download/`), with
+   the `compose.yml` that `install.sh` sets up.
 5. **Built (Nov 2026).** **Hosted, polished (C):** a clear way for Tracy to set up a client,
    and a welcome email with their address and the Helper download.
    `provision_tenant.py --start` does it in one command from the
