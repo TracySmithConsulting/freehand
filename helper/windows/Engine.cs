@@ -23,6 +23,7 @@ using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace FreeHand.Helper
@@ -40,6 +41,12 @@ namespace FreeHand.Helper
         const string AlpineFile = "alpine-minirootfs-3.24.4-x86_64.tar.gz";
         const string AlpineUrl = "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/" + AlpineFile;
         const string AlpineSha256 = "cdaa38cb8de3537967ee5b6c9b6cd00cc962da2b018e6eea48696bb274923012";
+
+        // What FreeHand's images download, compressed (measured on 18 November
+        // 2026: 1.79 GB). Once unpacked they take about 6 GB of disk. Used
+        // only to say how far a download has got before every part's size
+        // is known; the real sizes take over as they arrive.
+        const long DownloadBytes = 1800000000;
 
         // Its own network ranges, so it can't clash with Docker Desktop or
         // the home network.
@@ -152,7 +159,8 @@ namespace FreeHand.Helper
         /// is skipped if it's already done.
         public static void Install(Action<int, string> report, CancellationToken cancel)
         {
-            Action<int, string> progress = (pct, text) => { Note(pct + "%: " + text); report(pct, text); };
+            // With words, a step is said and logged; without (null), only the bar moves.
+            Action<int, string> progress = (pct, text) => { if (text != null) Note(pct + "%: " + text); report(pct, text); };
             Note("Installing, on Windows build " + WindowsBuild() + string.Format(" with {0:0.0} GB of memory.", TotalMemoryGb()));
             Note("WSL: " + Run("wsl.exe", "--version", 30).Text.Trim().Replace("\r", "").Replace("\n", "; "));
             if (!WslReady()) throw new EngineError("WSL isn't switched on yet. Press Install again to switch it on.");
@@ -171,23 +179,152 @@ namespace FreeHand.Helper
             {
                 progress(15, "Downloading the engine that runs FreeHand (about 100 MB)...");
                 // A download stopped part-way last time may still be running.
-                Must(Sh("pkill -x apk 2>/dev/null; for i in 1 2 3; do apk update && apk add --no-progress docker docker-cli-compose && exit 0; sleep 10; done; exit 1", 3600),
+                var pace = new Pacer(20);
+                Must(ShLines("pkill -x apk 2>/dev/null; for i in 1 2 3; do apk update && apk add --no-progress docker docker-cli-compose && exit 0; sleep 10; done; exit 1", 3600,
+                    line =>
+                    {
+                        // apk says "(12/45) Installing containerd (...)" for each part.
+                        var m = Regex.Match(line, @"^\((\d+)/(\d+)\) Installing");
+                        if (!m.Success) return;
+                        int n = int.Parse(m.Groups[1].Value), of = Math.Max(1, int.Parse(m.Groups[2].Value));
+                        progress(15 + 9 * n / of, pace.Due() || n == of ? string.Format("Downloading the engine: part {0} of {1}.", n, of) : null);
+                    }),
                     "The engine couldn't be downloaded. Check the internet connection, then press Install again");
             }
             cancel.ThrowIfCancellationRequested();
             progress(25, "Writing FreeHand's settings...");
             WriteSettings();
             progress(28, "Starting the engine...");
-            StartEngine();
-            progress(30, "Downloading FreeHand (about 6 GB the first time). On a slow connection this can take an hour or more...");
-            Must(Compose("pull --quiet", 6 * 3600), "FreeHand couldn't be downloaded. Check the internet connection, then press Install again");
+            StartEngine(text => progress(28, text));
+            progress(30, "Downloading FreeHand: about 1.8 GB, which takes about 6 GB of space once unpacked. On a slow connection this can take an hour or more. "
+                + "This list says how far it has got about once a minute.");
+            Pull(progress, 30, 89);
             cancel.ThrowIfCancellationRequested();
             progress(90, "Starting FreeHand...");
-            Must(Compose("up -d", 900), "FreeHand didn't start");
+            Must(Beating(() => Compose("up -d", 900), 45, () => progress(90, "Still starting FreeHand. The first time can take a few minutes on an older computer.")),
+                "FreeHand didn't start");
             progress(95, "Waiting for FreeHand to answer...");
-            for (int i = 0; i < 90 && !Answers(); i++) { cancel.ThrowIfCancellationRequested(); Thread.Sleep(2000); }
+            var waiting = new Pacer(30);
+            for (int i = 0; i < 90 && !Answers(); i++)
+            {
+                cancel.ThrowIfCancellationRequested();
+                if (waiting.Due()) progress(95, "Still waiting for FreeHand to answer. The first start can take a few minutes.");
+                Thread.Sleep(2000);
+            }
             if (!Answers()) throw new EngineError("FreeHand started, but isn't answering yet. Wait a minute, then choose Open FreeHand.");
             progress(100, "FreeHand is ready.");
+        }
+
+        /// Download FreeHand's images, moving the bar from `from` to `to` and
+        /// saying how far it has got about once a minute. The engine reports
+        /// each part (layer) it downloads as a line of JSON.
+        static void Pull(Action<int, string> progress, int from, int to)
+        {
+            var meter = new PullMeter(progress, from, to, 60);
+            var o = ComposeLines("--progress json pull", 6 * 3600, meter.Feed);
+            if (o.Code != 0 && !meter.Heard)
+            {
+                // This engine can't report its progress: download without it.
+                Note("The download couldn't report its progress here (" + Last(o.Text) + "), so it carries on without.");
+                o = Beating(() => Compose("pull --quiet", 6 * 3600), 60, () => progress(meter.Shown, "Still downloading FreeHand..."));
+            }
+            Must(o, "FreeHand couldn't be downloaded. Check the internet connection, then press Install again");
+        }
+
+        /// Turns the engine's download reports into the bar and, every
+        /// `every` seconds, words. (Public so --selftest-pull can feed it
+        /// recorded reports.)
+        public class PullMeter
+        {
+            readonly Action<int, string> progress;
+            readonly int from, to;
+            readonly Pacer pace;
+            readonly Dictionary<string, long[]> layers = new Dictionary<string, long[]>();  // part -> { downloaded, size }
+            long said;
+            public int Shown;
+            public bool Heard;
+
+            public PullMeter(Action<int, string> progress, int from, int to, int every)
+            {
+                this.progress = progress; this.from = from; this.to = to; Shown = from;
+                pace = new Pacer(every);
+            }
+
+            public void Feed(string line)
+            {
+                var id = Field(line, "id");
+                var text = Field(line, "text");
+                if (id == null || text == null || id.StartsWith("Image ")) return;
+                lock (layers)
+                {
+                    Heard = true;
+                    long[] part;
+                    layers.TryGetValue(id, out part);
+                    long current, total;
+                    if (text == "Downloading" && long.TryParse(Number(line, "current"), out current) && long.TryParse(Number(line, "total"), out total) && total > 0)
+                        layers[id] = new[] { current, total };
+                    else if ((text == "Download complete" || text == "Pull complete") && part != null)
+                        part[0] = part[1];
+                    else return;
+                    long got = 0, known = 0;
+                    foreach (var v in layers.Values) { got += v[0]; known += v[1]; }
+                    long all = Math.Max(known, DownloadBytes);
+                    int pct = from + (int)((to - from) * Math.Min(1.0, got / (double)all));
+                    bool say = got > said && pace.Due();
+                    if (pct > Shown || say)
+                    {
+                        Shown = Math.Max(Shown, pct);
+                        if (say) said = got;
+                        progress(Shown, say ? "Downloaded " + Size(got) + " of about " + Size(all) + "." : null);
+                    }
+                }
+            }
+        }
+
+        static string Field(string json, string name)
+        {
+            var m = Regex.Match(json, "\"" + name + "\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+            return m.Success ? m.Groups[1].Value : null;
+        }
+
+        static string Number(string json, string name)
+        {
+            var m = Regex.Match(json, "\"" + name + "\"\\s*:\\s*(\\d+)");
+            return m.Success ? m.Groups[1].Value : "";
+        }
+
+        /// "350 MB" or "1.2 GB", with this computer's own decimal mark.
+        static string Size(long bytes)
+        {
+            return bytes < 1000000000 ? string.Format("{0:0} MB", bytes / 1e6) : string.Format("{0:0.0} GB", bytes / 1e9);
+        }
+
+        static string Last(string text)
+        {
+            text = text.Trim();
+            return text.Length > 200 ? text.Substring(text.Length - 200) : text;
+        }
+
+        /// Says something now and then while a long, silent step works.
+        class Pacer
+        {
+            readonly int seconds;
+            DateTime last = DateTime.Now;
+            public Pacer(int seconds) { this.seconds = seconds; }
+            public bool Due()
+            {
+                if ((DateTime.Now - last).TotalSeconds < seconds) return false;
+                last = DateTime.Now;
+                return true;
+            }
+        }
+
+        /// Run a long step that says nothing itself, calling `still` every
+        /// `seconds` until it finishes.
+        static Output Beating(Func<Output> work, int seconds, Action still)
+        {
+            using (var timer = new Timer(_ => { try { still(); } catch (Exception) { } }, null, seconds * 1000, seconds * 1000))
+                return work();
         }
 
         static string DownloadAlpine(CancellationToken cancel)
@@ -264,7 +401,7 @@ namespace FreeHand.Helper
         /// Start the Docker engine and keep it running while this app runs.
         /// Alpine has no service manager under WSL, so dockerd only runs
         /// while something holds it: this app does.
-        public static void StartEngine()
+        public static void StartEngine(Action<string> say = null)
         {
             if (Yes("docker info >/dev/null 2>&1", 60)) return;
             if (Yes("pgrep -x dockerd >/dev/null", 60))
@@ -278,9 +415,11 @@ namespace FreeHand.Helper
             }
             // An older computer can take a few minutes to start it the first time.
             var until = DateTime.Now.AddMinutes(4);
+            var still = new Pacer(30);
             while (DateTime.Now < until)
             {
                 Thread.Sleep(3000);
+                if (say != null && still.Due()) say("Still starting the engine. On an older computer this can take a few minutes.");
                 if (Yes("docker info >/dev/null 2>&1", 60)) return;
                 if (engine != null && engine.HasExited) break;  // it stopped by itself: waiting longer won't help
             }
@@ -302,8 +441,8 @@ namespace FreeHand.Helper
         {
             StartEngine();
             WriteSettings();  // a newer app may bring a newer compose.yml
-            progress(10, "Downloading the newest FreeHand...");
-            Must(Compose("pull --quiet", 6 * 3600), "The update couldn't be downloaded. Check the internet connection, then try again");
+            progress(10, "Downloading the newest FreeHand. Only what changed is downloaded...");
+            Pull(progress, 10, 79);
             progress(80, "Restarting FreeHand...");
             Must(Compose("up -d", 900), "FreeHand didn't restart");
             progress(100, "FreeHand is up to date.");
@@ -373,6 +512,57 @@ namespace FreeHand.Helper
                 }
                 return new Output { Code = p.ExitCode, Text = (stdout.Result + stderr.Result).Replace("\0", ""), Out = stdout.Result.Replace("\0", "") };
             }
+        }
+
+        /// Like Run, but hands over each line (of either stream) as it comes.
+        public static Output RunLines(string file, string args, int seconds, Action<string> onLine)
+        {
+            var psi = new ProcessStartInfo(file, args)
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
+            };
+            if (file == "wsl.exe") psi.EnvironmentVariables["WSL_UTF8"] = "1";
+            var all = new StringBuilder();
+            var answer = new StringBuilder();
+            using (var p = new Process { StartInfo = psi })
+            {
+                Action<string, bool> got = (data, isOut) =>
+                {
+                    if (data == null) return;
+                    var line = data.Replace("\0", "");
+                    lock (all)
+                    {
+                        all.AppendLine(line);
+                        if (isOut) answer.AppendLine(line);
+                        if (all.Length > 100000) all.Remove(0, 50000);  // only the end matters for errors
+                        if (answer.Length > 100000) answer.Remove(0, 50000);
+                    }
+                    try { onLine(line); } catch (Exception) { }
+                };
+                p.OutputDataReceived += (s, e) => got(e.Data, true);
+                p.ErrorDataReceived += (s, e) => got(e.Data, false);
+                p.Start();
+                p.BeginOutputReadLine();
+                p.BeginErrorReadLine();
+                if (!p.WaitForExit(seconds * 1000))
+                {
+                    try { p.Kill(); } catch (Exception) { }
+                    return new Output { Code = -1, Text = "It took too long." };
+                }
+                p.WaitForExit();  // the last lines
+                lock (all) return new Output { Code = p.ExitCode, Text = all.ToString(), Out = answer.ToString() };
+            }
+        }
+
+        static Output ShLines(string command, int seconds, Action<string> onLine)
+        {
+            return RunLines("wsl.exe", "-d " + Distro + " -- sh -c \"" + command.Replace("\"", "\\\"") + "\"", seconds, onLine);
+        }
+
+        static Output ComposeLines(string args, int seconds, Action<string> onLine)
+        {
+            return ShLines("cd " + AppDir + " && docker compose " + args, seconds, onLine);
         }
 
         static Output Sh(string command, int seconds)

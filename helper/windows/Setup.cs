@@ -193,7 +193,8 @@ namespace FreeHand.Helper
             var l = Screen("One thing to switch on first");
             var words = Words(l, "FreeHand runs in its own small Linux, inside Windows. Windows needs a part called WSL switched on for that, " +
                 "once.\r\n\r\nWhen you press Switch on, Windows asks \"Do you want to allow this app to make changes?\". Choose Yes. " +
-                "Then the computer needs to restart. After the restart, FreeHand carries on by itself." + notes);
+                "Then the computer needs to restart. After the restart, FreeHand carries on by itself.\r\n\r\n" +
+                "On most computers this takes a few minutes. On an older computer it can take an hour or two: Windows shows how far it has got." + notes);
             AddButton("Cancel", Close);
             AddButton("Switch on", SwitchOnWsl, true);
             words.Focus();
@@ -202,7 +203,7 @@ namespace FreeHand.Helper
         void SwitchOnWsl()
         {
             var l = Screen("Switching WSL on");
-            var words = Words(l, "Windows is switching WSL on. If it asks \"Do you want to allow this app to make changes?\", choose Yes. This takes a minute or two.");
+            var words = Words(l, "Windows is switching WSL on. If it asks \"Do you want to allow this app to make changes?\", choose Yes. This usually takes a few minutes, but on an older computer it can take an hour or two. Windows shows how far it has got in its own window.");
             words.Focus();
             Task.Run(() => Engine.EnableWsl()).ContinueWith(t =>
             {
@@ -234,8 +235,8 @@ namespace FreeHand.Helper
         void ReadyToInstall(string notes)
         {
             var l = Screen("Ready to install");
-            var words = Words(l, "FreeHand will now set itself up. It downloads about 6 GB the first time, so on a slow internet connection " +
-                "this can take an hour or more. You can use the computer while it works, and close this window: it carries on " +
+            var words = Words(l, "FreeHand will now set itself up. It downloads about 1.8 GB the first time and takes about 6 GB of space, so on a slow internet connection " +
+                "this can take an hour or more. It says how far it has got as it goes. You can use the computer while it works, and close this window: it carries on " +
                 "from where it stopped next time.\r\n\r\nFreeHand stays on this computer: only this computer can reach it." + notes);
             AddButton("Cancel", Close);
             AddButton("Install", Install, true);
@@ -258,6 +259,7 @@ namespace FreeHand.Helper
             {
                 if (IsDisposed) return;
                 bar.Value = Math.Max(0, Math.Min(100, pct));
+                if (text == null) return;  // only the bar moves
                 steps.Items.Add(pct + "%: " + text);
                 steps.SelectedIndex = steps.Items.Count - 1;  // a screen reader reads the newest step
             }, null);
