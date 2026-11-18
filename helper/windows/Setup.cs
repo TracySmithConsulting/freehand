@@ -235,7 +235,7 @@ namespace FreeHand.Helper
         void ReadyToInstall(string notes)
         {
             var l = Screen("Ready to install");
-            var words = Words(l, "FreeHand will now set itself up. It downloads about 1.8 GB the first time and takes about 6 GB of space, so on a slow internet connection " +
+            var words = Words(l, "FreeHand will now set itself up. It downloads about 1.8 GB the first time and takes about 7 GB of space, so on a slow internet connection " +
                 "this can take an hour or more. It says how far it has got as it goes. You can use the computer while it works, and close this window: it carries on " +
                 "from where it stopped next time.\r\n\r\nFreeHand stays on this computer: only this computer can reach it." + notes);
             AddButton("Cancel", Close);

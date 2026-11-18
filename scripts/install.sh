@@ -207,14 +207,20 @@ beat() {
 unbeat() { kill "$BEAT" 2>/dev/null || true; wait "$BEAT" 2>/dev/null || true; }
 
 say ""
-say "Downloading FreeHand: about 1.8 GB the first time (much less for an update), taking about 6 GB of space. On a slow connection this can take an hour or more."
+say "Downloading FreeHand: about 1.8 GB the first time (much less for an update), taking about 7 GB of space. On a slow connection this can take an hour or more."
+# Docker's own messages go to a log, not the screen: a screen reader would
+# read out every "Pulling" and "Started". If a step fails, the end of the
+# log is shown.
+LOG="$HOME_DIR/install-log.txt"
+: > "$LOG"
+show_log() { say ""; say "The last lines of $LOG:"; tail -n 15 "$LOG"; }
 beat "Still downloading..."
-if ! compose pull --quiet; then unbeat; stop "FreeHand couldn't be downloaded. Check the internet connection, then run this again."; fi
+if ! compose pull --quiet >> "$LOG" 2>&1; then unbeat; show_log; stop "FreeHand couldn't be downloaded. Check the internet connection, then run this again."; fi
 unbeat
 
 say "Starting FreeHand. The first time can take a few minutes."
 beat "Still starting..."
-if ! compose up -d; then unbeat; stop "FreeHand didn't start. 'docker compose logs' in $HOME_DIR says why."; fi
+if ! compose up -d >> "$LOG" 2>&1; then unbeat; show_log; stop "FreeHand didn't start. 'docker compose logs' in $HOME_DIR says more."; fi
 unbeat
 
 answering=""
