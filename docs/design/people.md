@@ -137,9 +137,15 @@ In a sensible order:
    (see "Families and children" below).
 8. **When someone leaves** (see below).
 
-Write the isolation tests first and let them fail: as Thandi, nothing of
-the owner's appears in chats, tasks, approvals, memories or files, also
-through the thread hops and scheduled jobs. Then build until they pass.
+The isolation tests are written first, and fail until each piece is
+built (`tests/test_people_isolation.py`, November 2026). As Thandi,
+nothing of the owner's may appear in chats, the Scheduled jobs screen,
+approvals (seeing, answering or clearing them), recalled memories, the
+Memory page or the scribble pad, also through work moved to another
+thread and through her scheduled jobs. Each is marked `NOT_BUILT`; when a
+piece is built its test passes and the marker comes off. Tests that
+Thandi still has her own chats, jobs and approvals pass already, so the
+separation can't be "built" by hiding everything from everyone.
 
 ## When someone leaves
 
