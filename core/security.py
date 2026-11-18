@@ -370,11 +370,19 @@ def _send_slack_approval(
 
 
 def get_pending_approvals() -> List[Dict]:
+    """Pending approvals the current person may see: their own, or
+    everyone's for the owner (people.approvals_scope)."""
+    from core import people
+    scope = people.approvals_scope()
     conn = _get_conn()
-    cursor = conn.execute(
-        "SELECT id, action_type, description, payload, status, created_at "
-        "FROM approvals WHERE status = 'pending' ORDER BY created_at DESC"
-    )
+    people.ensure_person_column(conn, "approvals")
+    sql = ("SELECT id, action_type, description, payload, status, created_at "
+           "FROM approvals WHERE status = 'pending'")
+    params: tuple = ()
+    if scope is not None:
+        sql += " AND person = ?"
+        params = (scope,)
+    cursor = conn.execute(sql + " ORDER BY created_at DESC", params)
     results = [dict(row) for row in cursor.fetchall()]
     conn.close()
     return results
@@ -389,11 +397,18 @@ def handle_approval(approval_id: int, action: str) -> dict:
         raise ValueError(f"Invalid action: {action}")
 
     new_status = "approved" if action == "approve" else "rejected"
+    # Only one the current person may see (people.approvals_scope);
+    # anyone else's is "not found", the same as a wrong number.
+    from core import people
+    scope = people.approvals_scope()
     conn = _get_conn()
-    cursor = conn.execute(
-        "UPDATE approvals SET status = ? WHERE id = ? AND status = 'pending'",
-        (new_status, approval_id),
-    )
+    people.ensure_person_column(conn, "approvals")
+    sql = "UPDATE approvals SET status = ? WHERE id = ? AND status = 'pending'"
+    params: tuple = (new_status, approval_id)
+    if scope is not None:
+        sql += " AND person = ?"
+        params += (scope,)
+    cursor = conn.execute(sql, params)
     conn.commit()
     affected = cursor.rowcount
     conn.close()
@@ -429,10 +444,16 @@ def clear_pending_approvals(reason: str = "") -> int:
             file=sys.stderr,
         )
 
+    # Only the ones the current person may see (people.approvals_scope).
+    from core import people
+    scope = people.approvals_scope()
     conn = _get_conn()
-    cursor = conn.execute(
-        "UPDATE approvals SET status = 'rejected' WHERE status = 'pending'"
-    )
+    people.ensure_person_column(conn, "approvals")
+    if scope is None:
+        cursor = conn.execute("UPDATE approvals SET status = 'rejected' WHERE status = 'pending'")
+    else:
+        cursor = conn.execute(
+            "UPDATE approvals SET status = 'rejected' WHERE status = 'pending' AND person = ?", (scope,))
     count = cursor.rowcount
     conn.commit()
 

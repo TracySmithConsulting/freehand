@@ -76,11 +76,28 @@ def test_thandi_still_has_her_own_chat(office):
         assert "Remind me about Friday" in _texts(conversation.history("telegram:555"))
 
 
-@NOT_BUILT
 def test_thandi_never_gets_the_owners_chat(office):
     with as_person("thandi"):
         seen = conversation.history("web:") + conversation.history("telegram:111")
     assert SECRET not in _texts(seen)
+
+
+def test_the_owner_doesnt_get_thandis_chat_either(office):
+    with as_person("thandi"):
+        conversation.add_turn("web:", "Thandi's question", "Thandi's answer", person="thandi")
+    with as_person("owner"):
+        seen = conversation.history("web:")
+    assert "Thandi's" not in _texts(seen)
+    assert SECRET in _texts(seen)  # the owner's own are still there
+
+
+def test_starting_a_fresh_chat_clears_only_your_own_turns(office):
+    with as_person("thandi"):
+        conversation.add_turn("web:", "Thandi's question", "Thandi's answer", person="thandi")
+        conversation.clear("web:")
+        assert conversation.history("web:") == []
+    with as_person("owner"):
+        assert SECRET in _texts(conversation.history("web:"))
 
 
 # ── Scheduled jobs ───────────────────────────────────────────────────
@@ -93,12 +110,36 @@ def test_thandi_still_has_her_own_jobs_and_only_hers_in_chat(office):
     assert SECRET not in _texts(listed)
 
 
-@NOT_BUILT
 def test_the_scheduled_jobs_screen_shows_thandi_only_hers(office):
     import server
     with as_person("thandi"):
         listed = asyncio.run(server.get_tasks())
     assert SECRET not in _texts(listed)
+
+
+def test_the_owners_jobs_screen_shows_only_the_owners(office):
+    import server
+    with as_person("thandi"):
+        scheduler.create_task("Water the plants", "0 9 * * *")
+    with as_person("owner"):
+        listed = asyncio.run(server.get_tasks())
+    assert SECRET in _texts(listed)
+    assert "Water the plants" not in _texts(listed)
+
+
+def test_thandi_cant_pause_or_delete_the_owners_job(office):
+    import server
+    from fastapi import HTTPException
+    with as_person("owner"):
+        owners = asyncio.run(server.get_tasks())[0]["id"]
+    with as_person("thandi"):
+        for attempt in (lambda: server.pause_task(owners, {"paused": True}), lambda: server.delete_task(owners)):
+            with pytest.raises(HTTPException) as refused:
+                asyncio.run(attempt())
+            assert refused.value.status_code == 404
+    with as_person("owner"):
+        job = [t for t in asyncio.run(server.get_tasks()) if t["id"] == owners]
+    assert job and job[0]["status"] == "pending"
 
 
 # ── Approvals ────────────────────────────────────────────────────────
@@ -110,14 +151,12 @@ def test_thandi_still_has_her_own_approvals(office):
     assert mine["approval_id"] in [a["id"] for a in pending]
 
 
-@NOT_BUILT
 def test_thandi_doesnt_see_the_owners_approvals(office):
     with as_person("thandi"):
         pending = security.get_pending_approvals()
     assert SECRET not in _texts(pending)
 
 
-@NOT_BUILT
 def test_thandi_cant_answer_the_owners_approval(office):
     with as_person("thandi"):
         try:
@@ -129,13 +168,22 @@ def test_thandi_cant_answer_the_owners_approval(office):
     assert office["approval_id"] in still
 
 
-@NOT_BUILT
 def test_thandi_clearing_her_approvals_leaves_the_owners(office):
     with as_person("thandi"):
         security.clear_pending_approvals("tidying up")
     with as_person("owner"):
         still = [a["id"] for a in security.get_pending_approvals()]
     assert office["approval_id"] in still
+
+
+def test_for_now_the_owners_console_still_answers_thandis_approvals(office):
+    """Until each person signs in to the console, it's the owner's, and a
+    risky request can only be approved there (people.approvals_scope)."""
+    with as_person("thandi"):
+        hers = security.intercept_action("send", "Email my client", {"to": "c@example.com"})["approval_id"]
+    with as_person("owner"):
+        assert hers in [a["id"] for a in security.get_pending_approvals()]
+        assert security.handle_approval(hers, "deny")["status"] == "rejected"
 
 
 # ── Memories ─────────────────────────────────────────────────────────

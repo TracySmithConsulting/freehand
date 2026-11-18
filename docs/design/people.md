@@ -126,6 +126,19 @@ In a sensible order:
 3. **Chats, tasks and approvals filtered by person.** Each person sees only
    their own. Administrators can see approvals for shared connections.
    Scheduled tasks run as the person who made them.
+
+   **Built (November 2026):**
+   - **Chats:** chat history is the person's own, even in a shared chat;
+     starting afresh clears only their turns.
+   - **Jobs:** the Scheduled jobs screen, pausing, deleting and the
+     one-time tidy show and touch only the person's own jobs. Anyone
+     else's is "not found".
+   - **Approvals:** a member sees, answers and clears only their own.
+     For now the owner still sees and answers everyone's
+     (`people.approvals_scope`). The console is the owner's until each
+     person signs in (step 1), and a risky request can only be approved
+     there, not from chat. With sign-in, this narrows to administrators
+     seeing approvals for shared connections.
 4. **Workspaces:** a scribble pad and notes folder each, plus a shared folder.
 5. **Personal and shared connections:**
    - OpenConnector connections named per person (for example `thandi-work`);

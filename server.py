@@ -865,10 +865,14 @@ def _save_setting(key: str, value) -> None:
 @app.get("/api/tasks", dependencies=[Depends(require_api_key)])
 async def get_tasks():
     from core import schedule_job, scheduler
+    from core import people
     conn = scheduler._tasks_conn()
     try:
         scheduler._ensure_deliver_column(conn)
-        tasks = [dict(row) for row in conn.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()]
+        people.ensure_person_column(conn, "tasks")
+        # Only the signed-in person's own jobs (docs/design/people.md).
+        tasks = [dict(row) for row in conn.execute(
+            "SELECT * FROM tasks WHERE person = ? ORDER BY id DESC", (people.current(),)).fetchall()]
     finally:
         conn.close()
     tz = scheduler.local_tz()
@@ -1161,12 +1165,14 @@ _TIDY_TODOS = re.compile(r"\bto-?do(?:\s+list)?\b", re.I)
 
 
 def _tidy_suggestions() -> list:
-    from core import scheduler
+    from core import people, scheduler
     conn = scheduler._tasks_conn()
     try:
         scheduler._ensure_deliver_column(conn)
+        people.ensure_person_column(conn, "tasks")
         rows = conn.execute(
-            "SELECT id, title FROM tasks WHERE status IN ('pending', 'paused') AND kind = 'think' ORDER BY id"
+            "SELECT id, title FROM tasks WHERE status IN ('pending', 'paused') AND kind = 'think' "
+            "AND person = ? ORDER BY id", (people.current(),)
         ).fetchall()
     finally:
         conn.close()
@@ -1214,8 +1220,11 @@ async def tidy_tasks(body: dict):
 
 @app.delete("/api/tasks/{task_id}", dependencies=[Depends(require_api_key)])
 async def delete_task(task_id: int):
+    from core import people
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    people.ensure_person_column(conn, "tasks")
+    # Only the signed-in person's own job; anyone else's is "not found".
+    cursor = conn.execute("DELETE FROM tasks WHERE id = ? AND person = ?", (task_id, people.current()))
     conn.commit()
     conn.close()
     if cursor.rowcount == 0:
