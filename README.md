@@ -64,17 +64,24 @@ Until it's signed, Windows may say "Windows protected your PC": choose
 **More info**, then **Run anyway**. More in the
 [FreeHand app guide](helper/windows/README.md).
 
-### One-command install
+### Linux: one line
 
-**Windows (PowerShell):**
-```powershell
-iwr https://freehand.tracysmith.co.za/install.ps1 -useb | iex
-```
-
-**macOS / Linux:**
 ```bash
-curl -fsSL https://freehand.tracysmith.co.za/install.sh | bash
+curl -fsSL https://github.com/TracySmithConsulting/freehand/releases/latest/download/install.sh | bash
 ```
+
+It sets up the same services as the Windows app, from ready-made images,
+with the free Docker engine (from your Linux's own packages, after asking).
+Then open http://localhost:8000 for the welcome setup. Running the line
+again updates FreeHand. Mac comes later.
+
+### Windows: one line (PowerShell)
+
+```powershell
+irm https://github.com/TracySmithConsulting/freehand/releases/latest/download/install.ps1 | iex
+```
+
+It downloads the FreeHand app above and opens it.
 
 ### From PyPI
 
