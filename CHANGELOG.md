@@ -5,6 +5,23 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] — 2026-11-18
+
+### Changed
+
+- **The one-line Linux install is quieter**: Docker's own messages go
+  to `install-log.txt` instead of the screen, and if something fails it
+  shows the last lines. It now says it needs about 7 GB of space.
+
+### Fixed
+
+- **Hosting clients on a Linux server**: Caddy, the front door with the
+  address and password, couldn't reach any client on a real Linux
+  server and gave an error page. Clients now join a shared network and
+  Caddy reaches them by name. Caddy has its own setup, run once per
+  server with `python3 scripts/provision_tenant.py --setup-proxy`, and
+  starting or removing a client adds or removes its site in Caddy.
+
 ## [0.1.12] — 2026-11-18
 
 ### Changed
