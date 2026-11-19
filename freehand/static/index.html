@@ -1025,6 +1025,7 @@
 
     <p id="signed-in-as" class="signed-in-as" hidden>
       Signed in as <strong id="signed-in-name"></strong>.
+      <span id="signed-in-use"></span>
       <button type="button" class="secondary" id="sign-out">Sign out</button>
     </p>
 
@@ -1508,6 +1509,12 @@
         <div class="form-group">
           <label for="person-whatsapp">Their WhatsApp number (optional)</label>
           <input type="tel" id="person-whatsapp" autocomplete="off" placeholder="+27 82 123 4567">
+        </div>
+        <div class="form-group">
+          <label for="person-ai-limit">How often they may use AI in a month (optional)</label>
+          <input type="number" id="person-ai-limit" min="0" max="100000" inputmode="numeric" aria-describedby="person-ai-limit-hint">
+          <p class="hint" id="person-ai-limit-hint">Each message FreeHand answers with AI counts once, in chats, scheduled jobs
+            and team members. Reminders don't count. Leave it empty for no limit. Over it, FreeHand tells them when it starts again.</p>
         </div>
         <p class="error" id="person-form-error" role="alert"></p>
         <button type="submit" id="person-save">Add person</button>
@@ -5571,6 +5578,12 @@
                                  body: body ? JSON.stringify(body) : undefined })
             .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
         }
+        function aiUse(p) {
+          var n = p.ai_this_month || 0;
+          var times = n === 1 ? 'once' : n + ' times';
+          if (p.ai_per_month === null || p.ai_per_month === undefined) return 'Used AI ' + times + ' this month, with no limit.';
+          return 'Used AI ' + n + ' of ' + p.ai_per_month + ' times this month.';
+        }
         function chats(p) {
           var ways = [];
           if ((p.telegram || []).length) ways.push('Telegram');
@@ -5581,6 +5594,7 @@
         function reset() {
           editing = null;
           el('person-name').value = ''; el('person-telegram').value = ''; el('person-whatsapp').value = '';
+          el('person-ai-limit').value = '';
           el('person-form-heading').textContent = 'Add a person';
           el('person-save').textContent = 'Add person';
           el('person-cancel').hidden = true;
@@ -5723,7 +5737,8 @@
           oi.className = 'task-info';
           oi.textContent = d.owner.name + ' (the owner). ' + (d.owner.code_by
             ? 'Can sign in elsewhere with a code on ' + d.owner.code_by + '.'
-            : 'Signs in on this computer. Add your Telegram under Gateways to sign in elsewhere.');
+            : 'Signs in on this computer. Add your Telegram under Gateways to sign in elsewhere.') +
+            ' Used AI ' + ((d.owner.ai_this_month || 0) === 1 ? 'once' : (d.owner.ai_this_month || 0) + ' times') + ' this month.';
           owner.appendChild(oi);
           list.appendChild(owner);
           if (!d.people.length) {
@@ -5742,7 +5757,7 @@
             title.textContent = p.name;
             var meta = document.createElement('div');
             meta.className = 'task-meta';
-            meta.textContent = chats(p);
+            meta.textContent = chats(p) + ' ' + aiUse(p);
             info.appendChild(title); info.appendChild(meta);
             row.appendChild(info);
             [['Change', 'Change ' + p.name, 'secondary', function() {
@@ -5750,6 +5765,7 @@
                 el('person-name').value = p.name;
                 el('person-telegram').value = (p.telegram || []).join(', ');
                 el('person-whatsapp').value = (p.whatsapp || []).join(', ');
+                el('person-ai-limit').value = p.ai_per_month === null || p.ai_per_month === undefined ? '' : p.ai_per_month;
                 el('person-form-heading').textContent = 'Change ' + p.name;
                 el('person-save').textContent = 'Save changes';
                 el('person-cancel').hidden = false;
@@ -5787,7 +5803,7 @@
             e.preventDefault();
             el('person-form-error').textContent = '';
             var body = { name: el('person-name').value, telegram: split(el('person-telegram').value),
-                         whatsapp: split(el('person-whatsapp').value) };
+                         whatsapp: split(el('person-whatsapp').value), ai_per_month: el('person-ai-limit').value };
             var was = editing;
             send(was ? 'PUT' : 'POST', was ? '/api/people/' + encodeURIComponent(was) : '/api/people', body)
               .then(function(d) {
@@ -5928,6 +5944,8 @@
             signedInAs = me;
             if (me && storedSession()) {
               document.getElementById('signed-in-name').textContent = me.name;
+              document.getElementById('signed-in-use').textContent = me.ai_per_month === null || me.ai_per_month === undefined
+                ? '' : 'You have used AI ' + me.ai_this_month + ' of ' + me.ai_per_month + ' times this month.';
               document.getElementById('signed-in-as').hidden = false;
             }
             if (me && !me.owner) {

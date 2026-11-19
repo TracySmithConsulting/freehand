@@ -342,22 +342,27 @@ async def me(request: Request):
     from core import people
     pid = _request_person(request)
     person = people.get(pid) or {"id": pid, "name": pid, "role": "member"}
+    from core import ai_use
     return {"id": pid, "name": person["name"], "role": person["role"],
-            "owner": pid == people.OWNER_ID, "session": bool(request.headers.get(SESSION_HEADER))}
+            "owner": pid == people.OWNER_ID, "session": bool(request.headers.get(SESSION_HEADER)),
+            "ai_this_month": ai_use.used(pid)["runs"], "ai_per_month": ai_use.limit(pid)}
 
 
 # ── The People page (owner only: not in MEMBER_ROUTES) ───────────────
 
 def _people_page() -> dict:
-    from core import leaving, newcomers, people, sessions, team
+    from core import ai_use, leaving, newcomers, people, sessions, team
     s = people._settings()
     everyone = people.list_people(s)
     owner = everyone[0]
     return {
         "owner": {"id": owner["id"], "name": owner["name"],
-                  "code_by": (sessions.CHANNEL_NAMES[d[0]] if (d := sessions.code_destination(people.OWNER_ID)) else None)},
+                  "code_by": (sessions.CHANNEL_NAMES[d[0]] if (d := sessions.code_destination(people.OWNER_ID)) else None),
+                  "ai_this_month": ai_use.used(owner["id"])["runs"]},
         "people": [{"id": p["id"], "name": p["name"], "role": p["role"],
-                    "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", [])} for p in everyone[1:]],
+                    "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", []),
+                    "ai_per_month": p.get("ai_per_month"), "ai_this_month": ai_use.used(p["id"])["runs"]}
+                   for p in everyone[1:]],
         "newcomers": newcomers.recent(),
         "unfinished": leaving.unfinished(s),
         "team_sharing_by_members": team.members_may_share(s),
@@ -372,9 +377,14 @@ async def people_list():
 @app.post("/api/people", dependencies=[Depends(require_api_key)])
 async def people_add(body: dict):
     from core import newcomers, people
+    from core import ai_use
     body = body or {}
     try:
+        cap = ai_use.parse_limit(body.get("ai_per_month"))  # a mistake adds nobody
         person = people.add_person(body.get("name"), body.get("telegram") or [], body.get("whatsapp") or [])
+        if cap is not None:
+            ai_use.set_limit(person["id"], cap)
+            person = people.get(person["id"])
     except people.PeopleError as e:
         raise HTTPException(status_code=400, detail=str(e))
     for channel in ("telegram", "whatsapp"):
@@ -387,7 +397,10 @@ async def people_add(body: dict):
 async def people_update(person_id: str, body: dict):
     from core import people
     body = body or {}
+    from core import ai_use
     try:
+        if "ai_per_month" in body and people.get(person_id) is not None:
+            ai_use.set_limit(person_id, body.get("ai_per_month"))
         person = people.update_person(person_id, body.get("name"), body.get("telegram"), body.get("whatsapp"))
     except people.PeopleError as e:
         raise HTTPException(status_code=400, detail=str(e))

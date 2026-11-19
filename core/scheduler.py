@@ -532,10 +532,16 @@ def ai_allowed(conn: sqlite3.Connection, row, now: datetime) -> Optional[str]:
     used = int(row["month_runs"] or 0) if row["usage_month"] == month else 0
     if used >= lim["per_job"]:
         return f"has used AI {lim['per_job']} times this month, which is its limit"
-    total = conn.execute("SELECT COALESCE(SUM(month_runs), 0) FROM tasks WHERE usage_month = ?",
-                         (month,)).fetchone()[0]
+    # Each person's jobs together: one person's jobs can't use up everyone's.
+    from core import ai_use, people
+    person = row["person"] if "person" in row.keys() and row["person"] else people.OWNER_ID
+    total = conn.execute("SELECT COALESCE(SUM(month_runs), 0) FROM tasks WHERE usage_month = ? AND person = ?",
+                         (month, person)).fetchone()[0]
     if total >= lim["total"]:
         return f"can't use AI: all your scheduled jobs together have used it {lim['total']} times this month, which is the limit"
+    if ai_use.refusal(person, now):
+        return (f"can't use AI: you've used FreeHand's AI {ai_use.limit(person)} times this month, "
+                f"which is the limit {people.list_people()[0]['name']} set")
     return None
 
 
@@ -806,9 +812,12 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                 # on next month (or when the limit is raised).
                 result = {"text": "", "error": None, "held": True}
                 if row["limit_told"] != _month(now):
+                    from core import people as _people
+                    change = ("To change the limit, go to Scheduled jobs, Limits on AI use."
+                              if person == _people.OWNER_ID else
+                              f"Ask {_people.list_people()[0]['name']} if you need more.")
                     result["text"] = (f"Your scheduled job \"{row['title']}\" {ai_allowed(conn, row, now)}, "
-                                      f"so it won't run again until {_next_month_name(now)}. To change the "
-                                      "limit, go to Scheduled jobs, Limits on AI use.")
+                                      f"so it won't run again until {_next_month_name(now)}. {change}")
                     conn.execute("UPDATE tasks SET limit_told = ? WHERE id = ?", (_month(now), row["id"]))
             elif row["team_member"] and _member_for(row) is None:
                 result = {"text": "", "error": "team member gone",

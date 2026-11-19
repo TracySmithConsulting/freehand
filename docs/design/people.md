@@ -280,8 +280,21 @@ In a sensible order:
    - **When someone leaves,** their team members go with their jobs:
      kept for the owner (unshared) or deleted.
 
-   Not built yet: limits set per person, such as how much AI a member
-   may use in a month.
+   **Built (November 2026): a monthly limit on AI per person**
+   (`core/ai_use.py`). On the People page the owner sets how often each
+   member may use AI in a month. Empty means no limit, and the owner has
+   none.
+   - **One use** is one message FreeHand answered with AI: in a chat, a
+     scheduled job, or through a team member, however many steps it
+     took. Reminders and lists don't count.
+   - **Over the limit,** FreeHand answers without calling the AI and
+     says when it starts again. Their scheduled jobs wait, and say so
+     once.
+   - **Everyone's use this month** shows on the People page, and a member
+     sees their own next to their name.
+   - **The "all jobs together" limit** under Scheduled jobs now counts
+     each person's jobs on their own, so one person's jobs can't use up
+     everyone's.
 7. **Families:** the child role, parents' approvals, limits and oversight
    (see "Families and children" below).
 8. **When someone leaves** (see below).
