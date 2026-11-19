@@ -311,6 +311,31 @@ In a sensible order:
      everyone's.
 7. **Families:** the child role, parents' approvals, limits and oversight
    (see "Families and children" below).
+
+   **Built (November 2026): the hard limits** (`core/children.py`). On the
+   People page, "They are: a child" with their parents (the owner and/or
+   members), age, quiet hours and messages a day. Adding a child needs a
+   parent's tick, after FreeHand explains the AI service's minimum age
+   and POPIA.
+   - **Anything that reaches outside waits for a parent:** every step
+     that isn't reading, or writing a document in their own folder, at
+     any permission level. The child can cancel it, never approve it. A
+     parent sees it under Approvals, with a note on their console; an
+     unanswered one is never done. The family's accounts are refused
+     outright (they aren't the child's).
+   - **Quiet hours** (crossing midnight, in the child's time zone) and **a
+     daily message limit**, scheduled jobs included. Over them, FreeHand
+     says when it starts again, without calling the AI.
+   - **Guidance for their age** in the AI's instructions: help them think
+     rather than hand over homework answers, never ask for personal
+     details, and if they're in danger, answer kindly, point them to a
+     trusted adult and Childline (116).
+   - **The child is told honestly** what their parents can see, next to
+     their name: what FreeHand would send or do for them, not their chats.
+
+   Not built yet, and the parents' choice: reading the child's chats,
+   weekly summaries, alerts to a parent, approving from a parent's phone,
+   and a daily spending cap.
 8. **When someone leaves** (see below).
 
    **Built (November 2026)** (`core/leaving.py`). Remove on the People

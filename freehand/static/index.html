@@ -1026,6 +1026,7 @@
     <p id="signed-in-as" class="signed-in-as" hidden>
       Signed in as <strong id="signed-in-name"></strong>.
       <span id="signed-in-use"></span>
+      <span id="signed-in-child"></span>
       <button type="button" class="secondary" id="sign-out">Sign out</button>
     </p>
 
@@ -1510,6 +1511,46 @@
           <label for="person-whatsapp">Their WhatsApp number (optional)</label>
           <input type="tel" id="person-whatsapp" autocomplete="off" placeholder="+27 82 123 4567">
         </div>
+        <div class="form-group">
+          <label for="person-role">They are</label>
+          <select id="person-role">
+            <option value="member">Someone in the office or family</option>
+            <option value="child">A child (with a parent's limits)</option>
+          </select>
+        </div>
+        <fieldset id="person-child" hidden>
+          <legend>Limits for a child</legend>
+          <p class="hint">Anything FreeHand would send, post, book or do outside for them waits for a parent's yes,
+            whatever FreeHand's permission level. They can't approve it themselves. Parents approve it under Approvals.</p>
+          <div id="person-parents"></div>
+          <div class="form-group">
+            <label for="person-age">Their age</label>
+            <select id="person-age">
+              <option value="under_13">Under 13</option>
+              <option value="13_to_15">13 to 15</option>
+              <option value="16_to_17">16 or 17</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="person-quiet-from">Quiet hours start (optional)</label>
+            <input type="time" id="person-quiet-from">
+          </div>
+          <div class="form-group">
+            <label for="person-quiet-to">Quiet hours end</label>
+            <input type="time" id="person-quiet-to">
+          </div>
+          <div class="form-group">
+            <label for="person-daily">Messages a day</label>
+            <input type="number" id="person-daily" min="1" max="1000" value="50">
+          </div>
+          <div id="person-child-consent">
+            <p class="hint">Before you add a child: many AI services only allow people from 13, or 18, in their terms,
+              so check your AI service allows children. And a child's personal information has extra protection by law
+              (POPIA in South Africa): a parent or guardian must agree. FreeHand helps them think rather than handing over
+              homework answers, and keeps to topics for their age, but AI can be talked round, which is why the limits above come first.</p>
+            <label><input type="checkbox" id="person-consent"> I'm their parent or guardian, and I've read this</label>
+          </div>
+        </fieldset>
         <div class="form-group">
           <label for="person-ai-limit">How often they may use AI in a month (optional)</label>
           <input type="number" id="person-ai-limit" min="0" max="100000" inputmode="numeric" aria-describedby="person-ai-limit-hint">
@@ -5606,6 +5647,39 @@
                                  body: body ? JSON.stringify(body) : undefined })
             .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
         }
+        var everyone = [];
+        function nameOf(id) { var f = everyone.filter(function(x) { return x.id === id; })[0]; return f ? f.name : id; }
+        function childLine(p) {
+          var c = p.child;
+          return 'A child. Parents: ' + c.parents.map(nameOf).join(' and ') + '.' +
+            (c.quiet_hours ? ' Quiet ' + c.quiet_hours.from + ' to ' + c.quiet_hours.to + '.' : '') +
+            ' ' + c.messages_today + ' of ' + c.daily_messages + ' messages today.';
+        }
+        function fillChild(c) {
+          el('person-role').value = c ? 'child' : 'member';
+          el('person-child').hidden = !c;
+          el('person-consent').checked = false;
+          el('person-child-consent').hidden = !!(c && editing);  // asked once, when someone becomes a child
+          el('person-age').value = (c && c.age_band) || 'under_13';
+          el('person-quiet-from').value = (c && c.quiet_hours && c.quiet_hours.from) || '';
+          el('person-quiet-to').value = (c && c.quiet_hours && c.quiet_hours.to) || '';
+          el('person-daily').value = (c && c.daily_messages) || 50;
+          var box = el('person-parents');
+          box.textContent = '';
+          var legend = document.createElement('p');
+          legend.textContent = 'Their parents (they approve what the child asks for):';
+          box.appendChild && box.appendChild(legend);
+          everyone.filter(function(x) { return !x.child && x.id !== editing; }).forEach(function(x) {
+            var label = document.createElement('label');
+            var input = document.createElement('input');
+            input.type = 'checkbox';
+            input.value = x.id;
+            input.checked = c ? c.parents.indexOf(x.id) !== -1 : x.id === 'owner';
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(' ' + x.name));
+            box.appendChild && box.appendChild(label);
+          });
+        }
         function aiUse(p) {
           var n = p.ai_this_month || 0;
           var times = n === 1 ? 'once' : n + ' times';
@@ -5623,6 +5697,7 @@
           editing = null;
           el('person-name').value = ''; el('person-telegram').value = ''; el('person-whatsapp').value = '';
           el('person-ai-limit').value = '';
+          fillChild(null);
           el('person-form-heading').textContent = 'Add a person';
           el('person-save').textContent = 'Add person';
           el('person-cancel').hidden = true;
@@ -5754,6 +5829,7 @@
           });
         }
         function render(d) {
+          everyone = [{ id: 'owner', name: d.owner.name }].concat(d.people || []);
           renderNewcomers(d.newcomers || []);
           renderUnfinished(d.unfinished || []);
           el('people-team-sharing').checked = !!d.team_sharing_by_members;
@@ -5785,7 +5861,7 @@
             title.textContent = p.name;
             var meta = document.createElement('div');
             meta.className = 'task-meta';
-            meta.textContent = chats(p) + ' ' + aiUse(p) +
+            meta.textContent = (p.child ? childLine(p) + ' ' : '') + chats(p) + ' ' + aiUse(p) +
               (p.timezone ? ' Time zone: ' + p.timezone.replace(/_/g, ' ') + '.' : '');
             info.appendChild(title); info.appendChild(meta);
             row.appendChild(info);
@@ -5795,6 +5871,7 @@
                 el('person-telegram').value = (p.telegram || []).join(', ');
                 el('person-whatsapp').value = (p.whatsapp || []).join(', ');
                 el('person-ai-limit').value = p.ai_per_month === null || p.ai_per_month === undefined ? '' : p.ai_per_month;
+                fillChild(p.child || null);
                 el('person-form-heading').textContent = 'Change ' + p.name;
                 el('person-save').textContent = 'Save changes';
                 el('person-cancel').hidden = false;
@@ -5832,7 +5909,16 @@
             e.preventDefault();
             el('person-form-error').textContent = '';
             var body = { name: el('person-name').value, telegram: split(el('person-telegram').value),
-                         whatsapp: split(el('person-whatsapp').value), ai_per_month: el('person-ai-limit').value };
+                         whatsapp: split(el('person-whatsapp').value), ai_per_month: el('person-ai-limit').value,
+                         role: el('person-role').value };
+            if (body.role === 'child') {
+              body.parents = [].map.call(document.querySelectorAll('#person-parents input:checked'), function(c) { return c.value; });
+              body.age_band = el('person-age').value;
+              body.quiet_from = el('person-quiet-from').value;
+              body.quiet_to = el('person-quiet-to').value;
+              body.daily_messages = el('person-daily').value;
+              body.consent = !!el('person-consent').checked;
+            }
             var was = editing;
             send(was ? 'PUT' : 'POST', was ? '/api/people/' + encodeURIComponent(was) : '/api/people', body)
               .then(function(d) {
@@ -5843,6 +5929,12 @@
               .catch(function(err) { el('person-form-error').textContent = err.message; el('person-name').focus(); });
           });
           el('person-cancel').onclick = reset;
+          el('person-role').onchange = function() {
+            var child = el('person-role').value === 'child';
+            el('person-child').hidden = !child;
+            if (child && !document.querySelector('#person-parents input')) fillChild({ parents: ['owner'] });
+            if (child) { el('person-role').value = 'child'; el('person-child').hidden = false; el('person-child-consent').hidden = false; }
+          };
           el('people-team-sharing').onchange = function() {
             var on = el('people-team-sharing').checked;
             send('POST', '/api/people/team-sharing', { allowed: on }).then(function(d) {
@@ -5975,6 +6067,8 @@
               document.getElementById('signed-in-name').textContent = me.name;
               document.getElementById('signed-in-use').textContent = me.ai_per_month === null || me.ai_per_month === undefined
                 ? '' : 'You have used AI ' + me.ai_this_month + ' of ' + me.ai_per_month + ' times this month.';
+              // A child is told honestly what their parents can see (core/children.py).
+              document.getElementById('signed-in-child').textContent = me.child ? me.what_parents_see : '';
               document.getElementById('signed-in-as').hidden = false;
             }
             if (me && !me.owner) {

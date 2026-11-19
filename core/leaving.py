@@ -273,8 +273,9 @@ async def remove(person_id: str, keep_files: bool = True, keep_jobs: bool = True
     _delete_rows("approvals", person_id)
     _delete_rows("conversation_turns", person_id)
     _delete_rows("notices", person_id)
-    from core import ai_use
+    from core import ai_use, children
     ai_use.forget(person_id)
+    children.forget(person_id)
 
     folder = _handle_files(person_id, name, keep_files)
     if folder:

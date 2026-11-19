@@ -34,7 +34,7 @@ OWNER_ID = "owner"
 # settings file can't make another. An unknown role (a typo, or a role
 # from a newer FreeHand) doesn't get in at all, rather than getting a
 # member's rights: when the child role comes, "chlid" must not be a member.
-ROLES = ("member",)
+ROLES = ("member", "child")  # a child: core/children.py
 CHANNELS = ("telegram", "whatsapp", "slack")
 PERSON_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
@@ -173,16 +173,20 @@ def reset(token) -> None:
         pass
 
 
-def approvals_scope(person_id: Optional[str] = None) -> Optional[str]:
+def approvals_scope(person_id: Optional[str] = None) -> Optional[tuple]:
     """Whose approvals this person sees and answers in the console: their
-    own (the person id), or everyone's (None) for the owner.
+    own and their children's (a tuple of person ids, core/children.py), or
+    everyone's (None) for the owner.
 
     The owner sees everyone's for now because the console is theirs: a
     member can't sign in to it yet, and a risky request can only be
     approved there, not from chat. Once each person signs in, this narrows
     to "administrators see shared connections" (docs/design/people.md)."""
     person_id = person_id or current()
-    return None if person_id == OWNER_ID else person_id
+    if person_id == OWNER_ID:
+        return None
+    from core import children
+    return (person_id, *children.children_of(person_id))
 
 
 # Each person's own files (scribble pad, Threads, Journal) live in the

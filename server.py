@@ -342,16 +342,18 @@ async def me(request: Request):
     from core import people
     pid = _request_person(request)
     person = people.get(pid) or {"id": pid, "name": pid, "role": "member"}
-    from core import ai_use
+    from core import ai_use, children
+    child = children.is_child(pid)
     return {"id": pid, "name": person["name"], "role": person["role"],
             "owner": pid == people.OWNER_ID, "session": bool(request.headers.get(SESSION_HEADER)),
-            "ai_this_month": ai_use.used(pid)["runs"], "ai_per_month": ai_use.limit(pid)}
+            "ai_this_month": ai_use.used(pid)["runs"], "ai_per_month": ai_use.limit(pid),
+            "child": child, "what_parents_see": children.what_parents_see(pid) if child else ""}
 
 
 # ── The People page (owner only: not in MEMBER_ROUTES) ───────────────
 
 def _people_page() -> dict:
-    from core import ai_use, leaving, newcomers, people, sessions, team
+    from core import ai_use, children, leaving, newcomers, people, sessions, team
     s = people._settings()
     everyone = people.list_people(s)
     owner = everyone[0]
@@ -362,12 +364,26 @@ def _people_page() -> dict:
         "people": [{"id": p["id"], "name": p["name"], "role": p["role"],
                     "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", []),
                     "ai_per_month": p.get("ai_per_month"), "ai_this_month": ai_use.used(p["id"])["runs"],
-                    "timezone": people.timezone_of(p["id"], s)}
+                    "timezone": people.timezone_of(p["id"], s),
+                    **({"child": {**children.rules(p["id"], s), "messages_today": children.messages_today(p["id"])}}
+                       if p["role"] == children.ROLE else {})}
                    for p in everyone[1:]],
         "newcomers": newcomers.recent(),
         "unfinished": leaving.unfinished(s),
         "team_sharing_by_members": team.members_may_share(s),
     }
+
+
+def _child_rules(body: dict, person_id: str = "", already: bool = False):
+    """A child's rules from the People page, checked; None for a member.
+    Making someone a child needs the parent's consent ticked."""
+    from core import children
+    if body.get("role") != children.ROLE:
+        return None
+    if not already and body.get("consent") is not True:
+        raise children.ChildError(
+            "Tick that you're their parent or guardian, and that you've read what FreeHand says about children.")
+    return children.clean_rules(body, person_id)
 
 
 @app.get("/api/people", dependencies=[Depends(require_api_key)])
@@ -378,15 +394,18 @@ async def people_list():
 @app.post("/api/people", dependencies=[Depends(require_api_key)])
 async def people_add(body: dict):
     from core import newcomers, people
-    from core import ai_use
+    from core import ai_use, children
     body = body or {}
     try:
         cap = ai_use.parse_limit(body.get("ai_per_month"))  # a mistake adds nobody
+        child = _child_rules(body)
         person = people.add_person(body.get("name"), body.get("telegram") or [], body.get("whatsapp") or [])
         if cap is not None:
             ai_use.set_limit(person["id"], cap)
-            person = people.get(person["id"])
-    except people.PeopleError as e:
+        if child:
+            children.save_rules(person["id"], child)
+        person = people.get(person["id"])
+    except (people.PeopleError, children.ChildError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     for channel in ("telegram", "whatsapp"):
         for value in person.get(channel, []):
@@ -398,12 +417,19 @@ async def people_add(body: dict):
 async def people_update(person_id: str, body: dict):
     from core import people
     body = body or {}
-    from core import ai_use
+    from core import ai_use, children
     try:
-        if "ai_per_month" in body and people.get(person_id) is not None:
+        known = people.get(person_id)
+        child = _child_rules(body, person_id, known["role"] == children.ROLE if known else False)
+        if "ai_per_month" in body and known is not None:
             ai_use.set_limit(person_id, body.get("ai_per_month"))
         person = people.update_person(person_id, body.get("name"), body.get("telegram"), body.get("whatsapp"))
-    except people.PeopleError as e:
+        if child:
+            children.save_rules(person_id, child)
+        elif body.get("role") == "member" and known and known["role"] == children.ROLE:
+            children.make_member(person_id)
+        person = people.get(person_id)
+    except (people.PeopleError, children.ChildError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"person": person, **_people_page()}
 
