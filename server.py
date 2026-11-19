@@ -212,6 +212,9 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/memory/search"), ("GET", "/api/memory/files"), ("GET", "/api/memory/file"),
     ("POST", "/api/memory/sync"),
     ("GET", "/api/scribble"), ("POST", "/api/scribble"), ("POST", "/api/sweep"),
+    # Their own team members, and the ones shared with them (core/team.py).
+    ("GET", "/api/team"), ("POST", "/api/team"), ("PUT", "/api/team/{member_id}"),
+    ("POST", "/api/team/{member_id}/pause"), ("DELETE", "/api/team/{member_id}"),
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
@@ -346,7 +349,7 @@ async def me(request: Request):
 # ── The People page (owner only: not in MEMBER_ROUTES) ───────────────
 
 def _people_page() -> dict:
-    from core import leaving, newcomers, people, sessions
+    from core import leaving, newcomers, people, sessions, team
     s = people._settings()
     everyone = people.list_people(s)
     owner = everyone[0]
@@ -357,6 +360,7 @@ def _people_page() -> dict:
                     "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", [])} for p in everyone[1:]],
         "newcomers": newcomers.recent(),
         "unfinished": leaving.unfinished(s),
+        "team_sharing_by_members": team.members_may_share(s),
     }
 
 
@@ -421,6 +425,17 @@ async def people_remove(person_id: str, body: Optional[dict] = None):
     except people.PeopleError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {**result, **_people_page()}
+
+
+@app.post("/api/people/team-sharing", dependencies=[Depends(require_api_key)])
+async def people_team_sharing(body: dict):
+    """The owner lets members share their team members, or stops it.
+    Stopping it hides members' shares at once; the owner's stay."""
+    from core import agent_config, team
+    s = agent_config._load_settings()
+    s[team.MEMBERS_MAY_SHARE] = bool((body or {}).get("allowed"))
+    agent_config._save_settings(s)
+    return _people_page()
 
 
 @app.post("/api/people/{person_id}/finish", dependencies=[Depends(require_api_key)])
@@ -1215,10 +1230,12 @@ async def create_task(body: dict):
 # ── Team members (core/team.py) ───────────────────────────────────────
 
 def _team_view(member: dict) -> dict:
-    from core import team
+    from core import people, team
     used = team.usage(member)
+    holder = people.get(team.maker(member))
     return {**member, "used_this_month": used["runs"], "tokens_this_month": used["tokens"],
-            "recent": team.recent(member, 5)}
+            "recent": team.recent(member, 5), "mine": team.mine(member),
+            "maker_name": holder["name"] if holder else ""}
 
 
 @app.get("/api/team", dependencies=[Depends(require_api_key)])
@@ -1230,9 +1247,15 @@ async def get_team():
     tools = [{"value": key, "label": c["label"],
               "can_act": [t for t in c["tools"] if get_tool_permission(t) == "write"]}
              for key, c in team.TOOL_CHOICES.items()]
-    return {"members": [_team_view(m) for m in team.all_members()],
+    from core import people
+    # Who a team member can be shared with: everyone else on this FreeHand,
+    # if this person may share (the owner always; members if allowed).
+    others = ([{"id": p["id"], "name": p["name"]} for p in people.list_people() if p["id"] != people.current()]
+              if team.may_share() else [])
+    return {"members": [_team_view(m) for m in team.members()],
             "templates": [{"value": k, **v} for k, v in team.TEMPLATES.items()],
-            "tools": tools, "models": team.model_choices()}
+            "tools": tools, "models": team.model_choices(),
+            "may_share": team.may_share(), "share_with": others}
 
 
 @app.post("/api/team", dependencies=[Depends(require_api_key)])
@@ -1247,10 +1270,13 @@ async def add_team_member(body: dict):
 @app.put("/api/team/{member_id}", dependencies=[Depends(require_api_key)])
 async def change_team_member(member_id: str, body: dict):
     from core import team
+    member = team.get(member_id)
+    if member and not team.mine(member):
+        raise HTTPException(status_code=403, detail=team.not_yours(member))
     try:
         return _team_view(team.save(body, member_id))
     except team.TeamError as e:
-        raise HTTPException(status_code=400 if team.get(member_id) else 404, detail=str(e))
+        raise HTTPException(status_code=400 if member else 404, detail=str(e))
 
 
 @app.post("/api/team/{member_id}/pause", dependencies=[Depends(require_api_key)])
@@ -1259,12 +1285,17 @@ async def pause_team_member(member_id: str, body: dict):
     member = team.get(member_id)
     if not member:
         raise HTTPException(status_code=404, detail="That team member doesn't exist.")
+    if not team.mine(member):
+        raise HTTPException(status_code=403, detail=team.not_yours(member))
     return _team_view(team.save({**member, "paused": bool(body.get("paused", True))}, member_id))
 
 
 @app.delete("/api/team/{member_id}", dependencies=[Depends(require_api_key)])
 async def delete_team_member(member_id: str):
     from core import team
+    member = team.get(member_id)
+    if member and not team.mine(member):
+        raise HTTPException(status_code=403, detail=team.not_yours(member))
     if not team.delete(member_id):
         raise HTTPException(status_code=404, detail="That team member doesn't exist.")
     return {"status": "deleted"}

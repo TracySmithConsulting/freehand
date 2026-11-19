@@ -265,6 +265,21 @@ In a sensible order:
      access. The member can't approve it, in the console or from chat,
      but can cancel it. Reading a shared account needs nobody.
 
+   **Built (November 2026): team members per person, and sharing them**
+   (`core/team.py`). Each team member is its maker's; ones from before
+   are the owner's. Members have the Team page for their own.
+   - **Sharing:** with everyone, or with named people. The owner always
+     can; members only if the owner switches it on under People.
+     Switched off, members' shares stop at once.
+   - **Only the maker** changes, pauses or deletes one.
+   - **Someone using a shared team member uses it as themselves:** their
+     own accounts, memories and chat. The log shows each person only
+     their own requests. The monthly limit is for everyone together.
+   - **Names** only need to be unique among the team members a person
+     can use, so two people can each have their own "Writer".
+   - **When someone leaves,** their team members go with their jobs:
+     kept for the owner (unshared) or deleted.
+
    Not built yet: limits set per person, such as how much AI a member
    may use in a month.
 7. **Families:** the child role, parents' approvals, limits and oversight

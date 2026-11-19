@@ -623,7 +623,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     # The main FreeHand can hand work to a team member (core/team.py). Team
     # members can't, so it only ever goes one level down.
     from core import team as _team
-    ask_team = None if (member or job) else _team.ask_schema(_team.all_members())
+    ask_team = None if (member or job) else _team.ask_schema(_team.members())
     if ask_team:
         tools.append(ask_team)
     # Reminders and scheduled jobs, when the message is about a time. Not
