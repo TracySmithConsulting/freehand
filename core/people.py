@@ -294,6 +294,18 @@ def _new_id(name: str, s: dict) -> str:
     if not re.match(r"^[a-z0-9]", base):
         base = "person"
     taken = {p["id"] for p in list_people(s)} | {str(p.get("id", "")) for p in s.get("people") or [] if isinstance(p, dict)}
+    # Never someone else's old id, so a newcomer can't inherit anything of
+    # theirs: the people who left (core/leaving.py), and any folder still
+    # under people/ (someone removed before FreeHand cleared up after them).
+    from core import leaving
+    taken |= leaving.former_ids(s)
+    try:
+        from core import scheduler
+        folder = scheduler.VAULT_DIR / WORKSPACES_DIR
+        if folder.is_dir():
+            taken |= {p.name for p in folder.iterdir()}
+    except OSError:
+        pass
     pid, n = base, 2
     while pid in taken or pid == OWNER_ID:
         pid, n = f"{base}-{n}", n + 1
@@ -343,10 +355,10 @@ def update_person(person_id: str, name=None, telegram=None, whatsapp=None) -> di
 
 
 def remove_person(person_id: str) -> None:
-    """Take someone off this FreeHand. Their chat links and sign-in stop
-    working at once, and they're signed out everywhere. What they made
-    (chats, jobs, memories, notes) stays for now; their jobs don't run
-    (docs/design/people.md, "When someone leaves")."""
+    """Take someone off this FreeHand's list. Their chat links and sign-in
+    stop working at once, and they're signed out everywhere. This is the
+    first step of core/leaving.py's remove(), which then keeps or deletes
+    what they made."""
     from core import agent_config, sessions
     if person_id == OWNER_ID:
         raise PeopleError("The owner can't be removed.")

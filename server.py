@@ -346,7 +346,7 @@ async def me(request: Request):
 # ── The People page (owner only: not in MEMBER_ROUTES) ───────────────
 
 def _people_page() -> dict:
-    from core import newcomers, people, sessions
+    from core import leaving, newcomers, people, sessions
     s = people._settings()
     everyone = people.list_people(s)
     owner = everyone[0]
@@ -356,6 +356,7 @@ def _people_page() -> dict:
         "people": [{"id": p["id"], "name": p["name"], "role": p["role"],
                     "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", [])} for p in everyone[1:]],
         "newcomers": newcomers.recent(),
+        "unfinished": leaving.unfinished(s),
     }
 
 
@@ -389,14 +390,48 @@ async def people_update(person_id: str, body: dict):
     return {"person": person, **_people_page()}
 
 
+@app.get("/api/people/{person_id}/leaving", dependencies=[Depends(require_api_key)])
+async def people_leaving(person_id: str):
+    """What someone has, before the owner decides what to keep."""
+    import asyncio
+    from core import leaving, people
+    person = people.get(person_id)
+    if person is None or person_id == people.OWNER_ID:
+        raise HTTPException(status_code=404, detail="There's nobody with that id on this FreeHand.")
+    return {"name": person["name"], **(await asyncio.to_thread(leaving.what_they_have, person_id))}
+
+
 @app.delete("/api/people/{person_id}", dependencies=[Depends(require_api_key)])
-async def people_remove(person_id: str):
-    from core import people
+async def people_remove(person_id: str, body: Optional[dict] = None):
+    """Remove someone, and keep or delete their things (core/leaving.py).
+    Without choices: notes and jobs kept, memories deleted, their
+    accounts disconnected."""
+    from core import leaving, people
+    body = body or {}
+
+    def choice(name, default):
+        value = body.get(name, default)
+        return value if isinstance(value, bool) else default
     try:
-        people.remove_person(person_id)
+        result = await leaving.remove(person_id,
+                                      keep_files=choice("keep_files", True),
+                                      keep_jobs=choice("keep_jobs", True),
+                                      keep_memories=choice("keep_memories", False),
+                                      disconnect_accounts=choice("disconnect_accounts", True))
     except people.PeopleError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return _people_page()
+    return {**result, **_people_page()}
+
+
+@app.post("/api/people/{person_id}/finish", dependencies=[Depends(require_api_key)])
+async def people_finish(person_id: str):
+    """Try a leaver's memories again, after memory couldn't be reached."""
+    from core import leaving, people
+    try:
+        result = await leaving.finish(person_id)
+    except people.PeopleError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {**result, **_people_page()}
 
 
 @app.post("/api/accounts/whose", dependencies=[Depends(require_api_key)])
