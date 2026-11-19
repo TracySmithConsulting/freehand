@@ -246,3 +246,115 @@ def ensure_person_column(conn: sqlite3.Connection, table: str) -> None:
             _checked.add(key)
     except sqlite3.Error:
         pass
+
+
+# ── Adding, changing and removing people (the People page) ───────────
+
+class PeopleError(ValueError):
+    """Something the owner can fix, in words they can read."""
+
+
+def link_owner(channel: str, value, settings: Optional[dict] = None) -> Optional[str]:
+    """Who this chat link already belongs to, if anyone."""
+    s = settings if settings is not None else _settings()
+    who = identity(channel, value)
+    if not who:
+        return None
+    if who in _legacy_allow(channel, s):
+        return OWNER_ID
+    for p in list_people(s)[1:]:
+        if who in (identity(channel, x) for x in p.get(channel, [])):
+            return p["id"]
+    return None
+
+
+def _clean_links(channel: str, values, person_id: Optional[str], s: dict) -> list[str]:
+    out = []
+    for raw in values or []:
+        value = str(raw or "").strip()
+        if not value:
+            continue
+        who = identity(channel, value)
+        if channel == "telegram" and not who.isdigit():
+            raise PeopleError("A Telegram chat ID is a number, like 123456789. "
+                              "A group's starts with a minus, and a group can't be someone's own chat.")
+        if channel == "whatsapp" and not (len(who) >= 7 and who.isdigit()) and not who.endswith("@lid"):
+            raise PeopleError("A WhatsApp number needs the country code, like +27 82 123 4567.")
+        holder = link_owner(channel, value, s)
+        if holder and holder != person_id:
+            name = (get(holder, s) or {}).get("name", holder)
+            raise PeopleError(f"That {channel.capitalize()} is already {name}'s. A chat can be only one person's.")
+        if who not in (identity(channel, v) for v in out):
+            out.append(value)
+    return out
+
+
+def _new_id(name: str, s: dict) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:24] or "person"
+    if not re.match(r"^[a-z0-9]", base):
+        base = "person"
+    taken = {p["id"] for p in list_people(s)} | {str(p.get("id", "")) for p in s.get("people") or [] if isinstance(p, dict)}
+    pid, n = base, 2
+    while pid in taken or pid == OWNER_ID:
+        pid, n = f"{base}-{n}", n + 1
+    return pid
+
+
+def _clean_name(name) -> str:
+    name = " ".join(str(name or "").split())
+    if not name:
+        raise PeopleError("Give the person a name.")
+    return name[:60]
+
+
+def add_person(name, telegram=None, whatsapp=None) -> dict:
+    """Add a member. Returns them as list_people shows them."""
+    from core import agent_config
+    s = agent_config._load_settings()
+    name = _clean_name(name)
+    pid = _new_id(name, s)
+    entry = {"id": pid, "name": name, "role": "member",
+             "telegram": _clean_links("telegram", telegram, pid, s),
+             "whatsapp": _clean_links("whatsapp", whatsapp, pid, s)}
+    s["people"] = list(s.get("people") or []) + [entry]
+    agent_config._save_settings(s)
+    return get(pid, s)
+
+
+def update_person(person_id: str, name=None, telegram=None, whatsapp=None) -> dict:
+    """Change a member's name or chat links. Other fields are kept."""
+    from core import agent_config
+    s = agent_config._load_settings()
+    entries = list(s.get("people") or [])
+    for i, p in enumerate(entries):
+        if isinstance(p, dict) and str(p.get("id", "")).strip().lower() == person_id and person_id != OWNER_ID:
+            p = dict(p)
+            if name is not None:
+                p["name"] = _clean_name(name)
+            if telegram is not None:
+                p["telegram"] = _clean_links("telegram", telegram, person_id, s)
+            if whatsapp is not None:
+                p["whatsapp"] = _clean_links("whatsapp", whatsapp, person_id, s)
+            entries[i] = p
+            s["people"] = entries
+            agent_config._save_settings(s)
+            return get(person_id, s)
+    raise PeopleError("There's nobody with that id on this FreeHand.")
+
+
+def remove_person(person_id: str) -> None:
+    """Take someone off this FreeHand. Their chat links and sign-in stop
+    working at once, and they're signed out everywhere. What they made
+    (chats, jobs, memories, notes) stays for now; their jobs don't run
+    (docs/design/people.md, "When someone leaves")."""
+    from core import agent_config, sessions
+    if person_id == OWNER_ID:
+        raise PeopleError("The owner can't be removed.")
+    s = agent_config._load_settings()
+    entries = list(s.get("people") or [])
+    kept = [p for p in entries if not (isinstance(p, dict) and str(p.get("id", "")).strip().lower() == person_id)]
+    if len(kept) == len(entries):
+        raise PeopleError("There's nobody with that id on this FreeHand.")
+    s["people"] = kept
+    agent_config._save_settings(s)
+    sessions.end_all(person_id)

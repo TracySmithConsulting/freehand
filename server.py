@@ -343,6 +343,62 @@ async def me(request: Request):
             "owner": pid == people.OWNER_ID, "session": bool(request.headers.get(SESSION_HEADER))}
 
 
+# ── The People page (owner only: not in MEMBER_ROUTES) ───────────────
+
+def _people_page() -> dict:
+    from core import newcomers, people, sessions
+    s = people._settings()
+    everyone = people.list_people(s)
+    owner = everyone[0]
+    return {
+        "owner": {"id": owner["id"], "name": owner["name"],
+                  "code_by": (sessions.CHANNEL_NAMES[d[0]] if (d := sessions.code_destination(people.OWNER_ID)) else None)},
+        "people": [{"id": p["id"], "name": p["name"], "role": p["role"],
+                    "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", [])} for p in everyone[1:]],
+        "newcomers": newcomers.recent(),
+    }
+
+
+@app.get("/api/people", dependencies=[Depends(require_api_key)])
+async def people_list():
+    return _people_page()
+
+
+@app.post("/api/people", dependencies=[Depends(require_api_key)])
+async def people_add(body: dict):
+    from core import newcomers, people
+    body = body or {}
+    try:
+        person = people.add_person(body.get("name"), body.get("telegram") or [], body.get("whatsapp") or [])
+    except people.PeopleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    for channel in ("telegram", "whatsapp"):
+        for value in person.get(channel, []):
+            newcomers.forget(channel, people.identity(channel, value))
+    return {"person": person, **_people_page()}
+
+
+@app.put("/api/people/{person_id}", dependencies=[Depends(require_api_key)])
+async def people_update(person_id: str, body: dict):
+    from core import people
+    body = body or {}
+    try:
+        person = people.update_person(person_id, body.get("name"), body.get("telegram"), body.get("whatsapp"))
+    except people.PeopleError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"person": person, **_people_page()}
+
+
+@app.delete("/api/people/{person_id}", dependencies=[Depends(require_api_key)])
+async def people_remove(person_id: str):
+    from core import people
+    try:
+        people.remove_person(person_id)
+    except people.PeopleError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _people_page()
+
+
 @app.post("/api/people/{person_id}/sign-in-link", dependencies=[Depends(require_api_key)])
 async def people_sign_in_link(person_id: str):
     """The owner makes a one-time sign-in link for someone."""

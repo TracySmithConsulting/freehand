@@ -986,6 +986,7 @@
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Scheduled jobs</a></li>
           <li data-owner-only><a href="#team">Team</a></li>
+          <li data-advanced data-owner-only><a href="#people">People</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
         <li data-advanced data-owner-only><a href="#skills">Skills</a></li>
           <li data-advanced data-owner-only><a href="#connections">Connections</a></li>
@@ -1438,6 +1439,44 @@
     </dialog>
 
     <!-- Memory Panel -->
+    <!-- The People page: who uses this FreeHand (core/people.py, core/sessions.py). -->
+    <section id="people" data-advanced data-owner-only aria-labelledby="people-heading">
+      <h2 id="people-heading">People who use this FreeHand</h2>
+      <p class="hint">
+        Each person has their own chats, scheduled jobs, approvals, memories and notes, and nobody else sees them.
+        They talk to FreeHand on their own Telegram or WhatsApp, and sign in here with a code FreeHand sends there.
+        (These are real people. Team members, above, are FreeHand's helpers.)
+      </p>
+      <div id="people-newcomers" aria-live="polite"></div>
+      <div id="people-list" aria-live="polite"><p class="empty-state">Loading...</p></div>
+      <div id="people-link" class="stack-top" hidden>
+        <h3 id="people-link-heading" tabindex="-1"></h3>
+        <p>Send this link to them. It signs them in once, within a day, and then stops working.</p>
+        <input type="text" id="people-link-text" readonly aria-labelledby="people-link-heading">
+        <button type="button" id="people-link-copy">Copy the link</button>
+      </div>
+      <form id="person-form" novalidate class="stack-top">
+        <h3 id="person-form-heading">Add a person</h3>
+        <div class="form-group">
+          <label for="person-name">Their name</label>
+          <input type="text" id="person-name" maxlength="60" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label for="person-telegram">Their Telegram chat ID (optional)</label>
+          <input type="text" id="person-telegram" inputmode="numeric" autocomplete="off" aria-describedby="person-telegram-hint">
+          <p class="hint" id="person-telegram-hint">A number. The easy way: ask them to send your FreeHand bot a message,
+            then add them from "Wrote to FreeHand" at the top of this section.</p>
+        </div>
+        <div class="form-group">
+          <label for="person-whatsapp">Their WhatsApp number (optional)</label>
+          <input type="tel" id="person-whatsapp" autocomplete="off" placeholder="+27 82 123 4567">
+        </div>
+        <p class="error" id="person-form-error" role="alert"></p>
+        <button type="submit" id="person-save">Add person</button>
+        <button type="button" class="secondary" id="person-cancel" hidden>Cancel</button>
+      </form>
+    </section>
+
     <section id="memory" data-advanced aria-labelledby="mem-heading">
       <h2 id="mem-heading">Memory</h2>
 
@@ -5390,6 +5429,178 @@
         if (field) field.focus();
       });
 
+      // ---- The People page (owner only) ----
+      var loadPeople = (function() {
+        function el(id) { return document.getElementById(id) || {}; }
+        var editing = null;
+        function send(method, url, body) {
+          return apiFetch(url, { method: method, headers: { 'Content-Type': 'application/json' },
+                                 body: body ? JSON.stringify(body) : undefined })
+            .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
+        }
+        function chats(p) {
+          var ways = [];
+          if ((p.telegram || []).length) ways.push('Telegram');
+          if ((p.whatsapp || []).length) ways.push('WhatsApp');
+          return ways.length ? 'Signs in with a code on ' + ways.join(' or ') + '.'
+                             : 'No chat linked: make a sign-in link for them.';
+        }
+        function reset() {
+          editing = null;
+          el('person-name').value = ''; el('person-telegram').value = ''; el('person-whatsapp').value = '';
+          el('person-form-heading').textContent = 'Add a person';
+          el('person-save').textContent = 'Add person';
+          el('person-cancel').hidden = true;
+          el('person-form-error').textContent = '';
+        }
+        function showLink(name, link) {
+          el('people-link').hidden = false;
+          el('people-link-heading').textContent = 'Sign-in link for ' + name;
+          el('people-link-text').value = location.origin + link;
+          el('people-link-heading').focus();
+        }
+        function renderNewcomers(list) {
+          var box = el('people-newcomers');
+          box.textContent = '';
+          if (!list.length) return;
+          var h = document.createElement('h3');
+          h.textContent = 'Wrote to FreeHand, but isn\'t on it';
+          box.appendChild(h);
+          var p = document.createElement('p');
+          p.className = 'hint';
+          p.textContent = 'FreeHand didn\'t answer them. Add the ones you know; the rest are forgotten after a day.';
+          box.appendChild(p);
+          list.forEach(function(n) {
+            var where = n.channel === 'telegram' ? 'Telegram' : 'WhatsApp';
+            var who = n.name || (n.channel === 'whatsapp' ? '+' + n.id : 'Someone');
+            var row = document.createElement('div');
+            row.className = 'task-item';
+            var info = document.createElement('div');
+            info.className = 'task-info';
+            info.textContent = who + ', on ' + where;
+            var add = document.createElement('button');
+            add.type = 'button';
+            add.textContent = 'Add';
+            add.setAttribute('aria-label', 'Add ' + who + ' from ' + where);
+            add.onclick = function() {
+              var name = n.name || prompt('What is their name?') || '';
+              if (!name.trim()) return;
+              var body = { name: name };
+              body[n.channel] = [n.id];
+              send('POST', '/api/people', body).then(function(d) {
+                showStatus(d.person.name + ' can now use FreeHand.', 'success');
+                render(d);
+              }).catch(function(e) { showStatus(e.message, 'error'); });
+            };
+            row.appendChild(info);
+            row.appendChild(add);
+            box.appendChild(row);
+          });
+        }
+        function render(d) {
+          renderNewcomers(d.newcomers || []);
+          var list = el('people-list');
+          list.textContent = '';
+          var owner = document.createElement('div');
+          owner.className = 'task-item';
+          var oi = document.createElement('div');
+          oi.className = 'task-info';
+          oi.textContent = d.owner.name + ' (the owner). ' + (d.owner.code_by
+            ? 'Can sign in elsewhere with a code on ' + d.owner.code_by + '.'
+            : 'Signs in on this computer. Add your Telegram under Gateways to sign in elsewhere.');
+          owner.appendChild(oi);
+          list.appendChild(owner);
+          if (!d.people.length) {
+            var none = document.createElement('p');
+            none.className = 'empty-state';
+            none.textContent = 'Nobody else yet. Add someone below.';
+            list.appendChild(none);
+          }
+          d.people.forEach(function(p) {
+            var row = document.createElement('div');
+            row.className = 'task-item';
+            var info = document.createElement('div');
+            info.className = 'task-info';
+            var title = document.createElement('span');
+            title.className = 'task-title';
+            title.textContent = p.name;
+            var meta = document.createElement('div');
+            meta.className = 'task-meta';
+            meta.textContent = chats(p);
+            info.appendChild(title); info.appendChild(meta);
+            row.appendChild(info);
+            [['Change', 'Change ' + p.name, 'secondary', function() {
+                editing = p.id;
+                el('person-name').value = p.name;
+                el('person-telegram').value = (p.telegram || []).join(', ');
+                el('person-whatsapp').value = (p.whatsapp || []).join(', ');
+                el('person-form-heading').textContent = 'Change ' + p.name;
+                el('person-save').textContent = 'Save changes';
+                el('person-cancel').hidden = false;
+                el('person-name').focus();
+              }],
+             ['Make a sign-in link', 'Make a sign-in link for ' + p.name, 'secondary', function() {
+                send('POST', '/api/people/' + encodeURIComponent(p.id) + '/sign-in-link')
+                  .then(function(r) { showLink(p.name, r.link); })
+                  .catch(function(e) { showStatus(e.message, 'error'); });
+              }],
+             ['Sign out everywhere', 'Sign ' + p.name + ' out everywhere', 'secondary', function() {
+                send('POST', '/api/people/' + encodeURIComponent(p.id) + '/sign-out')
+                  .then(function(r) { showStatus(p.name + ' is signed out on ' + r.signed_out + ' device(s).', 'success'); })
+                  .catch(function(e) { showStatus(e.message, 'error'); });
+              }],
+             ['Remove', 'Remove ' + p.name, 'danger', function() {
+                if (!confirm('Remove ' + p.name + ' from FreeHand? They are signed out, and FreeHand stops answering their ' +
+                             'chats. What they made (chats, jobs, memories, notes) stays for now, and their jobs stop running.')) return;
+                send('DELETE', '/api/people/' + encodeURIComponent(p.id)).then(function(r) {
+                  showStatus(p.name + ' has been removed.', 'success');
+                  if (editing === p.id) reset();
+                  render(r);
+                }).catch(function(e) { showStatus(e.message, 'error'); });
+              }]].forEach(function(b) {
+              var btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = b[2];
+              btn.textContent = b[0];
+              btn.setAttribute('aria-label', b[1]);
+              btn.onclick = b[3];
+              row.appendChild(document.createTextNode(' '));
+              row.appendChild(btn);
+            });
+            list.appendChild(row);
+          });
+        }
+        function split(value) {
+          return String(value || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+        }
+        var form = document.getElementById('person-form');
+        if (form) {
+          form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            el('person-form-error').textContent = '';
+            var body = { name: el('person-name').value, telegram: split(el('person-telegram').value),
+                         whatsapp: split(el('person-whatsapp').value) };
+            var was = editing;
+            send(was ? 'PUT' : 'POST', was ? '/api/people/' + encodeURIComponent(was) : '/api/people', body)
+              .then(function(d) {
+                showStatus(was ? 'Saved.' : d.person.name + ' can now use FreeHand.', 'success');
+                reset();
+                render(d);
+              })
+              .catch(function(err) { el('person-form-error').textContent = err.message; el('person-name').focus(); });
+          });
+          el('person-cancel').onclick = reset;
+          el('people-link-copy').onclick = function() {
+            var text = el('people-link-text').value;
+            if (navigator.clipboard) navigator.clipboard.writeText(text).then(function() { showStatus('Link copied.', 'success'); });
+          };
+        }
+        return function() {
+          apiFetch('/api/people').then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) { if (d) render(d); }).catch(function() {});
+        };
+      })();
+
       // ---- Signing in as a person ----
       function signInSay(text) { document.getElementById('sign-in-message').textContent = text; }
       function postJson(url, body) {
@@ -5514,6 +5725,7 @@
         loadFacts();
         loadVoiceStatus();
         if (me.owner) {
+          loadPeople();
           loadConnections();
           loadGatewayStatus();
           loadAgents();
