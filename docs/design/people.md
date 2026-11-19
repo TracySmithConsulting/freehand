@@ -292,6 +292,11 @@ In a sensible order:
      once.
    - **Everyone's use this month** shows on the People page, and a member
      sees their own next to their name.
+   - **Each person's own time zone** (November 2026): a member's browser
+     sends theirs, and it's kept on them, so their "every day at 9" is 9
+     where they are, and their jobs come round again in their zone. Until
+     their browser has sent one, the owner's is theirs. The People page
+     shows it.
    - **The "all jobs together" limit** under Scheduled jobs now counts
      each person's jobs on their own, so one person's jobs can't use up
      everyone's.

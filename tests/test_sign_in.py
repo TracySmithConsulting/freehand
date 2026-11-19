@@ -191,8 +191,8 @@ def test_a_members_browser_doesnt_change_freehands_time_zone(sent, owner):
     owner.post("/api/timezone", json={"timezone": "Africa/Johannesburg"})
     thandi, _ = sign_in("thandi", sent)
     r = thandi.post("/api/timezone", json={"timezone": "Europe/London"})
-    assert r.status_code == 200 and r.json()["changed"] is False
-    assert agent_config._load_settings()["timezone"] == "Africa/Johannesburg"
+    assert r.status_code == 200  # kept as hers (tests/test_person_timezones.py) ...
+    assert agent_config._load_settings()["timezone"] == "Africa/Johannesburg"  # ... not the owner's
 
 
 def test_every_route_a_member_may_use_really_exists():

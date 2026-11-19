@@ -99,9 +99,13 @@ def _load_settings() -> dict:
 
 
 def local_tz():
-    """The person's time zone (settings "timezone", set from their browser),
-    so "every day at 9" means 9 where they are. UTC until it's known."""
-    name = str(_load_settings().get("timezone") or "").strip()
+    """The person's time zone, set from their browser, so "every day at 9"
+    means 9 where they are. The owner's is settings "timezone"; a member's
+    is on them in "people" (core/people.py), and until their browser has
+    sent one, the owner's is theirs too. UTC until it's known."""
+    settings = _load_settings()
+    from core import people
+    name = people.timezone_of(people.current(), settings) or str(settings.get("timezone") or "").strip()
     if name:
         try:
             from zoneinfo import ZoneInfo
@@ -776,7 +780,6 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             + "ORDER BY id LIMIT ?",
             (now_iso, cap),
         ).fetchall()
-        tz = local_tz()
         before = people.set_current(people.current())  # put back when done
         for row in rows:
             # A job runs as the person who set it up, so it sees their
@@ -855,7 +858,8 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
             err_note = (stamp + " error: " + str(error)[:120]) if error else stamp
             next_iso = None
             if row["next_run"]:
-                nxt = _cron_next(row["cron_schedule"], after=now, tz=tz) if row["cron_schedule"] else None
+                # In the time zone of the person whose job it is.
+                nxt = _cron_next(row["cron_schedule"], after=now, tz=local_tz()) if row["cron_schedule"] else None
                 next_iso = _iso_utc(nxt) if nxt else None
             if result.get("held"):
                 # A one-off waits; a repeating job skips to its next time.

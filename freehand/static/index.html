@@ -5757,7 +5757,8 @@
             title.textContent = p.name;
             var meta = document.createElement('div');
             meta.className = 'task-meta';
-            meta.textContent = chats(p) + ' ' + aiUse(p);
+            meta.textContent = chats(p) + ' ' + aiUse(p) +
+              (p.timezone ? ' Time zone: ' + p.timezone.replace(/_/g, ' ') + '.' : '');
             info.appendChild(title); info.appendChild(meta);
             row.appendChild(info);
             [['Change', 'Change ' + p.name, 'secondary', function() {
