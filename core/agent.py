@@ -828,12 +828,28 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
 
         # Someone else's account (core/accounts.py): refused before anyone
         # is asked to approve it, whatever the permission level.
-        from core import accounts
-        account_refusal = accounts.tool_refusal(tool_name, tool_args)
+        # And what a member may ask for at all (core/member_limits.py).
+        from core import accounts, member_limits
+        account_refusal = accounts.tool_refusal(tool_name, tool_args) or member_limits.refusal(tool_name, tool_args)
 
         if account_refusal:
             tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(
-                {"error": "not_your_account", "tell_the_person": account_refusal})}
+                {"error": "not_allowed", "tell_the_person": account_refusal})}
+        elif member_limits.needs_owner_approval(tool_name, tool_args):
+            # A member's change on a shared account: the owner approves it,
+            # at any permission level, and the member can't approve it.
+            result = intercept_action(
+                "oauth_access",
+                describe_action(tool_name, tool_args),
+                {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id,
+                 member_limits.NEEDS_OWNER: True},
+                source, caller_id, force_confirm=True,
+            )
+            tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps({
+                "error": f"Waiting for the owner's approval for {tool_name}.",
+                "approval_id": result.get("approval_id"),
+                "tell_the_person": member_limits.waiting_message(),
+            })}
         elif allowed is not None and tool_name not in allowed:
             # A team member asked for a tool it wasn't given.
             tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(

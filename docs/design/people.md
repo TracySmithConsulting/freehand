@@ -246,6 +246,26 @@ In a sensible order:
    Not built yet: a member connecting their own account themselves. For
    now the owner connects it and chooses "Thandi only".
 6. **Roles and permissions:** what members may do, set per person.
+
+   **Built (November 2026): the limits every member has**
+   (`core/member_limits.py`). There's no chat tool that changes
+   settings, the AI model, the security level or connections. Those are
+   console screens, already the owner's (`MEMBER_ROUTES`). These were
+   the gaps in chat:
+   - **The browser:** a member's browser is a clean one. It never drives
+     the owner's own Chrome, with the owner's sign-ins.
+   - **Saved browser states and request recordings** (checkpoints,
+     request capture) are the owner's. They can hold a site's sign-in.
+   - **Documents** (Word, Excel, PowerPoint): a member reads and writes
+     only in their own folder, not the vault or the owner's extra
+     folders. The owner doesn't reach into a member's folder either.
+   - **A change on a shared account** (sending from info@, posting on
+     the office page) waits for the owner's approval, even at Full
+     access. The member can't approve it, in the console or from chat,
+     but can cancel it. Reading a shared account needs nobody.
+
+   Not built yet: limits set per person, such as how much AI a member
+   may use in a month.
 7. **Families:** the child role, parents' approvals, limits and oversight
    (see "Families and children" below).
 8. **When someone leaves** (see below).

@@ -33,14 +33,39 @@ def _is_within_workspace(path: str) -> bool:
     return _is_within(path, PROJECT_ROOT)
 
 
+def _member_root() -> Optional[Path]:
+    """A member's own folder in the vault, or None for the owner."""
+    from core import agent_config, people
+    parts = people.workspace_parts()
+    return Path(agent_config.VAULT_DIR).joinpath(*parts) if parts else None
+
+
+def _someone_elses(path: str) -> bool:
+    """A file in another person's folder in the vault (core/people.py)."""
+    from core import agent_config, people
+    vault = Path(agent_config.VAULT_DIR)
+    if not _is_within(path, vault):
+        return False
+    try:
+        rel = Path(path).resolve().relative_to(vault.resolve())
+    except ValueError:
+        return False
+    return not people.may_read_vault_file(rel.as_posix())
+
+
 def allowed_read_roots() -> List[Path]:
     """Folders the agent may read documents from.
 
     Always the vault; plus any folders the owner lists in
     settings["allowed_read_dirs"]. Read dynamically so tests (and a
     settings change) take effect without a restart.
+
+    A member only their own folder (core/member_limits.py).
     """
     from core import agent_config
+    member_root = _member_root()
+    if member_root is not None:
+        return [member_root]
     roots = [Path(agent_config.VAULT_DIR)]
     try:
         extra = agent_config._load_settings().get("allowed_read_dirs") or []
@@ -66,7 +91,7 @@ def check_read_allowed(path: str) -> Optional[str]:
     if not path or not str(path).strip():
         return "path is required"
     roots = allowed_read_roots()
-    if any(_is_within(path, r) for r in roots):
+    if any(_is_within(path, r) for r in roots) and not _someone_elses(path):
         return None
     listed = ", ".join(str(r) for r in roots)
     return (
@@ -77,8 +102,12 @@ def check_read_allowed(path: str) -> Optional[str]:
 
 def allowed_write_roots() -> List[Path]:
     """Folders the agent may write documents into: the vault, plus any
-    folders listed in settings["allowed_write_dirs"]."""
+    folders listed in settings["allowed_write_dirs"]. A member only their
+    own folder."""
     from core import agent_config
+    member_root = _member_root()
+    if member_root is not None:
+        return [member_root]
     roots = [Path(agent_config.VAULT_DIR)]
     try:
         extra = agent_config._load_settings().get("allowed_write_dirs") or []
@@ -115,7 +144,7 @@ def _check_write_permission(path: str, extension: str) -> dict:
             "error": f"Refusing to write {path}: this tool only writes {extension} files.",
         }
     roots = allowed_write_roots()
-    if any(_is_within(path, r) for r in roots):
+    if any(_is_within(path, r) for r in roots) and not _someone_elses(path):
         return {"allowed": True}
     listed = ", ".join(str(r) for r in roots)
     return {
