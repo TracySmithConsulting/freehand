@@ -218,6 +218,33 @@ def memory_tags(person_id: Optional[str] = None) -> list[str]:
     return [f"person:{person_id or current()}"]
 
 
+def timezone_of(person_id: str, settings: Optional[dict] = None) -> str:
+    """A member's own time zone name, or "" (the owner's is "timezone")."""
+    if person_id == OWNER_ID:
+        return ""
+    s = settings if settings is not None else _settings()
+    for p in s.get("people") or []:
+        if isinstance(p, dict) and str(p.get("id", "")).strip().lower() == person_id:
+            return str(p.get("timezone") or "").strip()
+    return ""
+
+
+def set_timezone(person_id: str, name: str) -> bool:
+    """Keep a member's time zone (from their browser). True if it changed."""
+    from core import agent_config
+    s = agent_config._load_settings()
+    entries = list(s.get("people") or [])
+    for i, p in enumerate(entries):
+        if isinstance(p, dict) and str(p.get("id", "")).strip().lower() == person_id and person_id != OWNER_ID:
+            if p.get("timezone") == name:
+                return False
+            entries[i] = {**p, "timezone": name}
+            s["people"] = entries
+            agent_config._save_settings(s)
+            return True
+    return False
+
+
 # ── Tagging stored rows ──────────────────────────────────────────────
 
 _TAGGED_TABLES = ("tasks", "approvals", "conversation_turns")

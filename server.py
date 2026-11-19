@@ -218,7 +218,7 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
-    ("POST", "/api/timezone"),  # accepted, but a member's isn't kept (see set_timezone)
+    ("POST", "/api/timezone"),  # kept as theirs (see set_timezone)
 })
 
 SESSION_HEADER = "X-FreeHand-Session"
@@ -361,7 +361,8 @@ def _people_page() -> dict:
                   "ai_this_month": ai_use.used(owner["id"])["runs"]},
         "people": [{"id": p["id"], "name": p["name"], "role": p["role"],
                     "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", []),
-                    "ai_per_month": p.get("ai_per_month"), "ai_this_month": ai_use.used(p["id"])["runs"]}
+                    "ai_per_month": p.get("ai_per_month"), "ai_this_month": ai_use.used(p["id"])["runs"],
+                    "timezone": people.timezone_of(p["id"], s)}
                    for p in everyone[1:]],
         "newcomers": newcomers.recent(),
         "unfinished": leaving.unfinished(s),
@@ -1479,10 +1480,8 @@ async def pause_task(task_id: int, body: dict):
 @app.post("/api/timezone", dependencies=[Depends(require_api_key)])
 async def set_timezone(body: dict, request: Request):
     """The person's time zone, sent by their browser, so "9:00" means 9 where
-    they are. Only a real zone name is kept.
-
-    FreeHand has one time zone, the owner's, so a member's browser doesn't
-    change it (each person's own comes later)."""
+    they are. Only a real zone name is kept. Each person has their own: a
+    member's is kept on them (core/people.py), the owner's in settings."""
     from core import people
     name = str(body.get("timezone") or "").strip()
     try:
@@ -1490,8 +1489,9 @@ async def set_timezone(body: dict, request: Request):
         ZoneInfo(name)
     except Exception:
         raise HTTPException(status_code=400, detail="Not a time zone name")
-    if _request_person(request) != people.OWNER_ID:
-        return {"timezone": name, "changed": False}
+    pid = _request_person(request)
+    if pid != people.OWNER_ID:
+        return {"timezone": name, "changed": people.set_timezone(pid, name)}
     changed = _settings_file().get("timezone") != name
     if changed:
         _save_setting("timezone", name)
