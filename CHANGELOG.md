@@ -5,6 +5,22 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] — 2026-11-19
+
+### Changed
+
+- **Limits on what someone else on your FreeHand can ask it to do:**
+  - their browser is a clean one, never your own Chrome with your
+    sign-ins;
+  - only you can save or bring back a browser's saved state, or record
+    what it fetches;
+  - their Word, Excel and PowerPoint files stay in their own folder;
+  - sending or posting from a shared account (the office mailbox) waits
+    for your approval, even at Full access. They can cancel it, but not
+    approve it themselves.
+
+  On your own, nothing changes.
+
 ## [0.1.16] — 2026-11-19
 
 ### Added
