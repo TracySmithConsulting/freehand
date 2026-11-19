@@ -282,7 +282,8 @@ def connect(service: str = typer.Argument(help="Service: google, microsoft, zoom
     import asyncio
     from fastapi.testclient import TestClient
     from server import app as server_app
-    client = TestClient(server_app)
+    from server import get_or_create_api_key
+    client = TestClient(server_app, headers={"X-API-Key": get_or_create_api_key()})
     resp = client.get(f"/api/integrations/{service}/authorize?label={label}")
     if resp.status_code == 200:
         data = resp.json()

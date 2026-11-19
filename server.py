@@ -909,7 +909,49 @@ try:
     app.mount("/static", StaticFiles(directory=static_path), name="static")
 except Exception:
     pass
-app.include_router(oauth_router)
+# Connections (core/oauth/router.py) need the key like everything else.
+# They didn't: the list of connected accounts, Disconnect and Test answered
+# anyone, so on this computer any web page could disconnect an account,
+# and on a hosted FreeHand anyone could. Two exceptions:
+# - the provider's sign-in sends the browser back to .../callback, with
+#   no key; the one-time "state" from /authorize is what's checked there;
+# - the Connect button opens .../authorize in a new window, which can't
+#   send the key, so the console first asks for a one-time ticket.
+_connect_tickets: dict = {}
+CONNECT_TICKET_SECONDS = 300
+
+
+def _use_connect_ticket(ticket: str) -> bool:
+    """A ticket works once, within five minutes."""
+    import time
+    now = time.monotonic()
+    for t, expires in list(_connect_tickets.items()):
+        if expires < now:
+            _connect_tickets.pop(t, None)
+    return bool(ticket) and _connect_tickets.pop(ticket, 0) >= now
+
+
+async def _connections_auth(request: Request) -> None:
+    path = request.url.path
+    if request.method == "GET" and path.endswith("/callback"):
+        return
+    if request.method == "GET" and path.endswith("/authorize") and \
+            _use_connect_ticket(request.query_params.get("ticket", "")):
+        return
+    await require_api_key(request)
+
+
+@app.post("/api/connect-ticket", dependencies=[Depends(require_api_key)])
+async def connect_ticket():
+    """A one-time ticket for the Connect window (see _connections_auth).
+    Owner only: not in MEMBER_ROUTES."""
+    import time
+    ticket = _secrets.token_urlsafe(24)
+    _connect_tickets[ticket] = time.monotonic() + CONNECT_TICKET_SECONDS
+    return {"ticket": ticket}
+
+
+app.include_router(oauth_router, dependencies=[Depends(_connections_auth)])
 
 
 # ── OAuth Broker Admin Endpoints ──────────────────────────────────────

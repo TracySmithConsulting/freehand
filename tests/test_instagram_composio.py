@@ -46,7 +46,7 @@ def test_posting_uploads_then_publishes(monkeypatch):
 def test_not_connected_points_to_connections(monkeypatch):
     _account(monkeypatch, present=False)
     out = asyncio.run(integrations.list_instagram_accounts())
-    assert "Connections" in out["error"] and out["connect_url"].startswith("/api/integrations/instagram/authorize")
+    assert "Connections" in out["error"] and out["connect_url"] == "/#connections"
 
 
 def test_instagram_is_no_longer_an_openconnector_app():
