@@ -5,6 +5,24 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] — 2026-11-19
+
+### Changed
+
+- **When someone leaves:** Remove on the People page now asks what to
+  keep, instead of a yes/no box:
+  - their notes and files go to a folder "From <name>" in yours, or are
+    deleted;
+  - their scheduled jobs become yours, paused, or are deleted;
+  - what FreeHand remembers about them is deleted, or kept for you;
+  - accounts that were theirs are disconnected, or become yours.
+
+  They're signed out at once, and their chats and waiting approvals are
+  deleted. Unticking every "Keep" deletes everything about them.
+  Nothing is left under their name, and a newcomer with the same name
+  never inherits it. If FreeHand's memory is offline, "Finish" does
+  their memories later.
+
 ## [0.1.17] — 2026-11-19
 
 ### Changed
