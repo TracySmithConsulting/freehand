@@ -5,6 +5,41 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.19] — 2026-11-19
+
+### Security
+
+- **Connections now need FreeHand's key.** The list of connected
+  accounts, Disconnect and Test answered without it, so any web page open
+  in your browser could have disconnected an account. Only the provider's
+  sign-in return is open now, and the Connect window uses a one-time pass.
+
+### Added
+
+- **Team members for each person, and sharing them.** Everyone has their
+  own team members. You can share yours with everyone or with named
+  people; others can share theirs only if you allow it under People.
+  Only the person who made one can change it.
+- **A monthly limit on AI for each person,** set on the People page.
+  Over it, FreeHand says when it starts again, without using the AI.
+- **Each person's own time zone,** so their "every day at 9" is 9 where
+  they are.
+- **"Share this":** a memory everyone's FreeHand can use, listed apart on
+  the Memory page. And a **shared folder** everyone can read and save
+  documents in.
+- **Children, with a parent's limits:**
+  - anything that reaches outside waits for a parent's yes, even at
+    Full access;
+  - quiet hours and a daily message limit;
+  - answers suited to their age;
+  - the child is told honestly what their parents can see.
+
+### Changed
+
+- The "all jobs together" limit counts each person's jobs on their own.
+
+On your own, nothing changes.
+
 ## [0.1.18] — 2026-11-19
 
 ### Changed
