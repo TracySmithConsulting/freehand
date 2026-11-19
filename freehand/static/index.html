@@ -959,6 +959,93 @@
         background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 7' preserveAspectRatio='none'%3E%3Cpath d='M2 4.5 C 14 1.5, 27 6.5, 41 3.5 S 66 6, 78 3 S 104 5.5, 118 3' fill='none' stroke='%23C790BA' stroke-width='2.4' stroke-linecap='round' opacity='0.75'/%3E%3C/svg%3E") left bottom / 120px 7px repeat-x;
       }
     }
+
+    /* ---------------------------------------------------------- */
+    /* The look, tidied (Nov 2026 visual review).                  */
+    /* ---------------------------------------------------------- */
+
+    /* 1. One page at a time: the menu shows one section (data-page). */
+    main > section.page-off { display: none !important; }
+    nav a[aria-current="page"] {
+      background: var(--amber-tint);
+      border-color: var(--line-strong);
+      color: var(--ink-strong);
+      text-decoration: underline;
+      text-decoration-thickness: 2px;
+      text-underline-offset: 0.3em;
+    }
+
+    /* 2. On a phone, the menu is a button that opens the list. */
+    #nav-toggle { display: none; }
+    @media (max-width: 600px) {
+      #nav-toggle { display: flex; width: 100%; justify-content: space-between; align-items: center; }
+      #nav-toggle::after { content: "\25BE"; margin-left: 0.5rem; }
+      #nav-toggle[aria-expanded="true"]::after { content: "\25B4"; }
+      nav[aria-label="Main navigation"] #nav-list { display: none; }
+      nav[aria-label="Main navigation"].open #nav-list {
+        display: flex; flex-direction: column; margin-top: 0.4rem;
+        max-height: calc(100vh - 5rem); overflow-y: auto;
+      }
+    }
+
+    /* 3. A comfortable reading width, and help text a little bigger. */
+    main, header, nav ul { max-width: 64rem; }
+    .hint, main p { max-width: 72ch; }
+    .hint { font-size: 0.95rem; }
+    .form-group { max-width: 46rem; }
+
+    /* 4. Details in the normal font, not a typewriter one. */
+    .task-meta, .connection-meta, .approval-item small {
+      font-family: inherit;
+      font-size: 0.9rem;
+    }
+
+    /* 6. Tidy buttons and fields. */
+    button + button { margin-left: 0.5rem; }
+    [class*="actions"] > button + button { margin-left: 0; }
+    @media (max-width: 480px) { .task-item > button + button { margin-left: 0; } }
+    button.danger {
+      background: var(--surface);
+      color: var(--red-text);
+      border-color: var(--red-text);
+    }
+    button.danger:hover, button.danger:focus {
+      background: var(--red-tint);
+      color: var(--red-text);
+    }
+    input[type="tel"], input[type="email"], input[type="number"],
+    input[type="date"], input[type="time"], input[type="datetime-local"] {
+      width: 100%;
+      padding: 0.7rem 0.85rem;
+      border: 1.5px solid var(--line-strong);
+      border-radius: var(--r-sketch-sm);
+      font-size: 1rem;
+      font-family: inherit;
+      min-height: 44px;
+      background: var(--field);
+      color: var(--ink);
+    }
+    main ol:not([class]), main ul:not([class]) { padding-left: 1.5rem; }
+
+    /* 7. Easy to tap: bigger ticks and choices, roomier rows. */
+    input[type="checkbox"], input[type="radio"] {
+      width: 1.25rem;
+      height: 1.25rem;
+      accent-color: var(--plum);
+      vertical-align: middle;
+      flex: none;
+    }
+    label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
+      display: flex;
+      width: fit-content;
+      max-width: 100%;
+      align-items: center;
+      gap: 0.55rem;
+      min-height: 44px;
+      cursor: pointer;
+    }
+    summary { min-height: 44px; padding: 0.55rem 0; cursor: pointer; }
+    .approval-actions button { min-height: 44px; }
   </style>
 </head>
 <body>
@@ -981,7 +1068,8 @@
   </div>
 
   <nav aria-label="Main navigation">
-    <ul>
+    <button type="button" id="nav-toggle" class="secondary" aria-expanded="false" aria-controls="nav-list">Menu</button>
+    <ul id="nav-list">
           <li><a href="#command">Command</a></li>
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Scheduled jobs</a></li>
@@ -990,6 +1078,7 @@
           <li data-advanced><a href="#memory">Memory</a></li>
         <li data-advanced data-owner-only><a href="#skills">Skills</a></li>
           <li data-advanced><a href="#connections">Connections</a></li>
+          <li data-advanced data-owner-only><a href="#computer-help">Computer help</a></li>
           <li data-advanced data-owner-only><a href="#agents">Agents</a></li>
           <li data-advanced data-owner-only><a href="#settings">Settings</a></li>
           <li data-advanced data-owner-only><a href="#gateways">Gateways</a></li>
@@ -1121,25 +1210,25 @@
     </section>
 
     <!-- Command Box -->
-    <section id="command" aria-labelledby="cmd-heading">
+    <section id="command" data-page aria-labelledby="cmd-heading">
       <h2 id="cmd-heading">
         Command Box
         <span class="hotkey-hint" aria-hidden="true">Alt+C</span>
       </h2>
       <form id="command-form" novalidate>
         <div class="form-group">
-          <label for="command-input">Agent Prompt</label>
+          <label for="command-input">What would you like FreeHand to do?</label>
           <input
             type="text"
             id="command-input"
             name="command"
-            placeholder="Enter a command for the agent..."
+            placeholder="For example: remind me to phone the plumber tomorrow at 9"
             autocomplete="off"
             aria-describedby="command-error"
           >
           <p class="error" id="command-error" role="alert"></p>
         </div>
-        <button type="submit">Send Command</button>
+        <button type="submit">Send</button>
       </form>
       <div class="voice-controls stack-top" role="group" aria-labelledby="voice-heading">
         <h3 id="voice-heading">Voice <span class="hotkey-hint" aria-hidden="true">Alt+V</span></h3>
@@ -1194,14 +1283,14 @@
     </section>
 
     <!-- Scribble Pad -->
-    <section id="scribble" aria-labelledby="scrib-heading">
+    <section id="scribble" data-page aria-labelledby="scrib-heading">
       <h2 id="scrib-heading">
         Scribble Pad
         <span class="hotkey-hint" aria-hidden="true">Alt+S</span>
       </h2>
       <p class="hint" id="scribble-hint">Your scribble pad is one page of notes that you keep adding to.
         Type anywhere in it, then press Save or Ctrl+Enter. Your words stay on the pad after saving;
-        that's normal. FreeHand sorts tasks and notes off the pad later, or straight away with Sweep Now.</p>
+        that's normal. FreeHand sorts the pad later by itself, or straight away with Sort it now.</p>
       <form id="scribble-form" novalidate>
         <div class="form-group">
           <label for="scribble-content">Scribble pad</label>
@@ -1214,15 +1303,16 @@
           ></textarea>
           <p class="error" id="scribble-error" role="alert"></p>
         </div>
-        <button type="submit">Save Scribble</button>
+        <button type="submit">Save</button>
         <p class="hint" id="scribble-saved" role="status" aria-live="polite"></p>
       </form>
-      <button type="button" id="sweep-btn" style="margin-top: 0.5rem;">Sweep Now</button>
-      <p class="hint" style="margin-top: 0.25rem;">Classifies checklist lines now: tasks to the scheduler, notes to threads, then archives both.</p>
+      <button type="button" id="sweep-btn" style="margin-top: 0.5rem;">Sort it now</button>
+      <p class="hint" style="margin-top: 0.25rem;">Lines that are things to do become scheduled jobs, and the rest
+        are filed as notes. Then they're cleared off the pad.</p>
     </section>
 
     <!-- Scheduled jobs (docs/design/scheduled-jobs-and-team-members.md) -->
-    <section id="tasks" aria-labelledby="task-heading">
+    <section id="tasks" data-page aria-labelledby="task-heading">
       <h2 id="task-heading">Scheduled jobs</h2>
       <p class="hint">
         Things FreeHand does at a time, or on a repeat. Reminders and your to-do list are free: no AI runs
@@ -1338,7 +1428,7 @@
     </section>
 
     <!-- Team members (core/team.py, docs/design/scheduled-jobs-and-team-members.md) -->
-    <section id="team" aria-labelledby="team-heading">
+    <section id="team" data-page aria-labelledby="team-heading">
       <h2 id="team-heading">My team members</h2>
       <p class="hint">
         Team members are helpers with one job each, such as marketing or sorting email. You give them their names.
@@ -1448,7 +1538,7 @@
 
     <!-- Memory Panel -->
     <!-- The People page: who uses this FreeHand (core/people.py, core/sessions.py). -->
-    <section id="people" data-advanced data-owner-only aria-labelledby="people-heading">
+    <section id="people" data-page data-advanced data-owner-only aria-labelledby="people-heading">
       <h2 id="people-heading">People who use this FreeHand</h2>
       <p class="hint">
         Each person has their own chats, scheduled jobs, approvals, memories and notes, and nobody else sees them.
@@ -1563,7 +1653,7 @@
       </form>
     </section>
 
-    <section id="memory" data-advanced aria-labelledby="mem-heading">
+    <section id="memory" data-page data-advanced aria-labelledby="mem-heading">
       <h2 id="mem-heading">Memory</h2>
 
       <h3 id="facts-heading">What FreeHand remembers about you</h3>
@@ -1683,7 +1773,7 @@
     </section>
 
     <!-- Skills: saved instructions that have to earn their place -->
-    <section id="skills" data-advanced data-owner-only aria-labelledby="skills-heading">
+    <section id="skills" data-page data-advanced data-owner-only aria-labelledby="skills-heading">
       <h2 id="skills-heading" tabindex="-1">Skills</h2>
       <p class="hint">
         Skills are instructions FreeHand saves for tasks you do more than once.
@@ -1702,7 +1792,7 @@
     </section>
 
     <!-- Connections Panel -->
-    <section id="connections" data-advanced aria-labelledby="conn-heading">
+    <section id="connections" data-page data-advanced aria-labelledby="conn-heading">
       <h2 id="conn-heading">
         Connections
         <span class="hotkey-hint" aria-hidden="true">Alt+K</span>
@@ -1715,7 +1805,7 @@
     </section>
 
     <!-- Help on my computer: the FreeHand Helper (docs/design/computer-helper.md) -->
-    <section id="computer-help" data-advanced data-owner-only aria-labelledby="helper-heading">
+    <section id="computer-help" data-page data-advanced data-owner-only aria-labelledby="helper-heading">
       <h2 id="helper-heading">Help on my computer</h2>
       <p class="hint">
         The FreeHand Helper is a small program on your computer. With it, FreeHand can see what's on
@@ -1739,7 +1829,7 @@
     </section>
 
     <!-- Agents Import Panel -->
-    <section id="agents" data-advanced data-owner-only aria-labelledby="agents-heading">
+    <section id="agents" data-page data-advanced data-owner-only aria-labelledby="agents-heading">
       <h2 id="agents-heading">Agents</h2>
       <div id="agents-status" aria-live="polite">
         <p class="empty-state">Loading agent status...</p>
@@ -1748,7 +1838,7 @@
     </section>
 
     <!-- Settings & Approvals -->
-    <section id="settings" data-advanced data-owner-only aria-labelledby="set-heading">
+    <section id="settings" data-page data-advanced data-owner-only aria-labelledby="set-heading">
       <h2 id="set-heading">
         Settings & Approvals
         <span class="hotkey-hint" aria-hidden="true">Alt+A</span>
@@ -1777,26 +1867,27 @@
       </fieldset>
 
       <fieldset>
-        <legend>Permission Tier</legend>
+        <legend>How much FreeHand may do on its own</legend>
         <form id="tier-form" novalidate>
           <div class="form-group">
-            <label for="tier-select">Access Level</label>
+            <label for="tier-select">FreeHand may</label>
             <select id="tier-select" name="tier" aria-describedby="tier-hint">
-              <option value="autonomous">Autonomous — Read + Vault writes only</option>
-              <option value="semi_autonomous">Semi-Autonomous — Requires approval for external actions</option>
-              <option value="full_access">Full Access — Full system access</option>
+              <option value="autonomous">Notes only: read, and keep notes. Nothing else</option>
+              <option value="semi_autonomous">Asks first: it asks you before sending, posting or changing anything (recommended)</option>
+              <option value="full_access">Full access: it acts without asking</option>
             </select>
-            <p class="hint" id="tier-hint">Tighter restrictions for remote/Tailscale access.</p>
+            <p class="hint" id="tier-hint">If FreeHand can be reached from outside this computer (for example
+              over Tailscale), choose Notes only or Asks first.</p>
           </div>
-          <button type="submit">Save Tier</button>
+          <button type="submit">Save</button>
         </form>
       </fieldset>
 
       <fieldset>
-        <legend>API Keys & OmniRoute</legend>
+        <legend>FreeHand's key (advanced)</legend>
         <form id="settings-form" novalidate>
           <div class="form-group">
-            <label for="api-key">API Key</label>
+            <label for="api-key">FreeHand's key</label>
             <input
               type="password"
               id="api-key"
@@ -1808,7 +1899,7 @@
             <p class="error" id="api-key-error" role="alert"></p>
           </div>
           <div class="form-group">
-            <label for="omniroute">OmniRoute Endpoint</label>
+            <label for="omniroute">OmniRoute address (optional)</label>
             <input
               type="url"
               id="omniroute"
@@ -1818,7 +1909,7 @@
             >
             <p class="error" id="omniroute-error" role="alert"></p>
           </div>
-          <button type="submit">Save Settings</button>
+          <button type="submit">Save</button>
           <div class="form-group" id="key-storage-group">
             <p class="hint" id="api-key-hint">
               Where to get the key: <code>cat vault/settings.json | jq -r .api_key</code>
@@ -2281,6 +2372,7 @@
         el('welcome-finish').onclick = function() { finish(); showStatus('Setup finished. Settings has everything, if you want to change it.', 'success'); };
         el('welcome-try').onclick = function() {
           finish();
+          if (window.revealSection) window.revealSection('command');
           var input = document.getElementById('command-input');
           if (input) { input.value = 'What can you help me with?'; input.focus(); }
           showStatus('The question is in the Command Box. Press Enter to ask it.', 'success');
@@ -2371,28 +2463,94 @@
       var showAllBox = document.getElementById('show-all-toggle');
       function setShowAll(on, announce) {
         showAllBox.checked = !!on;
-        document.querySelectorAll('[data-advanced]').forEach(function(el) { el.hidden = !on; });
+        var member = !!(signedInAs && !signedInAs.owner);
+        document.querySelectorAll('[data-advanced]').forEach(function(el) {
+          el.hidden = !on || (member && el.hasAttribute('data-owner-only'));
+        });
         try { localStorage.setItem('freehand_show_all', on ? '1' : '0'); } catch (e) {}
         if (announce) showStatus(on ? 'Showing all settings and tools.' : 'Showing the everyday view.', 'success');
+        if (window.showCurrentPage) window.showCurrentPage(false);
       }
-      function revealSection(id) {
-        var el = document.getElementById(id);
-        if (!el) return;
+      // ---- One page at a time ----
+      // Each part of FreeHand (a section marked data-page) is its own page.
+      // The menu, links, shortcuts and the address (#tasks) all come through
+      // revealSection, which shows that page and hides the others. Approvals
+      // waiting, the setup and signing in stay above every page.
+      var baseTitle = document.title || 'FreeHand';
+      var navEl = document.querySelector('nav[aria-label="Main navigation"]');
+      var navToggle = document.getElementById('nav-toggle');
+      function pageOf(el) {
+        while (el && !(el.hasAttribute && el.hasAttribute('data-page'))) el = el.parentElement;
+        return el || null;
+      }
+      function pageName(page) {
+        var h = page && page.querySelector('h2');
+        return h && h.firstChild ? String(h.firstChild.textContent || '').trim() : '';
+      }
+      function closeMenu() {
+        if (navEl) navEl.classList.remove('open');
+        if (navToggle) navToggle.setAttribute('aria-expanded', 'false');
+      }
+      function showPage(target, moveFocus) {
+        var page = pageOf(target);
+        if (!page || page.hidden) { page = document.getElementById('command'); target = page; }
+        if (!page || !page.hasAttribute('data-page')) return;
+        document.querySelectorAll('[data-page]').forEach(function(p) { p.classList.toggle('page-off', p !== page); });
+        var links = document.querySelectorAll('#nav-list a');
+        var exact = Array.prototype.some.call(links, function(a) { return a.getAttribute('href') === '#' + target.id; });
+        Array.prototype.forEach.call(links, function(a) {
+          var here = a.getAttribute('href') === '#' + (exact ? target.id : page.id);
+          if (here) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+        });
+        var name = pageName(page);
+        document.title = name ? name + ' - ' + baseTitle : baseTitle;
+        if (navToggle) navToggle.textContent = name ? 'Menu: ' + name : 'Menu';
+        closeMenu();
+        if (!moveFocus) return;
+        var spot = target !== page ? target : (page.querySelector('h2') || page);
+        if (!/^(A|BUTTON|INPUT|SELECT|TEXTAREA)$/.test(spot.tagName) && !spot.hasAttribute('tabindex')) {
+          spot.setAttribute('tabindex', '-1');
+        }
+        if (target === page) window.scrollTo(0, 0); else if (spot.scrollIntoView) spot.scrollIntoView();
+        try { spot.focus({ preventScroll: true }); } catch (e) { spot.focus(); }
+      }
+      function revealSection(id, moveFocus) {
+        var el = id ? document.getElementById(id) : null;
+        if (!el) { showPage(null, false); return; }
         var hiddenPart = el.closest('[data-advanced]');
         if (hiddenPart && hiddenPart.hidden) setShowAll(true, false);
+        if (pageOf(el)) showPage(el, moveFocus);
       }
       window.revealSection = revealSection;
+      if (navToggle && navEl) {
+        navToggle.addEventListener('click', function() {
+          var open = navToggle.getAttribute('aria-expanded') !== 'true';
+          navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          navEl.classList.toggle('open', open);
+        });
+        navEl.addEventListener('keydown', function(e) {
+          if (e.key === 'Escape' && navEl.classList.contains('open')) { closeMenu(); navToggle.focus(); }
+        });
+      }
       var savedShowAll = false;
       try { savedShowAll = localStorage.getItem('freehand_show_all') === '1'; } catch (e) {}
       setShowAll(savedShowAll, false);
       showAllBox.addEventListener('change', function() { setShowAll(showAllBox.checked, true); });
+      function currentHash() { try { return (window.location && window.location.hash) || ''; } catch (e) { return ''; } }
       document.addEventListener('click', function(e) {
         var a = e.target.closest && e.target.closest('a[href^="#"]');
-        if (a && a.getAttribute('href').length > 1) revealSection(a.getAttribute('href').slice(1));
+        if (!a || a.getAttribute('href').length < 2) return;
+        // The same address again doesn't change the hash: move focus here.
+        revealSection(a.getAttribute('href').slice(1), a.getAttribute('href') === currentHash());
       }, true);
-      function currentHash() { try { return (window.location && window.location.hash) || ''; } catch (e) { return ''; } }
-      window.addEventListener('hashchange', function() { revealSection(currentHash().slice(1)); });
-      if (currentHash().length > 1) revealSection(currentHash().slice(1));
+      window.addEventListener('hashchange', function() { revealSection(currentHash().slice(1), true); });
+      // After the everyday view or a member's screens hide pages: show the
+      // page in the address if it can still be seen, otherwise Command.
+      window.showCurrentPage = function(moveFocus) {
+        var id = currentHash().slice(1);
+        showPage(id ? document.getElementById(id) : null, moveFocus);
+      };
+      revealSection(currentHash().slice(1), false);  // a link to a page opens it
 
       // ---- Hotkeys ----
       document.addEventListener('keydown', function(e) {
@@ -2408,9 +2566,11 @@
           var key = e.key.toLowerCase();
           if (key === 'c') {
             e.preventDefault();
+            revealSection('command');
             document.getElementById('command-input').focus();
           } else if (key === 's') {
             e.preventDefault();
+            revealSection('scribble');
             document.getElementById('scribble-content').focus();
           } else if (key === 'a') {
             e.preventDefault();
@@ -2440,7 +2600,7 @@
         var input = document.getElementById('command-input');
         var value = input.value.trim();
         if (!value) {
-          showError('command-error', 'Please enter a command.');
+          showError('command-error', "Type what you'd like FreeHand to do first.");
           input.focus();
           return;
         }
@@ -2846,7 +3006,7 @@
               voiceStatus('You said: ' + d.text + '. Sending.');
               commandForm.requestSubmit ? commandForm.requestSubmit() : commandForm.dispatchEvent(new Event('submit', { cancelable: true }));
             } else {
-              voiceStatus('You said: ' + d.text + '. Check it, then press Send Command.');
+              voiceStatus('You said: ' + d.text + '. Check it, then press Send.');
               input.focus();
             }
           })
@@ -4247,7 +4407,7 @@
                   var statusText = isExpired
                     ? '<span class="expired-time">Expired. Reconnect to keep using it</span>'
                     : 'Connected';
-                  var when = [timeLeft && !isExpired ? timeLeft : '', conn.connected_at ? 'since ' + escapeHtml(conn.connected_at) : '']
+                  var when = [timeLeft && !isExpired ? timeLeft : '', conn.connected_at ? 'since ' + escapeHtml(niceDate(conn.connected_at)) : '']
                     .filter(Boolean).join(' · ');
                   // Screen readers hear which account a button belongs to.
                   var who = escapeHtml(info.name) + ' ' + escapeHtml(shownLabel(conn.label));
@@ -4413,8 +4573,9 @@
         return name.toLowerCase().indexOf(prefix) === 0 ? name : prefix + name;
       }
       function shownLabel(label) {
-        return isMember() && label.toLowerCase().indexOf(signedInAs.id + '-') === 0
+        var shown = isMember() && label.toLowerCase().indexOf(signedInAs.id + '-') === 0
           ? label.slice(signedInAs.id.length + 1) : label;
+        return shown === 'default' ? 'Main account' : shown;
       }
       function openSignIn(service, name) {
         if (service === 'email') { openEmailForm(name); return; }  // a form, not a sign-in page
@@ -4619,6 +4780,14 @@
       };
 
       // ---- Helpers ----
+      // "2026-10-20T15:06:36.094131+00:00" -> "20 October 2026" (the person's own way).
+      function niceDate(value) {
+        if (!value) return '';
+        var d = new Date(String(value).replace(/\.(\d{3})\d+/, '.$1'));
+        if (isNaN(d.getTime())) return String(value);
+        return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
+      }
+
       function escapeHtml(str) {
         if (!str) return '';
         var div = document.createElement('div');
@@ -4769,12 +4938,15 @@
           .catch(function() {});
       }
 
+      var TIER_NAMES = { autonomous: 'Notes only', semi_autonomous: 'Asks first', full_access: 'Full access' };
+      function tierName(tier) { return TIER_NAMES[tier] || TIER_NAMES.semi_autonomous; }
       function updateTierBadge(tier) {
         var el = document.getElementById('tier-display');
         if (!el) return;
         var cls = 'tier-' + (tier || 'semi-autonomous').replace(/_/g, '-');
-        var label = (tier || 'semi_autonomous').replace(/_/g, ' ');
-        el.innerHTML = '<span class="tier-badge ' + cls + '" aria-label="Current tier: ' + label + '">' + label + '</span>';
+        var label = tierName(tier);
+        el.innerHTML = '<span class="tier-badge ' + cls + '" aria-label="How much FreeHand may do on its own: ' +
+          label + '">Safety: ' + label + '</span>';
       }
 
       document.getElementById('tier-form').addEventListener('submit', function(e) {
@@ -4787,7 +4959,7 @@
         })
         .then(function(res) { return res.json(); })
         .then(function(data) {
-          showStatus('Tier set to: ' + data.tier, 'success');
+          showStatus('Saved. FreeHand now has: ' + tierName(data.tier) + '.', 'success');
           updateTierBadge(data.tier);
         })
         .catch(function() {
@@ -5100,7 +5272,7 @@
         // Check when the AI model settings are first shown, not on every page load.
         var heading = el('ollama-heading'), checked = false;
         function maybeCheck() {
-          if (checked || !heading || heading.closest('[hidden]')) return;
+          if (checked || !heading || heading.closest('[hidden], .page-off')) return;
           checked = true; check();
         }
         document.getElementById('show-all-toggle') && document.getElementById('show-all-toggle').addEventListener('change', maybeCheck);
@@ -5269,7 +5441,7 @@
             '<div class="task-info">' +
               '<span class="task-title">' + escapeHtml(r.title) + '</span>' +
               (r.snippet ? '<div>' + escapeHtml(r.snippet) + '</div>' : '') +
-              '<div class="task-meta">' + escapeHtml(r.path) + ' — updated ' + escapeHtml(r.updated_at) + '</div>' +
+              '<div class="task-meta">' + escapeHtml(r.path) + ' — updated ' + escapeHtml(niceDate(r.updated_at)) + '</div>' +
             '</div>';
           var btn = document.createElement('button');
           btn.type = 'button';
@@ -5297,7 +5469,7 @@
             div.innerHTML =
               '<div class="task-info">' +
                 '<span class="task-title">' + escapeHtml(f.title) + '</span>' +
-                '<div class="task-meta">' + escapeHtml(f.path) + ' — updated ' + escapeHtml(f.updated_at) + '</div>' +
+                '<div class="task-meta">' + escapeHtml(f.path) + ' — updated ' + escapeHtml(niceDate(f.updated_at)) + '</div>' +
               '</div>';
             var btn = document.createElement('button');
             btn.type = 'button';
@@ -6217,6 +6389,7 @@
             }
             if (me && !me.owner) {
               [].forEach.call(document.querySelectorAll('[data-owner-only]'), function(el) { el.hidden = true; });
+              if (window.showCurrentPage) window.showCurrentPage(false);
             }
             return me;
           }).catch(function() { return null; });
