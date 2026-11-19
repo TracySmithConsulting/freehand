@@ -184,8 +184,13 @@ In a sensible order:
      and none of the member's. Hindsight builds summaries per tag set
      ("combined" scoping), so they don't mix. No separate banks needed.
 
-   Not built yet: "share this" (saving with `shared`), and the Memory
-   page showing yours and the shared pool separately.
+   **Built (November 2026): "share this".** Saying "share this with the
+   office" in chat, or ticking "Share it with everyone" on the Memory
+   page, saves the memory with `shared` as well as `person:<me>`, so
+   everyone recalls it and it's still known whose it was. The Memory page
+   lists the shared pool apart, under "Shared with everyone". Only the
+   person who shared a memory, or the owner, corrects or forgets it.
+   When someone leaves, what they shared stays shared.
 3. **Chats, tasks and approvals filtered by person.** Each person sees only
    their own. Administrators can see approvals for shared connections.
    Scheduled tasks run as the person who made them.
@@ -216,7 +221,11 @@ In a sensible order:
      their folder, the owner everything except other people's folders.
      Someone else's file is "not found".
 
-   Not built yet: the shared folder.
+   **Built (November 2026): the shared folder,** `vault/people/shared/`.
+   It's next to the people's folders, so nothing in the owner's own vault
+   becomes shared by accident, and nobody can have the id "shared".
+   Everyone reads it (search, the Memory page's files, MCP), and everyone
+   can save Word, Excel and PowerPoint files there.
 5. **Personal and shared connections:**
    - OpenConnector connections named per person (for example `thandi-work`);
    - a Composio user ID per person;

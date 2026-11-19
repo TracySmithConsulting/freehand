@@ -40,6 +40,12 @@ def _member_root() -> Optional[Path]:
     return Path(agent_config.VAULT_DIR).joinpath(*parts) if parts else None
 
 
+def _shared_root() -> Path:
+    """The shared folder everyone can read and add to (core/people.py)."""
+    from core import agent_config, people
+    return Path(agent_config.VAULT_DIR).joinpath(*people.shared_parts())
+
+
 def _someone_elses(path: str) -> bool:
     """A file in another person's folder in the vault (core/people.py)."""
     from core import agent_config, people
@@ -60,12 +66,13 @@ def allowed_read_roots() -> List[Path]:
     settings["allowed_read_dirs"]. Read dynamically so tests (and a
     settings change) take effect without a restart.
 
-    A member only their own folder (core/member_limits.py).
+    A member only their own folder and the shared folder
+    (core/member_limits.py).
     """
     from core import agent_config
     member_root = _member_root()
     if member_root is not None:
-        return [member_root]
+        return [member_root, _shared_root()]
     roots = [Path(agent_config.VAULT_DIR)]
     try:
         extra = agent_config._load_settings().get("allowed_read_dirs") or []
@@ -103,11 +110,11 @@ def check_read_allowed(path: str) -> Optional[str]:
 def allowed_write_roots() -> List[Path]:
     """Folders the agent may write documents into: the vault, plus any
     folders listed in settings["allowed_write_dirs"]. A member only their
-    own folder."""
+    own folder and the shared folder."""
     from core import agent_config
     member_root = _member_root()
     if member_root is not None:
-        return [member_root]
+        return [member_root, _shared_root()]
     roots = [Path(agent_config.VAULT_DIR)]
     try:
         extra = agent_config._load_settings().get("allowed_write_dirs") or []

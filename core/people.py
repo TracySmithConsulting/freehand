@@ -74,7 +74,7 @@ def list_people(settings: Optional[dict] = None) -> list[dict]:
         if not isinstance(p, dict):
             continue
         pid = str(p.get("id") or "").strip().lower()
-        if not PERSON_ID_RE.match(pid) or pid == OWNER_ID or any(q["id"] == pid for q in out):
+        if not PERSON_ID_RE.match(pid) or pid in (OWNER_ID, SHARED_FOLDER) or any(q["id"] == pid for q in out):
             continue
         role = str(p.get("role") or "member").strip().lower()
         if role not in ROLES:
@@ -191,6 +191,17 @@ def approvals_scope(person_id: Optional[str] = None) -> Optional[str]:
 WORKSPACES_DIR = "people"
 
 
+# The shared folder everyone can read and add to (docs/design/people.md,
+# step 4). It sits with the people's folders, so "people" stays FreeHand's
+# and nothing of the owner's own vault becomes shared by accident. The id
+# "shared" is never a person's.
+SHARED_FOLDER = "shared"
+
+
+def shared_parts() -> tuple:
+    return (WORKSPACES_DIR, SHARED_FOLDER)
+
+
 def workspace_parts(person_id: Optional[str] = None) -> tuple:
     """The person's own folder, as parts under the vault: () for the owner."""
     person_id = person_id or current()
@@ -207,6 +218,8 @@ def may_read_vault_file(rel_path: str, person_id: Optional[str] = None) -> bool:
     the owner everything except the other people's folders."""
     person_id = person_id or current()
     parts = [p for p in str(rel_path).replace("\\", "/").split("/") if p]
+    if len(parts) > 2 and parts[0] == WORKSPACES_DIR and parts[1] == SHARED_FOLDER:
+        return True  # the shared folder: everyone's
     in_someones = bool(parts) and parts[0] == WORKSPACES_DIR
     if person_id == OWNER_ID:
         return not in_someones
@@ -336,7 +349,7 @@ def _new_id(name: str, s: dict) -> str:
     except OSError:
         pass
     pid, n = base, 2
-    while pid in taken or pid == OWNER_ID:
+    while pid in taken or pid in (OWNER_ID, SHARED_FOLDER):
         pid, n = f"{base}-{n}", n + 1
     return pid
 

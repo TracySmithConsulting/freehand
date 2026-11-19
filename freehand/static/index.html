@@ -1539,6 +1539,8 @@
                  aria-describedby="fact-add-error">
           <p class="error" id="fact-add-error" role="alert"></p>
         </div>
+        <label id="fact-share-label" hidden><input type="checkbox" id="fact-add-shared">
+          Share it with everyone on this FreeHand</label>
         <button type="submit" id="fact-add-btn">Remember this</button>
       </form>
       <div class="form-group stack-top">
@@ -1546,6 +1548,10 @@
         <input type="search" id="fact-filter" autocomplete="off" placeholder="e.g. Anna">
       </div>
       <ul id="facts-list" class="facts-list" aria-labelledby="facts-heading"></ul>
+      <h3 id="facts-shared-heading" hidden>Shared with everyone on this FreeHand</h3>
+      <p id="facts-shared-hint" class="hint" hidden>Everyone's FreeHand can use these. Only the person who shared one,
+        or the owner, can correct or forget it.</p>
+      <ul id="facts-shared-list" class="facts-list" aria-labelledby="facts-shared-heading" hidden></ul>
 
       <details id="bank-panel" class="stack-top">
         <summary>Memory bank: where FreeHand keeps its memories</summary>
@@ -5252,6 +5258,13 @@
         })
         .then(function(data) {
           factsList.innerHTML = '';
+          var sharedList = document.getElementById('facts-shared-list');
+          if (sharedList) sharedList.innerHTML = '';
+          ['facts-shared-heading', 'facts-shared-hint', 'facts-shared-list'].forEach(function(id) {
+            var e = document.getElementById(id); if (e) e.hidden = true;
+          });
+          var shareLabel = document.getElementById('fact-share-label');
+          if (shareLabel) shareLabel.hidden = !data.can_share;
           if (data.error) {
             factsStatus.textContent = data.error + ' FreeHand still works, but it can\'t learn or recall anything until its memory is back.';
             return;
@@ -5267,20 +5280,32 @@
             ? items.length + ' matching memories.'
             : 'FreeHand remembers ' + data.total + (data.total === 1 ? ' thing.' : ' things.') +
               (items.length < data.total ? ' Showing the newest ' + items.length + '.' : '');
-          items.forEach(renderFact);
+          items.forEach(function(f) { renderFact(f, f.shared ? sharedList : factsList); });
+          if (sharedList && sharedList.children.length) {
+            ['facts-shared-heading', 'facts-shared-hint', 'facts-shared-list'].forEach(function(id) {
+              var e = document.getElementById(id); if (e) e.hidden = false;
+            });
+          }
         })
         .catch(function() {
           factsStatus.textContent = 'Could not load what FreeHand remembers.';
         });
       }
 
-      function renderFact(fact) {
+      function renderFact(fact, list) {
         var li = document.createElement('li');
         li.className = 'connection-card';
         var text = document.createElement('span');
         text.className = 'fact-text';
         text.textContent = fact.text;
         li.appendChild(text);
+        if (fact.shared && fact.mine) {
+          var by = document.createElement('span');
+          by.className = 'hint';
+          by.textContent = ' (you shared this)';
+          li.appendChild(by);
+        }
+        if (fact.can_change === false) { (list || factsList).appendChild(li); return; }
         var actions = document.createElement('div');
         actions.className = 'connection-actions';
         var edit = document.createElement('button');
@@ -5298,7 +5323,7 @@
         actions.appendChild(edit);
         actions.appendChild(forget);
         li.appendChild(actions);
-        factsList.appendChild(li);
+        (list || factsList).appendChild(li);
       }
 
       function editFact(li, fact) {
@@ -5381,13 +5406,16 @@
         if (!text) { showError('fact-add-error', 'Type something for FreeHand to remember.'); return; }
         btn.disabled = true;
         factsStatus.textContent = 'Remembering... this takes a few seconds.';
+        var shareBox = document.getElementById('fact-add-shared');
+        var shared = !!(shareBox && shareBox.checked);
         apiFetch('/api/memory/facts', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text })
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text, shared: shared })
         })
         .then(function(res) {
           if (!res.ok) return readError(res, 'Could not remember that.').then(function(m) { throw new Error(m); });
           input.value = '';
-          showStatus('Remembered.', 'success');
+          if (shareBox) shareBox.checked = false;
+          showStatus(shared ? 'Remembered, and shared with everyone.' : 'Remembered.', 'success');
           loadFacts();
         })
         .catch(function(err) { showError('fact-add-error', err.message); factsStatus.textContent = ''; })
