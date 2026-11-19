@@ -5,6 +5,27 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.22] — 2026-11-19
+
+### Changed
+
+- **One page at a time.** Each part of FreeHand (Command, Scheduled
+  jobs, Connections and the rest) is its own page, instead of everything
+  on one very long page. The menu marks where you are, and choosing a
+  page takes your screen reader to its heading.
+- **A Menu button on phones,** instead of a list that covered most of
+  the screen.
+- **Easier to read and use:** shorter lines, slightly bigger help text,
+  details in the normal font, dates like "20 October 2026", plain words
+  ("What would you like FreeHand to do?", "Safety: Asks first", "Main
+  account"), bigger ticks and choices, and Delete buttons that no longer
+  stand out more than the others.
+
+### Fixed
+
+- A member who switched on "Show all settings and tools" could see the
+  owner's sections. They couldn't use them, and now they don't see them.
+
 ## [0.1.21] — 2026-11-19
 
 ### Added
