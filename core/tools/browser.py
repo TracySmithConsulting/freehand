@@ -162,6 +162,11 @@ async def _launch_browser(headless: bool = True, cdp_overrides: bool = True):
     Returns (browser, strategy_used: str).
     """
     p = await _playwright()
+    # A member never drives the owner's own Chrome, with the owner's
+    # sign-ins: always a clean browser (core/member_limits.py).
+    from core import member_limits
+    if member_limits.is_member():
+        cdp_overrides = False
     # Strategy 1: Chrome Extension bridge
     if cdp_overrides:
         ext_port = _chrome_extension_bridge_port()

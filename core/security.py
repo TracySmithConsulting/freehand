@@ -397,6 +397,12 @@ def handle_approval(approval_id: int, action: str) -> dict:
         raise ValueError(f"Invalid action: {action}")
 
     new_status = "approved" if action == "approve" else "rejected"
+    # A member can cancel a step on a shared account, not approve it
+    # (core/member_limits.py).
+    from core import member_limits
+    refusal = member_limits.approval_refusal(_get_approval(approval_id), action)
+    if refusal:
+        raise ValueError(refusal)
     # Only one the current person may see (people.approvals_scope);
     # anyone else's is "not found", the same as a wrong number.
     from core import people
@@ -651,6 +657,10 @@ async def approve_from_remote(approval_id: int, source: str, caller_id: str,
             # Left pending on purpose, so it can still be approved locally.
             return refusal
 
+    from core import member_limits
+    refusal = member_limits.approval_refusal(row, "approve")
+    if refusal:
+        return refusal
     try:
         handle_approval(approval_id, "approve")
     except ValueError:
