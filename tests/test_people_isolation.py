@@ -34,7 +34,7 @@ NOT_BUILT = pytest.mark.xfail(
 )
 
 THANDI = {"id": "thandi", "name": "Thandi", "role": "member", "telegram": ["555"]}
-SECRET = "OWNER-SECRET"  # in every one of the owner's things
+SECRET = "OWNER-ONLY"  # in every one of the owner's things (not "secret": memory refuses those)
 
 
 @contextlib.contextmanager
@@ -209,6 +209,16 @@ class FakeHindsight:
             query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
             found = self._matching(query.get("tags"), (query.get("tags_match") or ["any"])[0])
             return 200, {"items": [{"id": m["id"], "text": m["text"], "tags": m["tags"]} for m in found]}
+        memory = next((m for m in self.memories if path.split("/memories/")[-1].split("/")[0] == m["id"]), None)
+        if "/memories/" in path and memory is None:
+            return 404, {"detail": "Memory not found"}
+        if method == "GET":
+            return 200, dict(memory)
+        if method == "PATCH":
+            if body.get("state") == "invalidated":
+                self.memories.remove(memory)
+            elif "text" in body:
+                memory["text"] = body["text"]
         return 200, {}
 
     def _matching(self, tags, mode):
@@ -226,16 +236,15 @@ def bank(monkeypatch):
     monkeypatch.setattr(long_memory, "_ensure_bank", lambda: True)
     monkeypatch.setattr(long_memory, "_call", fake.call)
     with as_person("owner"):
-        long_memory.retain(f"{SECRET}: the owner is planning to sell the business")
+        assert long_memory.retain(f"{SECRET}: the owner is planning to sell the business").get("saved")
     # A memory from before people existed: no tags at all.
     fake.memories.append({"id": "old", "text": f"{SECRET}: an old untagged memory", "tags": []})
     fake.memories.append({"id": "pool", "text": "The office closes at 5", "tags": ["shared"]})
     with as_person("thandi"):
-        long_memory.retain("Thandi takes rooibos, no sugar")
+        assert long_memory.retain("Thandi takes rooibos, no sugar").get("saved")
     return fake
 
 
-@NOT_BUILT
 def test_thandi_recalls_her_own_and_the_shared_pool_only(office, bank):
     with as_person("thandi"):
         recalled = long_memory.recall("anything to know?")
@@ -244,7 +253,37 @@ def test_thandi_recalls_her_own_and_the_shared_pool_only(office, bank):
     assert SECRET not in _texts(recalled)  # neither the owner's nor the untagged one
 
 
-@NOT_BUILT
+def test_the_owner_still_recalls_their_old_untagged_memories_but_not_thandis(office, bank):
+    with as_person("owner"):
+        recalled = _texts(long_memory.recall("anything to know?"))
+    assert "an old untagged memory" in recalled and "sell the business" in recalled
+    assert "closes at 5" in recalled
+    assert "rooibos" not in recalled
+
+
+def test_thandi_cant_correct_or_forget_the_owners_memories(office, bank):
+    owners = [m["id"] for m in bank.memories if SECRET in m["text"]]
+    with as_person("thandi"):
+        for mid in owners:
+            assert long_memory.update_fact(mid, "changed by Thandi").get("error")
+            assert long_memory.forget_fact(mid).get("error")
+    assert [m["id"] for m in bank.memories if SECRET in m["text"]] == owners
+
+
+def test_forget_that_in_thandis_chat_never_reaches_the_owners(office, bank):
+    with as_person("thandi"):
+        long_memory.forget_matching("the business")
+    assert sum(SECRET in m["text"] for m in bank.memories) == 2
+
+
+def test_thandi_can_still_correct_and_forget_her_own(office, bank):
+    hers = next(m["id"] for m in bank.memories if "rooibos" in m["text"])
+    with as_person("thandi"):
+        assert long_memory.update_fact(hers, "Thandi takes rooibos with honey").get("updated")
+        assert long_memory.forget_fact(hers).get("forgotten")
+    assert not any("rooibos" in m["text"] for m in bank.memories)
+
+
 def test_the_memory_page_shows_thandi_only_hers_and_the_pool(office, bank):
     with as_person("thandi"):
         listed = long_memory.list_facts()
