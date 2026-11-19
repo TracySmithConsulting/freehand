@@ -133,6 +133,10 @@ async def limit_request_body(request: Request, call_next):
     if request.url.path == "/api/voice/transcribe":
         # Recordings from the console's Speak button (key-protected).
         cap = max(cap, 25 * 1024 * 1024)
+    if request.url.path == "/api/imports/chat-export":
+        # A ChatGPT or Claude export (key-protected): big when it has pictures.
+        from core.chat_import import MAX_UPLOAD
+        cap = max(cap, MAX_UPLOAD)
     cl = request.headers.get("content-length")
     if cl is not None:
         try:
@@ -212,6 +216,9 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/memory/search"), ("GET", "/api/memory/files"), ("GET", "/api/memory/file"),
     ("POST", "/api/memory/sync"),
     ("GET", "/api/scribble"), ("POST", "/api/scribble"), ("POST", "/api/sweep"),
+    # Bringing in their own ChatGPT or Claude history (core/chat_import.py).
+    ("POST", "/api/imports/chat-export"), ("POST", "/api/imports/memories-text"),
+    ("GET", "/api/imports/chat-exports"), ("DELETE", "/api/imports/chat-exports/{source}"),
     # Their own accounts (core/accounts.py; _connections_auth checks
     # which account a Test or Disconnect is for).
     ("GET", "/api/integrations"), ("POST", "/api/connect-ticket"),
@@ -2004,6 +2011,83 @@ async def memory_forget_fact(memory_id: str):
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+# ── Bringing in ChatGPT and Claude (core/chat_import.py) ─────────────
+# Each person's own: it runs as whoever is signed in.
+
+@app.post("/api/imports/chat-export", dependencies=[Depends(require_api_key)])
+async def import_chat_export(request: Request):
+    """The export file itself is the request body (no form), streamed to
+    a temporary file and counted as it comes, so a big one never sits in
+    memory and nothing over the limit is kept."""
+    import tempfile
+    from core import chat_import, people
+    person = people.current()
+    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
+    try:
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > chat_import.MAX_UPLOAD:
+                raise HTTPException(status_code=413, detail="That file is too big to bring in.")
+            spool.write(chunk)
+        if not size:
+            raise HTTPException(status_code=400, detail="Choose the export file first.")
+
+        def work():
+            token = people.set_current(person)  # the worker thread runs as them too
+            try:
+                return chat_import.save(chat_import.read_export(spool))
+            finally:
+                people.reset(token)
+        try:
+            return await asyncio.to_thread(work)
+        except chat_import.ImportError_ as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        spool.close()
+
+
+@app.post("/api/imports/memories-text", dependencies=[Depends(require_api_key)])
+async def import_memories_text(body: dict):
+    from core import chat_import, people
+    body = body or {}
+    person = people.current()
+
+    def work():
+        token = people.set_current(person)
+        try:
+            return chat_import.save_pasted(str(body.get("source") or ""), str(body.get("text") or "")[:200_000])
+        finally:
+            people.reset(token)
+    try:
+        return await asyncio.to_thread(work)
+    except chat_import.ImportError_ as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/imports/chat-exports", dependencies=[Depends(require_api_key)])
+async def imported_chat_exports():
+    from core import chat_import
+    return {"imported": chat_import.imported()}
+
+
+@app.delete("/api/imports/chat-exports/{source}", dependencies=[Depends(require_api_key)])
+async def remove_chat_export(source: str):
+    from core import chat_import, people
+    person = people.current()
+
+    def work():
+        token = people.set_current(person)
+        try:
+            return chat_import.remove(source)
+        finally:
+            people.reset(token)
+    try:
+        return await asyncio.to_thread(work)
+    except chat_import.ImportError_ as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.post("/api/memory/sync", dependencies=[Depends(require_api_key)])

@@ -1594,6 +1594,45 @@
         or the owner, can correct or forget it.</p>
       <ul id="facts-shared-list" class="facts-list" aria-labelledby="facts-shared-heading" hidden></ul>
 
+      <details id="chat-import" class="stack-top">
+        <summary>Bring in what ChatGPT or Claude knows about you</summary>
+        <p class="hint">Your conversations become notes FreeHand can search, at no cost. What ChatGPT or Claude
+          remembers about you goes into FreeHand's memory. FreeHand doesn't learn from every conversation:
+          that would cost a lot of AI use. Lines that look like a password aren't kept in memory.</p>
+        <h3 id="chat-import-file-heading">From their export</h3>
+        <ol class="hint">
+          <li>In ChatGPT: Settings, Data controls, Export data. In Claude: Settings, Privacy, Export data.</li>
+          <li>They email you a link. Download the zip file.</li>
+          <li>Choose it here. You don't need to unzip it.</li>
+        </ol>
+        <form id="chat-import-file-form" novalidate>
+          <div class="form-group">
+            <label for="chat-import-file">The export file (.zip or conversations.json)</label>
+            <input type="file" id="chat-import-file" accept=".zip,.json,application/zip,application/json">
+          </div>
+          <button type="submit" id="chat-import-file-btn">Bring it in</button>
+        </form>
+        <h3 id="chat-import-paste-heading">Or paste what they remember</h3>
+        <p class="hint">In ChatGPT: Settings, Personalization, Memory, Manage. In Claude: Settings, its memory.
+          Copy the list and paste it here, one thing on each line.</p>
+        <form id="chat-import-paste-form" novalidate>
+          <div class="form-group">
+            <label for="chat-import-source">It's from</label>
+            <select id="chat-import-source">
+              <option value="chatgpt">ChatGPT</option>
+              <option value="claude">Claude</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="chat-import-text">What it remembers about you</label>
+            <textarea id="chat-import-text" rows="6"></textarea>
+          </div>
+          <button type="submit" id="chat-import-paste-btn">Remember these</button>
+        </form>
+        <p id="chat-import-status" class="hint" role="status" aria-live="polite"></p>
+        <div id="chat-import-list"></div>
+      </details>
+
       <details id="bank-panel" class="stack-top">
         <summary>Memory bank: where FreeHand keeps its memories</summary>
         <p class="hint">
@@ -5307,6 +5346,92 @@
       function readError(res, fallback) {
         return res.json().then(function(d) { return (d && d.detail) || fallback; }, function() { return fallback; });
       }
+
+      // ---- Bringing in ChatGPT and Claude (core/chat_import.py) ----
+      (function() {
+        var fileForm = document.getElementById('chat-import-file-form');
+        if (!fileForm) return;
+        function say(text) { document.getElementById('chat-import-status').textContent = text; }
+        function told(r) {
+          return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; },
+                               function() { if (!r.ok) throw new Error('That did not work.'); return {}; });
+        }
+        function loadImported() {
+          apiFetch('/api/imports/chat-exports').then(function(r) { return r.ok ? r.json() : { imported: [] }; })
+            .then(function(d) {
+              var box = document.getElementById('chat-import-list');
+              box.textContent = '';
+              (d.imported || []).forEach(function(i) {
+                var row = document.createElement('div');
+                row.className = 'task-item';
+                var info = document.createElement('div');
+                info.className = 'task-info';
+                info.textContent = 'From ' + i.name + ': ' + i.conversations + ' conversation' +
+                  (i.conversations === 1 ? '' : 's') + ', as notes.';
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'danger';
+                btn.textContent = 'Take it out';
+                btn.setAttribute('aria-label', 'Take out everything from ' + i.name);
+                btn.onclick = function() {
+                  if (!confirm('Take out everything from ' + i.name + '? Its notes are deleted, and FreeHand forgets ' +
+                               'what it brought in from ' + i.name + '.')) return;
+                  apiFetch('/api/imports/chat-exports/' + encodeURIComponent(i.source), { method: 'DELETE' })
+                    .then(told).then(function(r) {
+                      say(r.memory_error || ('Everything from ' + i.name + ' is taken out.'));
+                      loadImported(); loadFacts();
+                    }).catch(function(e) { say(e.message); });
+                };
+                row.appendChild(info);
+                row.appendChild(document.createTextNode(' '));
+                row.appendChild(btn);
+                box.appendChild(row);
+              });
+            }).catch(function() {});
+        }
+        fileForm.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var input = document.getElementById('chat-import-file');
+          if (!input.files || !input.files.length) { say('Choose the export file first.'); input.focus(); return; }
+          var btn = document.getElementById('chat-import-file-btn');
+          btn.disabled = true;
+          say('Bringing it in. A big export can take a minute or two...');
+          // The file itself is sent, as it is: no form needed on the server.
+          apiFetch('/api/imports/chat-export', { method: 'POST', body: input.files[0],
+                                                 headers: { 'Content-Type': 'application/octet-stream' } })
+            .then(told)
+            .then(function(r) {
+              var parts = [r.conversations === 1
+                ? '1 conversation from ' + r.name + ' is now a note FreeHand can search.'
+                : r.conversations + ' conversations from ' + r.name + ' are now notes FreeHand can search.'];
+              if (r.memories) parts.push(r.memories + ' thing' + (r.memories === 1 ? '' : 's') + ' it remembered are in FreeHand\'s memory.');
+              if (r.left_out) parts.push(r.left_out + ' looked like passwords, so they were left out.');
+              if (r.memory_error) parts.push(r.memory_error);
+              if (!r.memories && !r.memory_error) parts.push('The export had no memory list: paste it below if you like.');
+              say(parts.join(' '));
+              input.value = '';
+              loadImported(); loadFacts(); loadMemoryFiles();
+            })
+            .catch(function(err) { say(err.message); })
+            .then(function() { btn.disabled = false; });
+        });
+        document.getElementById('chat-import-paste-form').addEventListener('submit', function(e) {
+          e.preventDefault();
+          var text = document.getElementById('chat-import-text');
+          var source = document.getElementById('chat-import-source');
+          if (!text.value.trim()) { say('Paste the list first.'); text.focus(); return; }
+          apiFetch('/api/imports/memories-text', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                   body: JSON.stringify({ source: source.value, text: text.value }) })
+            .then(told)
+            .then(function(r) {
+              say(r.memories + ' thing' + (r.memories === 1 ? '' : 's') + ' from ' + r.name + ' will be in FreeHand\'s memory in a minute.' +
+                  (r.left_out ? ' ' + r.left_out + ' looked like passwords, so they were left out.' : ''));
+              text.value = '';
+            })
+            .catch(function(err) { say(err.message); });
+        });
+        loadImported();
+      })();
 
       function loadFacts() {
         var q = factFilter.value.trim();
