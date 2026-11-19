@@ -145,7 +145,7 @@ def test_signed_in_thandi_sees_only_her_jobs_and_can_pause_them(sent, owner):
 def test_a_member_cant_reach_the_owners_screens(sent):
     thandi, _ = sign_in("thandi", sent)
     for method, path in [("GET", "/api/settings"), ("POST", "/api/security/tier"), ("GET", "/api/llm/backups"),
-                         ("GET", "/api/team"), ("GET", "/api/helpers"), ("POST", "/api/broker/config")]:
+                         ("POST", "/api/people/team-sharing"), ("GET", "/api/helpers"), ("POST", "/api/broker/config")]:
         r = thandi.request(method, path, json={})
         assert r.status_code == 403, (method, path, r.status_code)
         assert r.json()["detail"] == "Only the owner can do this."

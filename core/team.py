@@ -20,6 +20,15 @@ its scheduled jobs is due.
 
 Saved in vault/team/<id>.json, one file each, so they're easy to back up,
 share and edit. The log is vault/team/<id>.log.jsonl.
+
+Whose they are (docs/design/people.md): each team member is the person's
+who made it ("person"; files from before people existed are the
+owner's). Only they change, pause or delete it. They can share it
+("shared": "everyone", or people's ids) so others can talk to it too;
+the owner always can, and members only if the owner allows it under
+People. Someone using a shared team member uses it as themselves: their
+own accounts, memories and chat, and the log shows each person only
+their own requests. Its monthly limit is shared by everyone using it.
 """
 from __future__ import annotations
 
@@ -113,7 +122,13 @@ def _path(member_id: str) -> Path:
     return TEAM_DIR / f"{slug}.json"
 
 
+EVERYONE = "everyone"
+MEMBERS_MAY_SHARE = "team_sharing_by_members"  # setting: members may share theirs
+
+
 def all_members() -> list[dict]:
+    """Every team member on this FreeHand, whoever's. Use members() for
+    the ones the current person may use."""
     if not TEAM_DIR.exists():
         return []
     out = []
@@ -127,14 +142,80 @@ def all_members() -> list[dict]:
     return out
 
 
-def get(name_or_id: str) -> Optional[dict]:
+def maker(member: dict) -> str:
+    """The person id it belongs to."""
+    from core import people
+    return str(member.get("person") or people.OWNER_ID)
+
+
+def members_may_share(settings: Optional[dict] = None) -> bool:
+    from core import people
+    s = settings if settings is not None else people._settings()
+    return bool(s.get(MEMBERS_MAY_SHARE))
+
+
+def may_share(person_id: Optional[str] = None) -> bool:
+    from core import people
+    return (person_id or people.current()) == people.OWNER_ID or members_may_share()
+
+
+def shared_with(member: dict) -> list:
+    raw = member.get("shared")
+    return [str(x) for x in raw] if isinstance(raw, list) else []
+
+
+def visible(member: dict, person_id: Optional[str] = None) -> bool:
+    """Whether this person may use (talk to, schedule) this team member."""
+    from core import people
+    person_id = person_id or people.current()
+    whose = maker(member)
+    if whose == person_id:
+        return True
+    if whose != people.OWNER_ID and not members_may_share():
+        return False  # the owner switched members' sharing off
+    shared = shared_with(member)
+    return EVERYONE in shared or person_id in shared
+
+
+def mine(member: dict, person_id: Optional[str] = None) -> bool:
+    from core import people
+    return maker(member) == (person_id or people.current())
+
+
+def members(person_id: Optional[str] = None) -> list[dict]:
+    """The team members this person may use: their own first."""
+    found = [m for m in all_members() if visible(m, person_id)]
+    return sorted(found, key=lambda m: not mine(m, person_id))
+
+
+def get(name_or_id: str, person_id: Optional[str] = None) -> Optional[dict]:
+    """One the person may use, by id or name; their own wins a name clash."""
     want = (name_or_id or "").strip().lower()
     if not want:
         return None
-    for m in all_members():
+    for m in members(person_id):
         if want in (m.get("id", ""), m.get("name", "").lower()):
             return m
     return None
+
+
+def _clean_shared(data: dict, whose: str) -> list:
+    from core import people
+    raw = data.get("shared")
+    raw = raw if isinstance(raw, list) else []
+    wanted = []
+    for x in raw:
+        x = str(x or "").strip().lower()
+        if x == EVERYONE or (x != whose and people.get(x) is not None):
+            if x not in wanted:
+                wanted.append(x)
+    if EVERYONE in wanted:
+        wanted = [EVERYONE]
+    if wanted and not may_share(whose):
+        owner = people.list_people()[0]["name"]
+        raise TeamError(f"Only {owner} can let people share their team members. "
+                        f"Ask {owner} to switch it on under People.")
+    return wanted
 
 
 def clean(data: dict, existing: Optional[dict] = None) -> dict:
@@ -158,9 +239,13 @@ def clean(data: dict, existing: Optional[dict] = None) -> dict:
             raise TeamError(f"Choose a number from {low} to {high}.")
         return value
 
+    from core import people
+    whose = (existing or {}).get("person") or people.current()
     member = {
         "id": (existing or {}).get("id") or _slug(name),
         "name": name,
+        "person": whose,
+        "shared": _clean_shared(data, whose),
         "job": job,
         "template": str(data.get("template") or "")[:40],
         "instructions": str(data.get("instructions") or "").strip()[:3000],
@@ -178,27 +263,51 @@ def clean(data: dict, existing: Optional[dict] = None) -> dict:
     return member
 
 
+def not_yours(member: dict) -> str:
+    from core import people
+    holder = people.get(maker(member))
+    who = holder["name"] if holder else "the person who made them"
+    return f"{member['name']} is {who}'s, so only {who} can change them."
+
+
 def save(data: dict, member_id: Optional[str] = None) -> dict:
     existing = get(member_id) if member_id else None
     if member_id and not existing:
         raise TeamError("That team member doesn't exist.")
+    if existing and not mine(existing):
+        raise TeamError(not_yours(existing))
     member = clean(data, existing)
     clash = get(member["name"])
     if clash and clash["id"] != member["id"]:
-        raise TeamError(f"You already have a team member called {clash['name']}.")
+        if mine(clash):
+            raise TeamError(f"You already have a team member called {clash['name']}.")
+        raise TeamError(f"{clash['name']} is already a team member you can use. Choose another name.")
     if not existing and _path(member["id"]).exists():
         try:
-            taken = json.loads(_path(member["id"]).read_text(encoding="utf-8")).get("name") or member["name"]
+            there = json.loads(_path(member["id"]).read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            taken = member["name"]
-        raise TeamError(f"You already have a team member called {taken}.")
+            there = {}
+        if not isinstance(there, dict) or visible(there):
+            taken = (there.get("name") if isinstance(there, dict) else None) or member["name"]
+            if isinstance(there, dict) and not mine(there):
+                raise TeamError(f"{taken} is already a team member you can use. Choose another name.")
+            raise TeamError(f"You already have a team member called {taken}.")
+        # Someone else's, not shared with this person: names only need to
+        # be unique among the team members one can use, so use another file.
+        base, n = member["id"], 2
+        while _path(member["id"]).exists():
+            member["id"], n = f"{base}-{n}", n + 1
     TEAM_DIR.mkdir(parents=True, exist_ok=True)
     _path(member["id"]).write_text(json.dumps(member, indent=2), encoding="utf-8")
     return member
 
 
 def delete(member_id: str) -> bool:
-    path = _path(member_id)
+    """Delete one of the current person's own team members."""
+    member = get(member_id)
+    if not member or not mine(member):
+        return False
+    path = _path(member["id"])
     if not path.exists():
         return False
     path.unlink()
@@ -264,10 +373,10 @@ def addressed(text: str) -> tuple[Optional[dict], str]:
     """"Thandi, draft a post" -> (Thandi, "draft a post"). Also "Thandi:"
     and "Ask Thandi to ...". (None, text) when no team member is named."""
     text = text or ""
-    members = all_members()
-    if not members:
+    usable = members()
+    if not usable:
         return None, text
-    for m in sorted(members, key=lambda m: -len(m["name"])):
+    for m in sorted(usable, key=lambda m: (-len(m["name"]), not mine(m))):
         name = re.escape(m["name"])
         hit = (re.match(rf"^\s*(?:hi|hey|hello)?\s*{name}\s*[,:\-]\s*(.+)$", text, re.I | re.S)
                or re.match(rf"^\s*ask\s+{name}\s+to\s+(.+)$", text, re.I | re.S))
@@ -383,8 +492,10 @@ def record(member: dict, request: str, result: dict, now: Optional[datetime] = N
         mine = usage(member, now)
         data[member["id"]] = {"month": mine["month"], "runs": mine["runs"] + 1, "tokens": mine["tokens"] + tokens}
         _usage_path().write_text(json.dumps(data), encoding="utf-8")
+    from core import people
     entry = {
         "at": (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "person": people.current(),  # each person sees only their own requests
         "asked": request[:300],
         "tools": [t.get("name") for t in result.get("tools_used") or []],
         "reply": (result.get("text") or result.get("error") or "")[:300],
@@ -396,14 +507,63 @@ def record(member: dict, request: str, result: dict, now: Optional[datetime] = N
     log.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def recent(member: dict, n: int = 5) -> list[dict]:
+def recent(member: dict, n: int = 5, person_id: Optional[str] = None) -> list[dict]:
+    """The person's own last requests to this team member, newest first."""
+    from core import people
+    person_id = person_id or people.current()
     log = _path(member["id"]).with_suffix(".log.jsonl")
     if not log.exists():
         return []
     out = []
-    for line in log.read_text(encoding="utf-8").splitlines()[-n:]:
+    for line in reversed(log.read_text(encoding="utf-8").splitlines()):
         try:
-            out.append(json.loads(line))
+            entry = json.loads(line)
         except ValueError:
             continue
-    return list(reversed(out))
+        if entry.get("person", people.OWNER_ID) == person_id:
+            out.append(entry)
+            if len(out) >= n:
+                break
+    return out
+
+
+def leave(person_id: str, keep: bool) -> int:
+    """Someone left (core/leaving.py): their team members become the
+    owner's, unshared, or are deleted; their requests leave every other
+    team member's log. Returns how many of theirs there were."""
+    from core import people
+    theirs = [m for m in all_members() if maker(m) == person_id]
+    kept_ids = {m["id"] for m in theirs} if keep else set()
+    for m in theirs:
+        path = _path(m["id"])
+        if keep:
+            taken = {x["name"].lower() for x in all_members() if maker(x) == people.OWNER_ID}
+            name, n = m["name"], 2
+            while name.lower() in taken:  # the owner already has one called that
+                name, n = f"{m['name']} {n}", n + 1
+            m.update(person=people.OWNER_ID, shared=[], name=name)
+            path.write_text(json.dumps(m, indent=2), encoding="utf-8")
+        else:
+            path.unlink(missing_ok=True)
+            path.with_suffix(".log.jsonl").unlink(missing_ok=True)
+    for m in all_members():
+        log = _path(m["id"]).with_suffix(".log.jsonl")
+        if not log.exists():
+            continue
+        kept = []
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if entry.get("person", people.OWNER_ID) == person_id:
+                if m["id"] not in kept_ids:
+                    continue
+                entry["person"] = people.OWNER_ID
+            kept.append(json.dumps(entry))
+        log.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    for m in all_members():  # nobody shares with someone who isn't here
+        if person_id in shared_with(m):
+            m["shared"] = [x for x in shared_with(m) if x != person_id]
+            _path(m["id"]).write_text(json.dumps(m, indent=2), encoding="utf-8")
+    return len(theirs)

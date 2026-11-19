@@ -8,9 +8,10 @@ they made, and FreeHand does all of it:
   that were waiting are cancelled.
 - **Their notes and files** (their folder, ``vault/people/<id>/``): kept
   for the owner in a folder "From <name>", or deleted.
-- **Their scheduled jobs:** kept for the owner, paused, or deleted. A kept
-  job's results go to the owner's console only, never to the person's
-  old chat.
+- **Their scheduled jobs and team members:** kept for the owner (jobs
+  paused, team members unshared), or deleted. A kept job's results go to
+  the owner's console only, never to the person's old chat. Their
+  requests to anyone else's team members leave those logs.
 - **Their memories:** kept for the owner, or deleted. Deleted by default:
   they're private. What they shared stays shared.
 - **Accounts that were theirs:** disconnected (the default), or given to
@@ -83,6 +84,11 @@ def _memory_documents(person_id: str) -> Optional[list]:
     return [d for d in data.get("items") or [] if isinstance(d, dict) and d.get("id")]
 
 
+def _their_team(person_id: str) -> int:
+    from core import team
+    return sum(1 for m in team.all_members() if team.maker(m) == person_id)
+
+
 def their_accounts(person_id: str) -> list:
     from core import accounts
     return [{"account": a, "name": accounts.describe(a)}
@@ -95,6 +101,7 @@ def what_they_have(person_id: str) -> dict:
     return {
         "files": len(_files(person_id)),
         "jobs": _count("tasks", person_id),
+        "team_members": _their_team(person_id),
         "approvals_waiting": _count("approvals", person_id, " AND status = 'pending'"),
         "memories": None if docs is None else len(docs),
         "accounts": their_accounts(person_id),
@@ -283,6 +290,13 @@ async def remove(person_id: str, keep_files: bool = True, keep_jobs: bool = True
                     f"Resume {it} under Scheduled jobs if you want {it}.")
     elif jobs:
         done.append(f"Their {_n(jobs, 'scheduled job was', 'scheduled jobs were')} deleted.")
+
+    from core import team
+    helpers = team.leave(person_id, keep_jobs)
+    if helpers and keep_jobs:
+        done.append(f"Their {_n(helpers, 'team member is', 'team members are')} yours now, not shared.")
+    elif helpers:
+        done.append(f"Their {_n(helpers, 'team member was', 'team members were')} deleted.")
 
     s = agent_config._load_settings()
     owners = accounts.owners(s)

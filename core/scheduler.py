@@ -812,7 +812,7 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
                     conn.execute("UPDATE tasks SET limit_told = ? WHERE id = ?", (_month(now), row["id"]))
             elif row["team_member"] and _member_for(row) is None:
                 result = {"text": "", "error": "team member gone",
-                          "plain": "the team member who did this job has been deleted"}
+                          "plain": "the team member who did this job has been deleted, or isn't shared any more"}
             elif row["team_member"] and _member_for(row).get("paused"):
                 result = {"text": "", "error": None, "held": True}  # resumes with them
             else:

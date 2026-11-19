@@ -985,7 +985,7 @@
           <li><a href="#command">Command</a></li>
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Scheduled jobs</a></li>
-          <li data-owner-only><a href="#team">Team</a></li>
+          <li><a href="#team">Team</a></li>
           <li data-advanced data-owner-only><a href="#people">People</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
         <li data-advanced data-owner-only><a href="#skills">Skills</a></li>
@@ -1336,7 +1336,7 @@
     </section>
 
     <!-- Team members (core/team.py, docs/design/scheduled-jobs-and-team-members.md) -->
-    <section id="team" data-owner-only aria-labelledby="team-heading">
+    <section id="team" aria-labelledby="team-heading">
       <h2 id="team-heading">My team members</h2>
       <p class="hint">
         Team members are helpers with one job each, such as marketing or sorting email. You give them their names.
@@ -1379,6 +1379,12 @@
           <p class="hint">"Cheaper model" uses your first backup model. Simple jobs don't need the best one.</p>
         </div>
         <label><input type="checkbox" id="team-memories"> They may use what FreeHand remembers about you</label>
+        <fieldset id="team-share" hidden>
+          <legend>Who else may talk to them</legend>
+          <p class="hint">Each person uses them as themselves: their own accounts, memories and chat.
+            Only you can change them, and the monthly limit is for everyone together.</p>
+          <div id="team-share-choices"></div>
+        </fieldset>
         <details data-advanced>
           <summary>More options</summary>
           <div class="form-group">
@@ -1450,6 +1456,9 @@
       <div id="people-newcomers" aria-live="polite"></div>
       <div id="people-list" aria-live="polite"><p class="empty-state">Loading...</p></div>
       <div id="people-unfinished"></div>
+      <label class="stack-top"><input type="checkbox" id="people-team-sharing" aria-describedby="people-team-sharing-hint">
+        Let people share their team members with others</label>
+      <p class="hint" id="people-team-sharing-hint">You can always share yours. Switched off, theirs stop being shared at once.</p>
       <form id="people-leaving" class="stack-top" novalidate hidden>
         <h3 id="people-leaving-heading" tabindex="-1"></h3>
         <p id="people-leaving-intro"></p>
@@ -1460,7 +1469,7 @@
             <p class="hint" id="leave-files-hint"></p>
           </div>
           <div class="form-group" id="leave-jobs-group">
-            <label><input type="checkbox" id="leave-keep-jobs" aria-describedby="leave-jobs-hint"> Keep their scheduled jobs for you</label>
+            <label><input type="checkbox" id="leave-keep-jobs" aria-describedby="leave-jobs-hint"> Keep their scheduled jobs and team members for you</label>
             <p class="hint" id="leave-jobs-hint"></p>
           </div>
           <div class="form-group" id="leave-memories-group">
@@ -3203,6 +3212,24 @@
           return out;
         }
         function updateAuto() { el('team-auto').hidden = !actingTools().length; }
+        function sharedPicked() {
+          return [].map.call(form.querySelectorAll('#team-share-choices input:checked'), function(c) { return c.value; });
+        }
+        // "Everyone" covers each person, so their boxes step aside.
+        function updateShare() {
+          var all = form.querySelector('#team-share-choices input[value="everyone"]');
+          [].forEach.call(form.querySelectorAll('#team-share-choices input'), function(c) {
+            if (c.value !== 'everyone') { c.disabled = !!(all && all.checked); if (c.disabled) c.checked = false; }
+          });
+        }
+        function whoShared(m) {
+          var s = m.shared || [];
+          if (!s.length) return '';
+          if (s.indexOf('everyone') !== -1) return 'Shared with everyone.';
+          var names = (options.share_with || []).filter(function(p) { return s.indexOf(p.id) !== -1; })
+            .map(function(p) { return p.name; });
+          return names.length ? 'Shared with ' + names.join(' and ') + '.' : '';
+        }
 
         function fill(m) {
           el('team-name').value = m.name || '';
@@ -3213,6 +3240,11 @@
           });
           el('team-model').value = m.model || '';
           el('team-memories').checked = !!m.memories;
+          var shared = m.shared || [];
+          [].forEach.call(form.querySelectorAll('#team-share-choices input'), function(c) {
+            c.checked = shared.indexOf(c.value) !== -1;
+          });
+          updateShare();
           el('team-steps').value = m.steps || 8;
           el('team-limit').value = m.monthly_limit === undefined ? 100 : m.monthly_limit;
           var auto = (m.auto_tools || []).length ? 'do' : 'ask';
@@ -3254,12 +3286,17 @@
                 '<div class="task-meta">May use: ' + escapeHtml(labels.join(', ') || 'nothing but talking') +
                   ((m.auto_tools || []).length ? '. Posts and sends without asking.' : '. Asks you first before posting or sending.') + '</div>' +
                 '<div class="task-meta">This month: used AI ' + m.used_this_month + ' of ' + m.monthly_limit + ' times.</div>' +
-                (recent ? '<details><summary>Recent work</summary><ul>' + recent + '</ul></details>' : '') +
+                (m.mine ? (whoShared(m) ? '<div class="task-meta">' + escapeHtml(whoShared(m)) + '</div>' : '')
+                        : '<div class="task-meta">' + escapeHtml(m.maker_name || 'Someone') + ' shared them with you.</div>') +
+                (recent ? '<details><summary>Your recent requests</summary><ul>' + recent + '</ul></details>' : '') +
               '</div>' +
+              (m.mine ?
               '<button class="secondary" data-act="edit" aria-label="Change ' + escapeHtml(m.name) + '">Change</button> ' +
               '<button class="secondary" data-act="pause" aria-label="' + (m.paused ? 'Resume ' : 'Pause ') + escapeHtml(m.name) + '">' +
                 (m.paused ? 'Resume' : 'Pause') + '</button> ' +
-              '<button class="danger" data-act="delete" aria-label="Delete ' + escapeHtml(m.name) + '">Delete</button>';
+              '<button class="danger" data-act="delete" aria-label="Delete ' + escapeHtml(m.name) + '">Delete</button>' : '');
+            list.appendChild(div);
+            if (!m.mine) return;
             div.querySelector('[data-act="edit"]').onclick = function() {
               editing = m.id;
               fill(m);
@@ -3279,7 +3316,6 @@
               apiFetch('/api/team/' + encodeURIComponent(m.id), { method: 'DELETE' })
                 .then(function() { showStatus(m.name + ' has been deleted.', 'success'); loadTeam(); });
             };
-            list.appendChild(div);
           });
         }
 
@@ -3301,6 +3337,14 @@
                   label.innerHTML = '<input type="checkbox" value="' + escapeHtml(t.value) + '"> ' + escapeHtml(t.label);
                   box.appendChild && box.appendChild(label);
                 });
+                var share = el('team-share-choices');
+                var choices = (d.share_with || []).length ? [{ id: 'everyone', name: 'Everyone on this FreeHand' }].concat(d.share_with) : [];
+                choices.forEach(function(p) {
+                  var label = document.createElement('label');
+                  label.innerHTML = '<input type="checkbox" value="' + escapeHtml(p.id) + '"> ' + escapeHtml(p.name);
+                  share.appendChild && share.appendChild(label);
+                });
+                el('team-share').hidden = !(d.may_share && choices.length);
                 var model = el('team-model');
                 [{ value: '', label: 'Main model' }, { value: 'cheap', label: 'Cheaper model (your first backup)' }]
                   .concat(d.models.slice(1)).forEach(function(mo, i) {
@@ -3319,6 +3363,7 @@
             if (t) fill({ name: el('team-name').value, job: t.job, instructions: t.instructions, tools: t.tools, model: t.model });
           }
           updateAuto();
+          updateShare();
         });
         el('team-cancel').onclick = reset;
 
@@ -3333,7 +3378,8 @@
             name: el('team-name').value, job: el('team-job').value, instructions: el('team-instructions').value,
             template: el('team-template').value, tools: picked(), auto_tools: justDo ? actingTools() : [],
             model: el('team-model').value, memories: !!el('team-memories').checked,
-            steps: el('team-steps').value, monthly_limit: el('team-limit').value
+            steps: el('team-steps').value, monthly_limit: el('team-limit').value,
+            shared: sharedPicked()
           };
           apiFetch(editing ? '/api/team/' + encodeURIComponent(editing) : '/api/team', {
             method: editing ? 'PUT' : 'POST',
@@ -5601,11 +5647,12 @@
             el('leave-keep-files').checked = true;
             el('leave-files-hint').textContent = plural(h.files, 'note or file', 'notes and files') +
               '. Kept, they go in a folder "From ' + p.name + '" in yours. Not kept, they are deleted.';
-            el('leave-jobs-group').hidden = !h.jobs;
+            el('leave-jobs-group').hidden = !h.jobs && !h.team_members;
             el('leave-keep-jobs').checked = true;
-            el('leave-jobs-hint').textContent = h.jobs === 1
-              ? '1 job. Kept, it becomes yours, paused until you resume it. Not kept, it is deleted.'
-              : h.jobs + ' jobs. Kept, they become yours, paused until you resume them. Not kept, they are deleted.';
+            el('leave-jobs-hint').textContent = [h.jobs ? plural(h.jobs, 'job', 'jobs') : '',
+                h.team_members ? plural(h.team_members, 'team member', 'team members') : '']
+              .filter(Boolean).join(' and ') +
+              '. Kept, they become yours: jobs paused until you resume them, team members not shared. Not kept, they are deleted.';
             el('leave-memories-group').hidden = h.memories === 0;
             el('leave-keep-memories').checked = false;
             el('leave-memories-hint').textContent = (h.memories === null
@@ -5616,7 +5663,7 @@
             el('leave-disconnect').checked = true;
             el('leave-accounts-hint').textContent = h.accounts.map(function(a) { return a.name; }).join(', ') +
               '. Not disconnected, they become yours.';
-            var nothing = !h.files && !h.jobs && h.memories === 0 && !h.accounts.length;
+            var nothing = !h.files && !h.jobs && !h.team_members && h.memories === 0 && !h.accounts.length;
             el('people-leaving').querySelector('fieldset').hidden = nothing;
             if (nothing) el('people-leaving-intro').textContent += ' They have nothing else to keep.';
             el('leave-confirm').textContent = 'Remove ' + p.name;
@@ -5654,6 +5701,7 @@
         function render(d) {
           renderNewcomers(d.newcomers || []);
           renderUnfinished(d.unfinished || []);
+          el('people-team-sharing').checked = !!d.team_sharing_by_members;
           var list = el('people-list');
           list.textContent = '';
           var owner = document.createElement('div');
@@ -5737,6 +5785,13 @@
               .catch(function(err) { el('person-form-error').textContent = err.message; el('person-name').focus(); });
           });
           el('person-cancel').onclick = reset;
+          el('people-team-sharing').onchange = function() {
+            var on = el('people-team-sharing').checked;
+            send('POST', '/api/people/team-sharing', { allowed: on }).then(function(d) {
+              showStatus(on ? 'People can now share their team members.' : 'People\'s team members are no longer shared.', 'success');
+              render(d);
+            }).catch(function(e) { showStatus(e.message, 'error'); });
+          };
           el('leave-cancel').onclick = function() {
             var who = leaving;
             closeLeaving();
