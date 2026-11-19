@@ -59,9 +59,11 @@ class TestKeyPlumbing:
         """Any bare fetch('/api/...') would 401 again for a user who has
         stored a key — every /api/* call must go through apiFetch."""
         html = _html()
-        # /api/console-key is the one exception: it is how the console on
-        # this computer gets the key in the first place (Nov 2026).
-        bare = re.findall(r"(?<![A-Za-z])fetch\(\s*'/api/(?!console-key')", html)
+        # /api/console-key is an exception: it is how the console on this
+        # computer gets the key in the first place (Nov 2026). So is
+        # /api/sign-in/*: it's how someone without a key signs in as
+        # themselves (core/sessions.py), and it needs no key.
+        bare = re.findall(r"(?<![A-Za-z])fetch\(\s*'/api/(?!console-key'|sign-in/)", html)
         assert not bare, f"bare /api fetches bypass the key: {bare}"
         assert "fetch('/api/console-key'" in html
 

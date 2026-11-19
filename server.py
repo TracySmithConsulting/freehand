@@ -5,6 +5,7 @@ import re
 import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -193,8 +194,46 @@ def get_or_create_api_key() -> str:
     return key
 
 
+# What a signed-in member may use in the console: their own chat, jobs,
+# approvals, messages, memories and scribble pad. Everything else (the AI
+# model, settings, the security level, connections, team members, the
+# Helper...) is the owner's, and a member gets "only the owner can do
+# this". A list of what's allowed, so a new screen is the owner's until
+# someone decides otherwise (docs/design/people.md, "Who can do what").
+MEMBER_ROUTES = frozenset({
+    ("POST", "/api/agent/command"),
+    ("GET", "/api/tasks"), ("POST", "/api/tasks"), ("GET", "/api/tasks/limits"),
+    ("POST", "/api/tasks/{task_id}/pause"), ("DELETE", "/api/tasks/{task_id}"),
+    ("GET", "/api/approvals"), ("POST", "/api/approvals/clear"),
+    ("POST", "/api/approvals/{approval_id}/approve"), ("POST", "/api/approvals/{approval_id}/deny"),
+    ("GET", "/api/notices"), ("POST", "/api/notices/seen"),
+    ("GET", "/api/memory/status"), ("GET", "/api/memory/facts"), ("POST", "/api/memory/facts"),
+    ("PUT", "/api/memory/facts/{memory_id}"), ("DELETE", "/api/memory/facts/{memory_id}"),
+    ("GET", "/api/memory/search"), ("GET", "/api/memory/files"), ("GET", "/api/memory/file"),
+    ("POST", "/api/memory/sync"),
+    ("GET", "/api/scribble"), ("POST", "/api/scribble"), ("POST", "/api/sweep"),
+    ("GET", "/api/security/tier"),
+    ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
+    ("GET", "/api/me"), ("POST", "/api/sign-out"),
+    ("POST", "/api/timezone"),  # accepted, but a member's isn't kept (see set_timezone)
+})
+
+SESSION_HEADER = "X-FreeHand-Session"
+
+
+def _session_person(request: Request) -> Optional[str]:
+    from core import sessions
+    return sessions.person_for(request.headers.get(SESSION_HEADER, ""))
+
+
 async def require_api_key(request: Request) -> None:
     """FastAPI dependency: enforce X-API-Key on protected endpoints.
+
+    Also lets in someone signed in as a person (core/sessions.py, the
+    X-FreeHand-Session header). The request then runs as them, so every
+    list and every change is theirs; a member only reaches MEMBER_ROUTES.
+    The API key is always the owner. A session wins over the key, so
+    signing in as someone else on the owner's computer works.
 
     Accepts the API key via two header styles:
       - X-API-Key: <key>                      (FreeHand-native)
@@ -215,6 +254,19 @@ async def require_api_key(request: Request) -> None:
         # no key at all.
         return
 
+    from core import people
+    if request.headers.get(SESSION_HEADER):
+        person = _session_person(request)
+        if person is None:
+            raise HTTPException(status_code=401, detail="Signed out: sign in again")
+        if person != people.OWNER_ID:
+            route = request.scope.get("route")
+            if (request.method, getattr(route, "path", path)) not in MEMBER_ROUTES:
+                raise HTTPException(status_code=403, detail="Only the owner can do this.")
+        request.state.person = person
+        people.set_current(person)  # for the rest of this request only
+        return
+
     expected = get_or_create_api_key()
 
     # Try X-API-Key first, then Authorization: Bearer
@@ -226,6 +278,86 @@ async def require_api_key(request: Request) -> None:
 
     if not provided or not _secrets.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key")
+    request.state.person = people.OWNER_ID
+    people.set_current(people.OWNER_ID)
+
+
+def _request_person(request: Request) -> str:
+    from core import people
+    return getattr(request.state, "person", people.OWNER_ID)
+
+
+# ── Signing in as a person (core/sessions.py) ────────────────────────
+# These need no key: they're how someone without one gets in. On a hosted
+# FreeHand they're still behind the office password at the front door.
+
+@app.get("/api/sign-in/people")
+async def sign_in_people():
+    """Who can sign in, and where their code would be sent."""
+    from core import sessions
+    return {"people": sessions.who_can_sign_in()}
+
+
+@app.post("/api/sign-in/code")
+async def sign_in_code(body: dict):
+    from core import sessions
+    result = await sessions.send_code(str((body or {}).get("person") or ""))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/sign-in/check")
+async def sign_in_check(body: dict):
+    from core import sessions
+    body = body or {}
+    result = sessions.check_code(str(body.get("person") or ""), str(body.get("code") or ""))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/sign-in/link")
+async def sign_in_link(body: dict):
+    from core import sessions
+    result = sessions.use_link(str((body or {}).get("link") or ""))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@app.post("/api/sign-out", dependencies=[Depends(require_api_key)])
+async def sign_out(request: Request):
+    from core import sessions
+    sessions.end(request.headers.get(SESSION_HEADER, ""))
+    return {"signed_out": True}
+
+
+@app.get("/api/me", dependencies=[Depends(require_api_key)])
+async def me(request: Request):
+    """Who this console is signed in as."""
+    from core import people
+    pid = _request_person(request)
+    person = people.get(pid) or {"id": pid, "name": pid, "role": "member"}
+    return {"id": pid, "name": person["name"], "role": person["role"],
+            "owner": pid == people.OWNER_ID, "session": bool(request.headers.get(SESSION_HEADER))}
+
+
+@app.post("/api/people/{person_id}/sign-in-link", dependencies=[Depends(require_api_key)])
+async def people_sign_in_link(person_id: str):
+    """The owner makes a one-time sign-in link for someone."""
+    from core import sessions
+    result = sessions.make_link(person_id)
+    if result.get("error"):
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@app.post("/api/people/{person_id}/sign-out", dependencies=[Depends(require_api_key)])
+async def people_sign_out(person_id: str):
+    """The owner signs someone out on every device."""
+    from core import sessions
+    return {"signed_out": sessions.end_all(person_id)}
 
 # ── The memory service's AI model, through FreeHand ───────────────────
 # Hindsight needs an AI model to pick facts out of conversations. Rather
@@ -1155,15 +1287,21 @@ async def pause_task(task_id: int, body: dict):
 
 
 @app.post("/api/timezone", dependencies=[Depends(require_api_key)])
-async def set_timezone(body: dict):
+async def set_timezone(body: dict, request: Request):
     """The person's time zone, sent by their browser, so "9:00" means 9 where
-    they are. Only a real zone name is kept."""
+    they are. Only a real zone name is kept.
+
+    FreeHand has one time zone, the owner's, so a member's browser doesn't
+    change it (each person's own comes later)."""
+    from core import people
     name = str(body.get("timezone") or "").strip()
     try:
         from zoneinfo import ZoneInfo
         ZoneInfo(name)
     except Exception:
         raise HTTPException(status_code=400, detail="Not a time zone name")
+    if _request_person(request) != people.OWNER_ID:
+        return {"timezone": name, "changed": False}
     changed = _settings_file().get("timezone") != name
     if changed:
         _save_setting("timezone", name)
@@ -1532,16 +1670,26 @@ async def helper_connect(ws: WebSocket):
 
 
 @app.post("/api/agent/command", dependencies=[Depends(require_api_key)])
-async def agent_command(body: dict):
+async def agent_command(body: dict, request: Request):
+    from core import people
     command = body.get("command", "").strip()
     source = body.get("source", "")
     caller_id = body.get("caller_id")
     if not command:
         raise HTTPException(status_code=400, detail="Command is required")
+    person = _request_person(request)
+    if request.headers.get(SESSION_HEADER):
+        # Signed in as a person: it's their own console chat. They can't
+        # say the message came from someone's Telegram, which would make
+        # it that person's.
+        source, caller_id = "", ""
 
     # Records a truncated copy (N3) and runs the agent loop.
     from core.agent import run_command
-    result = await run_command(command, source=source, caller_id=caller_id)
+    if person == people.OWNER_ID and not request.headers.get(SESSION_HEADER):
+        result = await run_command(command, source=source, caller_id=caller_id)
+    else:
+        result = await run_command(command, source=source, caller_id=caller_id, person=person)
     return result
 
 
