@@ -5,6 +5,18 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] — 2026-11-19
+
+### Added
+
+- **People on your FreeHand connect their own accounts.** They have the
+  Connections page too, showing their own accounts and the shared ones,
+  never yours. Their accounts are named after them, so they can't take
+  the name of anyone else's, and only they can test or disconnect them.
+  When someone leaves, their accounts are disconnected.
+
+On your own, nothing changes.
+
 ## [0.1.19] — 2026-11-19
 
 ### Security
