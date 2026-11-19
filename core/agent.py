@@ -522,10 +522,11 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     token = people.set_current(person or people.person_for(source, caller_id) or people.OWNER_ID)
     try:
         # A member's monthly limit on AI (core/ai_use.py): over it, no AI call.
-        from core import ai_use
-        over = ai_use.refusal()
+        from core import ai_use, children
+        over = children.refusal() or ai_use.refusal()  # a child's quiet hours and daily limit too
         if over:
             return {"text": over, "tools_used": [], "error": None, "over_limit": True}
+        children.count_message()
         if member is None and not job:
             from core import team
             member, command = team.addressed(command)
@@ -582,6 +583,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     else:
         system_prompt = build_job_prompt() if job else build_system_prompt(lean=lean, query=command)
         model_cfg = None
+
+    # A child: guidance for their age, for them only (core/children.py).
+    from core import children as _children
+    system_prompt += _children.guidance()
 
     # Memory (Nov 2026). Long-term: the few facts that matter for this
     # message, from Hindsight. Short-term: the last few exchanges in this
@@ -844,20 +849,26 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         if account_refusal:
             tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(
                 {"error": "not_allowed", "tell_the_person": account_refusal})}
-        elif member_limits.needs_owner_approval(tool_name, tool_args):
+        elif member_limits.needs_owner_approval(tool_name, tool_args) or _children.needs_parent(tool_name):
             # A member's change on a shared account: the owner approves it,
-            # at any permission level, and the member can't approve it.
+            # at any permission level, and the member can't approve it. A
+            # child's step that reaches outside: a parent approves it.
+            child = _children.needs_parent(tool_name)
+            payload = {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id,
+                       member_limits.NEEDS_OWNER: True}
+            if child:
+                from core import people as _people
+                payload["parents"] = _children.parents_of(_people.current())
             result = intercept_action(
-                "oauth_access",
-                describe_action(tool_name, tool_args),
-                {"tool": tool_name, "args": tool_args, "source": source, "caller_id": caller_id,
-                 member_limits.NEEDS_OWNER: True},
+                "oauth_access", describe_action(tool_name, tool_args), payload,
                 source, caller_id, force_confirm=True,
             )
+            if child and result.get("approval_id"):
+                _children.tell_parents(result["approval_id"], describe_action(tool_name, tool_args))
             tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps({
-                "error": f"Waiting for the owner's approval for {tool_name}.",
+                "error": f"Waiting for {'a parent' if child else 'the owner'}'s approval for {tool_name}.",
                 "approval_id": result.get("approval_id"),
-                "tell_the_person": member_limits.waiting_message(),
+                "tell_the_person": _children.waiting_message() if child else member_limits.waiting_message(),
             })}
         elif allowed is not None and tool_name not in allowed:
             # A team member asked for a tool it wasn't given.

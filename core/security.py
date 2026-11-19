@@ -380,8 +380,8 @@ def get_pending_approvals() -> List[Dict]:
            "FROM approvals WHERE status = 'pending'")
     params: tuple = ()
     if scope is not None:
-        sql += " AND person = ?"
-        params = (scope,)
+        sql += f" AND person IN ({','.join('?' * len(scope))})"
+        params = tuple(scope)
     cursor = conn.execute(sql + " ORDER BY created_at DESC", params)
     results = [dict(row) for row in cursor.fetchall()]
     conn.close()
@@ -412,8 +412,8 @@ def handle_approval(approval_id: int, action: str) -> dict:
     sql = "UPDATE approvals SET status = ? WHERE id = ? AND status = 'pending'"
     params: tuple = (new_status, approval_id)
     if scope is not None:
-        sql += " AND person = ?"
-        params += (scope,)
+        sql += f" AND person IN ({','.join('?' * len(scope))})"
+        params += tuple(scope)
     cursor = conn.execute(sql, params)
     conn.commit()
     affected = cursor.rowcount
@@ -459,7 +459,8 @@ def clear_pending_approvals(reason: str = "") -> int:
         cursor = conn.execute("UPDATE approvals SET status = 'rejected' WHERE status = 'pending'")
     else:
         cursor = conn.execute(
-            "UPDATE approvals SET status = 'rejected' WHERE status = 'pending' AND person = ?", (scope,))
+            f"UPDATE approvals SET status = 'rejected' WHERE status = 'pending' "
+            f"AND person IN ({','.join('?' * len(scope))})", tuple(scope))
     count = cursor.rowcount
     conn.commit()
 

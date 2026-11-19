@@ -75,7 +75,9 @@ def waiting_message() -> str:
 
 
 def approval_refusal(row: Optional[dict], action: str) -> Optional[str]:
-    """A member may cancel their own shared-account step, not approve it."""
+    """A member may cancel their own shared-account step, not approve it.
+    A child's step that needs a parent: only a parent (or the owner)
+    approves it (core/children.py)."""
     if action != "approve" or not is_member() or not row:
         return None
     import json
@@ -84,5 +86,10 @@ def approval_refusal(row: Optional[dict], action: str) -> Optional[str]:
     except (TypeError, ValueError):
         payload = {}
     if payload.get(NEEDS_OWNER):
+        from core import children
+        if payload.get("parents") is not None and children.may_approve_for(str(row.get("person") or "")):
+            return None  # a parent approving their child's step
+        if payload.get("parents") is not None:
+            return "Only a parent can approve this."
         return f"Only {_owner_name()} can approve this: it uses a shared account."
     return None
