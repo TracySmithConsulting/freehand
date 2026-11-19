@@ -259,13 +259,14 @@ def pending_person(state: str) -> Optional[str]:
     return p["person"] if p else None
 
 
-async def finish(code: str, state: str, client_id: str = "", error: str = "") -> dict:
+async def finish(code: str, state: str, client_id: str = "", error: str = "", error_description: str = "") -> dict:
     """OpenAI came back: check everything, then keep the sign-in.
     Returns status() for the person; raises SignInError in plain words."""
     pending = _pending.pop(state, None) if state else None
     if not pending or time.time() - pending["at"] > PENDING_SECONDS:
         raise SignInError("This sign-in is old or wasn't started from FreeHand. Start again from FreeHand.")
     if error:
+        log.info("ChatGPT sign-in came back with %s: %s", error, error_description[:300])
         if error == "access_denied":
             raise SignInError("You didn't allow FreeHand, so nothing changed. "
                               "You can choose Continue with ChatGPT again whenever you like.")
@@ -280,11 +281,13 @@ async def finish(code: str, state: str, client_id: str = "", error: str = "") ->
     if not issued or issued == "dynamic_agent_client":
         raise SignInError("ChatGPT didn't finish registering FreeHand. Try again.")
 
-    tokens = await _post_form(TOKEN_URL, {
+    status_code, tokens = await _post_form_status(TOKEN_URL, {
         "grant_type": "authorization_code", "client_id": issued, "code": code,
         "code_verifier": pending["verifier"], "redirect_uri": pending["callback"], "resource": RESOURCE,
     })
-    if not tokens or not tokens.get("access_token"):
+    if status_code != 200 or not isinstance(tokens, dict) or not tokens.get("access_token"):
+        why = {k: tokens.get(k) for k in ("error", "error_description", "detail")} if isinstance(tokens, dict) else tokens
+        log.warning("ChatGPT refused the sign-in code (%s): %s", status_code, str(why)[:300])
         raise SignInError("FreeHand couldn't finish signing in with ChatGPT. Try again.")
     claims = await verify_id_token(tokens.get("id_token", ""), issued, pending["nonce"])
     old = _account(person) or {}
@@ -326,7 +329,7 @@ async def finish_from_address(person: str, address: str) -> dict:
     if pending_person(state) != person:
         raise SignInError("This sign-in is old or wasn't started from FreeHand. Start again from FreeHand.")
     return await finish((q.get("code") or [""])[0], state, (q.get("client_id") or [""])[0],
-                        (q.get("error") or [""])[0])
+                        (q.get("error") or [""])[0], (q.get("error_description") or [""])[0])
 
 
 async def sign_out(person: str) -> dict:

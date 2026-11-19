@@ -953,13 +953,14 @@ async def chatgpt_start(request: Request):
 
 
 @app.get("/auth/callback")
-async def chatgpt_callback(code: str = "", state: str = "", client_id: str = "", error: str = ""):
+async def chatgpt_callback(code: str = "", state: str = "", client_id: str = "", error: str = "",
+                           error_description: str = ""):
     """Where ChatGPT sends the browser back. Open (like the OpenRouter
     callback): it only accepts a state FreeHand handed out, for the
     person who started it, in the last 10 minutes."""
     from core import chatgpt_plan
     try:
-        await chatgpt_plan.finish(code, state, client_id, error)
+        await chatgpt_plan.finish(code, state, client_id, error, error_description)
     except chatgpt_plan.SignInError as e:
         return _signin_page("ChatGPT sign-in didn't finish", str(e), False)
     _wake_runner()
