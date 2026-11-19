@@ -56,7 +56,10 @@ def office(tmp_path, monkeypatch):
     s = agent_config._load_settings()
     s["people"] = [THANDI]
     agent_config._save_settings(s)
-    monkeypatch.setattr(scheduler, "SCRIBBLE_PATH", tmp_path / "vault" / "00_Scribble.md")
+    vault = tmp_path / "vault"
+    monkeypatch.setattr(scheduler, "SCRIBBLE_PATH", vault / "00_Scribble.md")
+    monkeypatch.setattr(scheduler, "THREADS_DIR", vault / "Threads")
+    monkeypatch.setattr(scheduler, "SWEEP_STATE_PATH", vault / ".sweep_state.json")
     security.set_tier("semi_autonomous")
 
     with as_person("owner"):
@@ -292,7 +295,6 @@ def test_the_memory_page_shows_thandi_only_hers_and_the_pool(office, bank):
 
 # ── Files: the scribble pad ──────────────────────────────────────────
 
-@NOT_BUILT
 def test_thandi_doesnt_see_the_owners_scribble_pad(office):
     import server
     with as_person("thandi"):
@@ -300,7 +302,6 @@ def test_thandi_doesnt_see_the_owners_scribble_pad(office):
     assert SECRET not in seen
 
 
-@NOT_BUILT
 def test_thandis_notes_dont_land_on_the_owners_scribble_pad(office):
     with as_person("thandi"):
         scheduler.append_scribble("Thandi: buy printer paper")
@@ -315,7 +316,6 @@ def _what_thandi_can_reach() -> str:
                    long_memory.recall("anything to know?"), scheduler._read_scribble()])
 
 
-@NOT_BUILT
 def test_work_moved_to_another_thread_reaches_nothing_of_the_owners(office, bank):
     from core.tools import composio_registry
 
@@ -329,12 +329,11 @@ def test_work_moved_to_another_thread_reaches_nothing_of_the_owners(office, bank
     assert SECRET not in asyncio.run(as_thandi())
 
 
-@NOT_BUILT
 def test_thandis_scheduled_job_reaches_nothing_of_the_owners(office, bank, monkeypatch):
     seen = []
 
     async def fake_run_agent(command, max_turns=5, source="", caller_id="", job=False, person=None, **kw):
-        seen.append(_what_thandi_can_reach())
+        seen.append((command, people.current(), _what_thandi_can_reach()))
         return {"text": "Done.", "error": None}
 
     monkeypatch.setattr("core.agent.run_agent", fake_run_agent)
@@ -342,5 +341,88 @@ def test_thandis_scheduled_job_reaches_nothing_of_the_owners(office, bank, monke
     with as_person("thandi"):
         scheduler.create_task("Summarise my week", "")
     scheduler.run_due_tasks(now=datetime(2030, 1, 1, 8, 0, tzinfo=timezone.utc))
-    assert len(seen) >= 1
-    assert all(SECRET not in s for s in seen)
+    # The owner's own job is due too, and rightly sees the owner's things.
+    hers = [(who, reached) for command, who, reached in seen if "Summarise my week" in command]
+    assert [who for who, _ in hers] == ["thandi"]
+    assert SECRET not in hers[0][1]
+
+
+# ── Each person's own notes folder ───────────────────────────────────
+
+def _classify_as(monkeypatch, classification):
+    monkeypatch.setattr(scheduler, "_classify_entry",
+                        lambda text: {"classification": classification, "topic": "garden"})
+
+
+def test_thandis_pad_is_filed_into_her_own_folder(office, monkeypatch):
+    _classify_as(monkeypatch, "thread")
+    with as_person("thandi"):
+        scheduler.append_scribble("the roses need pruning")
+    scheduler.sweep_everyones_pads()
+    vault = scheduler.VAULT_DIR
+    hers = vault / "people" / "thandi" / "Threads" / "garden.md"
+    assert "roses need pruning" in hers.read_text(encoding="utf-8")
+    assert SECRET not in hers.read_text(encoding="utf-8")
+    owners = (vault / "Threads" / "garden.md").read_text(encoding="utf-8")
+    assert SECRET in owners and "roses" not in owners  # each swept into their own Threads
+    with as_person("thandi"):
+        assert "roses" not in scheduler._read_scribble()  # swept off her pad
+
+
+def test_a_task_on_thandis_pad_becomes_her_task(office, monkeypatch):
+    _classify_as(monkeypatch, "task")
+    with as_person("thandi"):
+        scheduler.append_scribble("phone the plumber")
+    scheduler.sweep_everyones_pads()
+    with as_person("thandi"):
+        assert "phone the plumber" in scheduler.run_action({"type": "todos"}, "thandi")
+    with as_person("owner"):
+        assert "phone the plumber" not in scheduler.run_action({"type": "todos"}, "owner")
+
+
+@pytest.fixture
+def notes(monkeypatch):
+    """The owner's and Thandi's notes, indexed for search."""
+    from core import memory
+    monkeypatch.setattr(memory, "PROJECT_ROOT", memory.VAULT_DIR.parent)
+    for rel, text in [("Threads/money.md", f"# Money\n\n{SECRET}: the geyser quote is R4500\n"),
+                      ("people/thandi/Threads/home.md", "# Home\n\nThandi's geyser is fixed\n")]:
+        path = memory.VAULT_DIR / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    memory.sync_vault_to_sqlite()
+    return memory
+
+
+def test_searching_notes_finds_only_your_own(office, notes):
+    with as_person("thandi"):
+        hers = _texts(notes.search_memory("geyser", limit=10))
+    with as_person("owner"):
+        owners = _texts(notes.search_memory("geyser", limit=10))
+    assert "Thandi's geyser" in hers and SECRET not in hers
+    assert SECRET in owners and "Thandi's geyser" not in owners
+
+
+def test_the_memory_pages_files_are_only_your_own(office, notes):
+    import server
+    from fastapi import HTTPException
+    def names(person):
+        with as_person(person):
+            return sorted(row["path"].replace("\\", "/").split("/")[-1] for row in asyncio.run(server.memory_files()))
+
+    assert "money.md" in names("owner") and "home.md" not in names("owner")
+    assert names("thandi") == ["home.md"]
+    with as_person("owner"):
+        with pytest.raises(HTTPException) as refused:
+            asyncio.run(server.memory_file(f"{notes.VAULT_DIR.name}/people/thandi/Threads/home.md"))
+    assert refused.value.status_code == 404
+
+
+def test_the_owner_keeps_their_files_where_they_were(office):
+    assert people.workspace_parts("owner") == ()
+    assert people.workspace_parts("thandi") == ("people", "thandi")
+    assert people.may_read_vault_file("Threads/x.md", "owner")
+    assert not people.may_read_vault_file("people/thandi/Threads/x.md", "owner")
+    assert people.may_read_vault_file("people/thandi/Threads/x.md", "thandi")
+    assert not people.may_read_vault_file("people/thandiwe/x.md", "thandi")
+    assert not people.may_read_vault_file("Threads/x.md", "thandi")

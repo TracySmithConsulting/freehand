@@ -325,6 +325,30 @@ def _slugify(text: str) -> str:
     return text[:50] or "untitled"
 
 
+def _workspace(person_id: Optional[str] = None) -> Path:
+    """The person's own folder in the vault (core/people.py): the vault
+    itself for the owner, people/<id>/ for anyone else."""
+    from core import people
+    return VAULT_DIR.joinpath(*people.workspace_parts(person_id))
+
+
+def _is_owner(person_id: Optional[str] = None) -> bool:
+    from core import people
+    return (person_id or people.current()) == people.OWNER_ID
+
+
+def _scribble_path(person_id: Optional[str] = None) -> Path:
+    return SCRIBBLE_PATH if _is_owner(person_id) else _workspace(person_id) / "00_Scribble.md"
+
+
+def _sweep_state_path(person_id: Optional[str] = None) -> Path:
+    return SWEEP_STATE_PATH if _is_owner(person_id) else _workspace(person_id) / ".sweep_state.json"
+
+
+def _threads_dir(person_id: Optional[str] = None) -> Path:
+    return THREADS_DIR if _is_owner(person_id) else _workspace(person_id) / "Threads"
+
+
 def _safe_thread_path(slug: str) -> Optional[Path]:
     """N4 fix: ensure slug cannot escape THREADS_DIR via traversal.
 
@@ -339,8 +363,9 @@ def _safe_thread_path(slug: str) -> Optional[Path]:
         return None
     if ".." in slug or "/" in slug or "\\" in slug:
         return None
-    candidate = (THREADS_DIR / (slug + ".md")).resolve()
-    threads_root = THREADS_DIR.resolve()
+    threads_dir = _threads_dir()
+    candidate = (threads_dir / (slug + ".md")).resolve()
+    threads_root = threads_dir.resolve()
     try:
         # Python 3.9+: is_relative_to
         if not candidate.is_relative_to(threads_root):
@@ -353,13 +378,17 @@ def _safe_thread_path(slug: str) -> Optional[Path]:
 
 
 def _read_scribble() -> str:
-    if not SCRIBBLE_PATH.exists():
+    """The current person's own scribble pad."""
+    path = _scribble_path()
+    if not path.exists():
         return ""
-    return SCRIBBLE_PATH.read_text(encoding="utf-8")
+    return path.read_text(encoding="utf-8")
 
 
 def _write_scribble(content: str) -> None:
-    SCRIBBLE_PATH.write_text(content, encoding="utf-8")
+    path = _scribble_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def append_scribble(content: str) -> str:
@@ -381,16 +410,19 @@ def append_scribble(content: str) -> str:
 
 
 def _load_sweep_state() -> dict:
-    if SWEEP_STATE_PATH.exists():
+    path = _sweep_state_path()
+    if path.exists():
         try:
-            return json.loads(SWEEP_STATE_PATH.read_text())
+            return json.loads(path.read_text())
         except Exception:
             pass
     return {"last_sweep": "", "processed_lines": []}
 
 
 def _save_sweep_state(state: dict) -> None:
-    SWEEP_STATE_PATH.write_text(json.dumps(state), encoding="utf-8")
+    path = _sweep_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state), encoding="utf-8")
 
 
 def _append_journal(entry: str) -> None:
@@ -400,7 +432,7 @@ def _append_journal(entry: str) -> None:
     indexes them — archived history is searchable memory, not dead weight.
     """
     now = datetime.now(timezone.utc)
-    journal_dir = VAULT_DIR / "Journal"
+    journal_dir = _workspace() / "Journal"
     journal_dir.mkdir(parents=True, exist_ok=True)
     path = journal_dir / (now.strftime("%Y-%m") + ".md")
     line = "\n- " + entry + "\n"
@@ -421,8 +453,9 @@ def _append_thread(raw_topic: str, entry_text: str) -> int:
     now = datetime.now(timezone.utc)
     timestamp = now.strftime("%Y-%m-%d %H:%M UTC")
     new_block = f"\n### {timestamp}\n- {entry_text}\n"
-    if not THREADS_DIR.exists():
-        THREADS_DIR.mkdir(parents=True, exist_ok=True)
+    threads_dir = _threads_dir()
+    if not threads_dir.exists():
+        threads_dir.mkdir(parents=True, exist_ok=True)
     slug = _slugify(raw_topic or entry_text)
     thread_path = _safe_thread_path(slug)
     if thread_path is None:
@@ -845,8 +878,29 @@ def run_due_tasks(now: Optional[datetime] = None) -> dict:
 # The sweep
 # ──────────────────────────────────────────────────────────────────────
 
+def sweep_everyones_pads() -> dict:
+    """The regular sweep: each person's pad, swept as that person, so
+    their entries become their own tasks, Threads and Journal."""
+    from core import people
+    totals: dict = {}
+    for person in people.list_people():
+        pid = person["id"]
+        if pid != people.OWNER_ID and not _scribble_path(pid).exists():
+            continue
+        token = people.set_current(pid)
+        try:
+            result = process_scribble()
+        except Exception:
+            continue  # one person's pad never stops the others' sweep
+        finally:
+            people.reset(token)
+        for key, value in result.items():
+            totals[key] = totals.get(key, 0) + value
+    return totals
+
+
 def process_scribble() -> dict:
-    """Read new raw entries from 00_Scribble.md, classify them (OmniRoute →
+    """The current person's pad: read new raw entries from 00_Scribble.md, classify them (OmniRoute →
     configured LLM → keyword heuristic), and place each entry:
 
     - task     → tasks table (via create_task, second-run validated cron)
@@ -978,7 +1032,7 @@ def get_scheduler() -> Optional[BackgroundScheduler]:
         _scheduler = BackgroundScheduler()
         interval = _load_settings().get("sweep_interval", 30)
         _scheduler.add_job(
-            process_scribble,
+            sweep_everyones_pads,
             IntervalTrigger(seconds=int(interval)),
             id="scribble_sweep",
             name="Scribble Sweep",

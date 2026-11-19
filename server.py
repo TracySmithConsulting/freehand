@@ -831,11 +831,19 @@ async def api_status():
     }
 
 
+def _my_scribble_path() -> Path:
+    """The signed-in person's own pad: the owner's is SCRIBBLE_PATH."""
+    from core import people
+    parts = people.workspace_parts()
+    return SCRIBBLE_PATH if not parts else VAULT_DIR.joinpath(*parts) / "00_Scribble.md"
+
+
 @app.get("/api/scribble", dependencies=[Depends(require_api_key)])
 async def get_scribble():
-    if not SCRIBBLE_PATH.exists():
+    path = _my_scribble_path()
+    if not path.exists():
         return {"content": ""}
-    return {"content": SCRIBBLE_PATH.read_text()}
+    return {"content": path.read_text()}
 
 
 @app.post("/api/scribble", dependencies=[Depends(require_api_key)])
@@ -843,8 +851,10 @@ async def save_scribble(body: dict):
     content = body.get("content", "")
     if not content.strip():
         raise HTTPException(status_code=400, detail="Content cannot be empty")
-    SCRIBBLE_PATH.write_text(content)
-    return {"status": "saved", "path": str(SCRIBBLE_PATH)}
+    path = _my_scribble_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return {"status": "saved", "path": str(path)}
 
 
 def _settings_file() -> dict:
@@ -1628,16 +1638,18 @@ async def memory_files():
         # Only offer rows whose file still exists in the vault — stale
         # index entries (e.g. legacy test writes to fake paths like
         # "/agent/command") can never be Opened and 404 noisily.
+        from core import people
         out = []
         vault_parent = vault_resolved.parent
         for row in rows:
             candidate = (vault_parent / row["path"]).resolve()
             if candidate.is_file() and candidate.suffix == ".md":
                 try:
-                    candidate.relative_to(vault_resolved)
+                    rel = candidate.relative_to(vault_resolved)
                 except ValueError:
                     continue
-                out.append(dict(row))
+                if people.may_read_vault_file(rel.as_posix()):  # not someone else's
+                    out.append(dict(row))
         return out
     finally:
         conn.close()
@@ -1661,9 +1673,13 @@ async def memory_file(path: str = ""):
     # tmp_path monkeypatch too, where vault/ lives somewhere else entirely.
     candidate = (vault_resolved.parent / rel).resolve()
     try:
-        candidate.relative_to(vault_resolved)
+        inside = candidate.relative_to(vault_resolved)
     except ValueError:
         raise HTTPException(status_code=400, detail="Path escapes the vault")
+    from core import people
+    if not people.may_read_vault_file(inside.as_posix()):
+        # Someone else's file is "not found", like a wrong name.
+        raise HTTPException(status_code=404, detail="File not found — try Sync, then search again")
     if candidate.suffix != ".md":
         raise HTTPException(status_code=400, detail="Only .md vault files are readable")
     if not candidate.exists():
