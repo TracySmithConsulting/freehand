@@ -5,6 +5,26 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.14] — 2026-11-19
+
+### Changed
+
+- **Separate users: each person's things are their own.** For a
+  FreeHand with more than one person (listed in settings), a member
+  now only reaches what's theirs:
+  - their chats, even in a chat several people share;
+  - their scheduled jobs, on the screen and in chat;
+  - their approvals, to see, answer or clear;
+  - their memories and the shared pool, in recall, on the Memory page,
+    and when correcting or forgetting one;
+  - their own scribble pad and notes folder (`vault/people/<id>/`),
+    in search and on the Memory page.
+
+  Someone else's is "not found". For now the owner still sees and
+  answers everyone's approvals, because the console is theirs until
+  each person can sign in. A one-person FreeHand works exactly as
+  before: nothing is moved and no memory is changed.
+
 ## [0.1.13] — 2026-11-18
 
 ### Changed
