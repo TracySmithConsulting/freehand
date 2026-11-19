@@ -212,6 +212,10 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/memory/search"), ("GET", "/api/memory/files"), ("GET", "/api/memory/file"),
     ("POST", "/api/memory/sync"),
     ("GET", "/api/scribble"), ("POST", "/api/scribble"), ("POST", "/api/sweep"),
+    # Their own accounts (core/accounts.py; _connections_auth checks
+    # which account a Test or Disconnect is for).
+    ("GET", "/api/integrations"), ("POST", "/api/connect-ticket"),
+    ("POST", "/api/integrations/{service}/disconnect"), ("POST", "/api/integrations/{service}/test"),
     # Their own team members, and the ones shared with them (core/team.py).
     ("GET", "/api/team"), ("POST", "/api/team"), ("PUT", "/api/team/{member_id}"),
     ("POST", "/api/team/{member_id}/pause"), ("DELETE", "/api/team/{member_id}"),
@@ -976,33 +980,61 @@ _connect_tickets: dict = {}
 CONNECT_TICKET_SECONDS = 300
 
 
-def _use_connect_ticket(ticket: str) -> bool:
-    """A ticket works once, within five minutes."""
+def _use_connect_ticket(ticket: str) -> Optional[str]:
+    """A ticket works once, within five minutes. Returns whose it was."""
     import time
     now = time.monotonic()
-    for t, expires in list(_connect_tickets.items()):
+    for t, (expires, _who) in list(_connect_tickets.items()):
         if expires < now:
             _connect_tickets.pop(t, None)
-    return bool(ticket) and _connect_tickets.pop(ticket, 0) >= now
+    expires, who = _connect_tickets.pop(ticket, (0, None)) if ticket else (0, None)
+    return who if expires >= now else None
+
+
+def _members_account(request: Request, person: str) -> tuple:
+    """(service, label) of the account a member's request is for."""
+    return (str(request.path_params.get("service", "")).lower(),
+            str(request.query_params.get("label", "default")))
 
 
 async def _connections_auth(request: Request) -> None:
+    from core import accounts, people
     path = request.url.path
     if request.method == "GET" and path.endswith("/callback"):
         return
-    if request.method == "GET" and path.endswith("/authorize") and \
-            _use_connect_ticket(request.query_params.get("ticket", "")):
+    if request.method == "GET" and path.endswith("/authorize"):
+        who = _use_connect_ticket(request.query_params.get("ticket", ""))
+        if who is None:
+            await require_api_key(request)
+            return
+        if who != people.OWNER_ID:
+            # A member connects an account of their own, named after them,
+            # never one of someone else's (core/accounts.py).
+            service, label = _members_account(request, who)
+            if not accounts.member_label_ok(label, who):
+                raise HTTPException(status_code=403, detail="Name your own account after you, for example "
+                                                            f"{who}-personal.")
+            if any(accounts.owners().get(accounts.key(k, service, label)) not in (None, who)
+                   for k in accounts.KINDS):
+                raise HTTPException(status_code=403, detail="That account is someone else's.")
+            import importlib  # core.oauth's "router" is the APIRouter, not the module
+            accounts.claim(importlib.import_module("core.oauth.router").kind_for(service), service, label, who)
         return
     await require_api_key(request)
+    person = getattr(request.state, "person", people.OWNER_ID)
+    if person != people.OWNER_ID and request.method == "POST":
+        service, label = _members_account(request, person)
+        if not accounts.owns(service, label, person):
+            raise HTTPException(status_code=403, detail="That account isn't yours, so you can't change it.")
 
 
 @app.post("/api/connect-ticket", dependencies=[Depends(require_api_key)])
-async def connect_ticket():
+async def connect_ticket(request: Request):
     """A one-time ticket for the Connect window (see _connections_auth).
-    Owner only: not in MEMBER_ROUTES."""
+    A member's ticket only connects an account of their own."""
     import time
     ticket = _secrets.token_urlsafe(24)
-    _connect_tickets[ticket] = time.monotonic() + CONNECT_TICKET_SECONDS
+    _connect_tickets[ticket] = (time.monotonic() + CONNECT_TICKET_SECONDS, _request_person(request))
     return {"ticket": ticket}
 
 

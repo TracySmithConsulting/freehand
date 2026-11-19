@@ -197,7 +197,11 @@ def test_a_members_browser_doesnt_change_freehands_time_zone(sent, owner):
 
 def test_every_route_a_member_may_use_really_exists():
     from server import MEMBER_ROUTES
-    real = {(m, r.path) for r in app.routes for m in (getattr(r, "methods", None) or ())}
+    routes = list(app.routes)
+    for r in app.routes:  # routers added with include_router (Connections, MCP)
+        inner = getattr(r, "original_router", None)
+        routes += list(inner.routes) if inner is not None else []
+    real = {(m, r.path) for r in routes for m in (getattr(r, "methods", None) or ())}
     assert MEMBER_ROUTES <= real
 
 

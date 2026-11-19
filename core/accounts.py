@@ -144,6 +144,48 @@ def usable_tools(schemas: list) -> list:
     return out
 
 
+KINDS = ("oc", "composio", "app")
+
+
+def member_label_ok(label: str, person_id: str) -> bool:
+    """A member's own accounts are named "<their id>-<name>" (for example
+    thandi-personal), so they never take the name of anyone else's."""
+    return str(label or "").lower().startswith(f"{person_id}-") and len(label) > len(person_id) + 1
+
+
+def claim(kind: str, service: str, label: str, person_id: str) -> None:
+    """A member is connecting an account of their own: it's theirs from
+    the start, before the sign-in finishes."""
+    from core import agent_config
+    s = agent_config._load_settings()
+    current = owners(s)
+    current[key(kind, service, label)] = person_id
+    s[SETTING] = current
+    agent_config._save_settings(s)
+
+
+def owns(service: str, label: str, person_id: str) -> bool:
+    """Whether this person may manage (test, disconnect) this account."""
+    from core import people
+    if person_id == people.OWNER_ID:
+        return True
+    current = owners()
+    return any(current.get(key(k, service, label)) == person_id for k in KINDS)
+
+
+def forget(service: str, label: str) -> None:
+    """A disconnected account: nobody's any more."""
+    from core import agent_config
+    s = agent_config._load_settings()
+    current = owners(s)
+    gone = [key(k, service, label) for k in KINDS if key(k, service, label) in current]
+    if gone:
+        for k in gone:
+            current.pop(k, None)
+        s[SETTING] = current
+        agent_config._save_settings(s)
+
+
 def set_owner(account: str, whose: str) -> str:
     """Make an account one person's, or SHARED. Only the owner does this."""
     from core import agent_config, people

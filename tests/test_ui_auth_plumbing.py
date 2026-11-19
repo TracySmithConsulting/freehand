@@ -121,7 +121,12 @@ class TestConnectorBoundary:
         agent_config._save_settings(s)
         thandi = TestClient(app, headers={SESSION_HEADER: sessions.start("thandi")})
         assert thandi.post("/api/integrations/gmail/disconnect?label=work").status_code == 403
-        assert thandi.post("/api/connect-ticket").status_code == 403
+        # She may connect accounts of her own (tests/test_own_accounts.py),
+        # but her ticket can't connect one named like the owner's.
+        ticket = thandi.post("/api/connect-ticket").json()["ticket"]
+        r = TestClient(app).get(f"/api/integrations/gmail/authorize?label=work&ticket={ticket}",
+                                follow_redirects=False)
+        assert r.status_code == 403
 
     def test_approvals_list_requires_key(self):
         c = TestClient(app)
