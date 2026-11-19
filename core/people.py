@@ -183,6 +183,34 @@ def approvals_scope(person_id: Optional[str] = None) -> Optional[str]:
     return None if person_id == OWNER_ID else person_id
 
 
+# Each person's own files (scribble pad, Threads, Journal) live in the
+# vault under people/<id>/. The owner's stay where they always were, in
+# the vault itself, so a one-person FreeHand doesn't change at all.
+WORKSPACES_DIR = "people"
+
+
+def workspace_parts(person_id: Optional[str] = None) -> tuple:
+    """The person's own folder, as parts under the vault: () for the owner."""
+    person_id = person_id or current()
+    if person_id == OWNER_ID:
+        return ()
+    if not PERSON_ID_RE.match(person_id):
+        raise ValueError(f"not a person id: {person_id!r}")
+    return (WORKSPACES_DIR, person_id)
+
+
+def may_read_vault_file(rel_path: str, person_id: Optional[str] = None) -> bool:
+    """Whether this person may see a vault file (a path relative to the
+    vault, such as "Threads/plumber.md"): a member only their own folder,
+    the owner everything except the other people's folders."""
+    person_id = person_id or current()
+    parts = [p for p in str(rel_path).replace("\\", "/").split("/") if p]
+    in_someones = bool(parts) and parts[0] == WORKSPACES_DIR
+    if person_id == OWNER_ID:
+        return not in_someones
+    return in_someones and len(parts) > 2 and parts[1] == person_id
+
+
 def memory_tags(person_id: Optional[str] = None) -> list[str]:
     """Hindsight tags for something this person said or asked to remember."""
     return [f"person:{person_id or current()}"]

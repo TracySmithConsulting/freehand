@@ -120,6 +120,17 @@ def _fts_terms(query: str) -> List[str]:
     return terms[:12]
 
 
+def _readable_by_current_person(path: str) -> bool:
+    """An indexed path (relative to the project) the current person may
+    see: their own files only (core/people.py, may_read_vault_file)."""
+    from core import people
+    try:
+        rel = (PROJECT_ROOT / path).resolve().relative_to(Path(VAULT_DIR).resolve())
+    except (ValueError, OSError):
+        return people.current() == people.OWNER_ID
+    return people.may_read_vault_file(rel.as_posix())
+
+
 def search_memory(query: str, limit: int = 3, sync: bool = False) -> List[Dict]:
     """Search the user's scribbles and notes (scribble pad, Journal, topic
     Threads, imported notes) and return the best `limit` matches.
@@ -163,9 +174,11 @@ def search_memory(query: str, limit: int = 3, sync: bool = False) -> List[Dict]:
                 ORDER BY memories_fts.rank
                 LIMIT ?
                 """,
-                (joiner.join(terms), limit),
+                # Fetch more than asked: other people's notes are left out below.
+                (joiner.join(terms), min(500, max(limit, 1) * 20)),
             )
-            results = [dict(row) for row in cursor.fetchall()]
+            results = [dict(row) for row in cursor.fetchall()
+                       if _readable_by_current_person(row["path"])][:limit]
             if results or len(terms) == 1:
                 break
     except sqlite3.OperationalError:

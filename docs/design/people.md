@@ -160,6 +160,20 @@ In a sensible order:
      there, not from chat. With sign-in, this narrows to administrators
      seeing approvals for shared connections.
 4. **Workspaces:** a scribble pad and notes folder each, plus a shared folder.
+
+   **Built (November 2026): a folder each.** The owner's pad, Threads and
+   Journal stay where they always were, in the vault. Everyone else's are
+   in `vault/people/<id>/`, so the folder name `people` in the vault is
+   FreeHand's. Writing on the pad (`/scribble`, the console) goes to the
+   person's own pad.
+   - **The sweep** goes through each person's pad as that person, so
+     their entries become their own tasks, Threads and Journal.
+   - **Searching notes, the Memory page's files and the MCP resources**
+     show only the person's own (`people.may_read_vault_file`): a member
+     their folder, the owner everything except other people's folders.
+     Someone else's file is "not found".
+
+   Not built yet: the shared folder.
 5. **Personal and shared connections:**
    - OpenConnector connections named per person (for example `thandi-work`);
    - a Composio user ID per person;
@@ -170,15 +184,16 @@ In a sensible order:
    (see "Families and children" below).
 8. **When someone leaves** (see below).
 
-The isolation tests are written first, and fail until each piece is
+The isolation tests were written first, and failed until each piece was
 built (`tests/test_people_isolation.py`, November 2026). As Thandi,
 nothing of the owner's may appear in chats, the Scheduled jobs screen,
 approvals (seeing, answering or clearing them), recalled memories, the
 Memory page or the scribble pad, also through work moved to another
-thread and through her scheduled jobs. Each is marked `NOT_BUILT`; when a
-piece is built its test passes and the marker comes off. Tests that
-Thandi still has her own chats, jobs and approvals pass already, so the
-separation can't be "built" by hiding everything from everyone.
+thread and through her scheduled jobs. **All of them pass now.** A piece
+still to build (connections, for example) gets its test first, marked
+`NOT_BUILT`, and the marker comes off when it passes. Tests that Thandi
+still has her own chats, jobs, approvals, memories and notes keep the
+separation from being "built" by hiding everything from everyone.
 
 ## When someone leaves
 

@@ -209,9 +209,12 @@ def _mcp_resources(vault_dir: Path) -> List[Dict]:
     out: List[Dict] = []
     if not vault_dir.exists():
         return out
+    from core import people
     for path in sorted(vault_dir.rglob("*.md")):
         if path.name.lower() in skip:
             continue
+        if not people.may_read_vault_file(path.relative_to(vault_dir).as_posix()):
+            continue  # someone else's own files (core/people.py)
         rel = str(path.relative_to(vault_dir))
         out.append({
             "uri": f"freehand://vault/{rel}",
@@ -258,7 +261,9 @@ def _mcp_resource_read(uri: str, vault_dir: Path) -> Dict:
             }],
             "isError": True,
         }
-    if not target.exists():
+    from core import people
+    readable = people.may_read_vault_file(target.relative_to(vault_dir.resolve()).as_posix())
+    if not target.exists() or not readable:  # someone else's is "not found"
         return {
             "contents": [{
                 "uri": uri,
