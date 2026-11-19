@@ -565,7 +565,7 @@ async def llm_proxy_chat(request: Request):
         raise HTTPException(status_code=401, detail="Invalid or missing token")
     chain = get_llm_chain()
     if not chain:
-        raise HTTPException(status_code=503, detail="No AI model is set up in FreeHand yet (Settings, AI model).")
+        raise HTTPException(status_code=503, detail="No AI model is set up in FreeHand yet (the AI model page).")
     try:
         body = await request.json()
     except ValueError:
@@ -917,7 +917,7 @@ async def openrouter_callback(code: str = "", state: str = "", error: str = ""):
         return _signin_page("Signed in with OpenRouter",
                             "FreeHand can now use OpenRouter's free models. Close this window to carry on.", True)
     return _signin_page("Signed in with OpenRouter",
-                        "FreeHand can now use OpenRouter. Close this window and choose a model in Settings.", True)
+                        "FreeHand can now use OpenRouter. Close this window and choose a model on the AI model page.", True)
 
 
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
