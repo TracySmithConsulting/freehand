@@ -5,6 +5,24 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.16] — 2026-11-19
+
+### Added
+
+- **Personal and shared accounts.** Each connected account (a mailbox, a
+  calendar, Instagram...) is one person's, or shared with everyone.
+  Every account is the owner's until the owner says otherwise, so
+  nothing becomes shared by accident. Once someone else is on FreeHand,
+  the Connections screen asks "Who can use it" for each account: the
+  owner only, one person only, or everyone (for example the office
+  mailbox). FreeHand won't use someone's account for anyone else, and
+  says so instead of asking for an approval that couldn't run.
+
+### Fixed
+
+- **An approved step runs as the person who asked**, not whoever
+  approved it.
+
 ## [0.1.15] — 2026-11-19
 
 ### Added
@@ -21,10 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Someone who messages your FreeHand bot but isn't on FreeHand is
   listed under "Wrote to FreeHand, but isn't on it", with an Add
   button, so there's no hunting for a Telegram chat ID.
-
-Personal and shared accounts (each person's own mailbox) are still to
-come, so share FreeHand only with people you'd trust with your
-connected accounts for now.
 
 ## [0.1.14] — 2026-11-19
 
