@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 import sys
@@ -2017,20 +2017,36 @@ async def memory_forget_fact(memory_id: str):
 # Each person's own: it runs as whoever is signed in.
 
 @app.post("/api/imports/chat-export", dependencies=[Depends(require_api_key)])
-async def import_chat_export(file: UploadFile = File(...)):
+async def import_chat_export(request: Request):
+    """The export file itself is the request body (no form), streamed to
+    a temporary file and counted as it comes, so a big one never sits in
+    memory and nothing over the limit is kept."""
+    import tempfile
     from core import chat_import, people
     person = people.current()
-
-    def work():
-        token = people.set_current(person)  # the worker thread runs as them too
-        try:
-            return chat_import.save(chat_import.read_export(file.file))
-        finally:
-            people.reset(token)
+    spool = tempfile.SpooledTemporaryFile(max_size=32 * 1024 * 1024)
     try:
-        return await asyncio.to_thread(work)
-    except chat_import.ImportError_ as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > chat_import.MAX_UPLOAD:
+                raise HTTPException(status_code=413, detail="That file is too big to bring in.")
+            spool.write(chunk)
+        if not size:
+            raise HTTPException(status_code=400, detail="Choose the export file first.")
+
+        def work():
+            token = people.set_current(person)  # the worker thread runs as them too
+            try:
+                return chat_import.save(chat_import.read_export(spool))
+            finally:
+                people.reset(token)
+        try:
+            return await asyncio.to_thread(work)
+        except chat_import.ImportError_ as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    finally:
+        spool.close()
 
 
 @app.post("/api/imports/memories-text", dependencies=[Depends(require_api_key)])

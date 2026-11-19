@@ -5393,12 +5393,12 @@
           e.preventDefault();
           var input = document.getElementById('chat-import-file');
           if (!input.files || !input.files.length) { say('Choose the export file first.'); input.focus(); return; }
-          var data = new FormData();
-          data.append('file', input.files[0]);
           var btn = document.getElementById('chat-import-file-btn');
           btn.disabled = true;
           say('Bringing it in. A big export can take a minute or two...');
-          apiFetch('/api/imports/chat-export', { method: 'POST', body: data })
+          // The file itself is sent, as it is: no form needed on the server.
+          apiFetch('/api/imports/chat-export', { method: 'POST', body: input.files[0],
+                                                 headers: { 'Content-Type': 'application/octet-stream' } })
             .then(told)
             .then(function(r) {
               var parts = [r.conversations === 1

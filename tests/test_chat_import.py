@@ -91,7 +91,8 @@ def setup(monkeypatch):
 
 
 def upload(client, data: bytes, name="export.zip"):
-    return client.post("/api/imports/chat-export", files={"file": (name, data, "application/zip")})
+    return client.post("/api/imports/chat-export", content=data,
+                       headers={"Content-Type": "application/octet-stream"})
 
 
 def test_a_chatgpt_export_becomes_notes(setup):
@@ -211,3 +212,21 @@ def test_a_big_upload_is_let_through_to_this_route_only(setup):
     big = str(_get_max_body_bytes() * 2)
     r = owner.post("/api/imports/memories-text", headers={"Content-Length": big}, content=b"{}")
     assert r.status_code == 413
+
+
+def test_an_empty_upload_is_explained(setup):
+    _, owner, _ = setup
+    r = owner.post("/api/imports/chat-export", content=b"")
+    assert r.status_code == 400 and "Choose the export file" in r.json()["detail"]
+
+
+def test_an_upload_over_the_limit_is_stopped_while_it_comes_in(setup, monkeypatch):
+    _, owner, _ = setup
+    monkeypatch.setattr(chat_import, "MAX_UPLOAD", 100)
+
+    def chunks():  # no Content-Length: the size is only known by counting
+        for _ in range(10):
+            yield b"x" * 50
+    r = owner.post("/api/imports/chat-export", content=chunks())
+    assert r.status_code == 413
+    assert not (scheduler.VAULT_DIR / "imports").exists()
