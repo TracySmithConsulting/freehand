@@ -230,6 +230,9 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
     ("POST", "/api/timezone"),  # kept as theirs (see set_timezone)
+    # Their own ChatGPT plan (core/chatgpt_plan.py): only ever theirs.
+    ("GET", "/api/chatgpt"), ("POST", "/api/chatgpt/start"), ("POST", "/api/chatgpt/finish"),
+    ("POST", "/api/chatgpt/model"), ("POST", "/api/chatgpt/welcomed"), ("POST", "/api/chatgpt/sign-out"),
 })
 
 SESSION_HEADER = "X-FreeHand-Session"
@@ -918,6 +921,93 @@ async def openrouter_callback(code: str = "", state: str = "", error: str = ""):
                             "FreeHand can now use OpenRouter's free models. Close this window to carry on.", True)
     return _signin_page("Signed in with OpenRouter",
                         "FreeHand can now use OpenRouter. Close this window and choose a model in Settings.", True)
+
+
+# Using your ChatGPT plan (core/chatgpt_plan.py). Each person signs in
+# with their own ChatGPT; it's only used for their own chats and jobs.
+# OpenAI returns to http://127.0.0.1:<port>/auth/callback, which is
+# FreeHand itself when it was opened on this computer. On another device,
+# the page asks for the address the browser ended up on instead.
+
+def _chatgpt_error(e) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/chatgpt", dependencies=[Depends(require_api_key)])
+async def chatgpt_status(request: Request):
+    from core import chatgpt_plan
+    return chatgpt_plan.status(_request_person(request))
+
+
+@app.post("/api/chatgpt/start", dependencies=[Depends(require_api_key)])
+async def chatgpt_start(request: Request):
+    from core import chatgpt_plan
+    host = request.url.hostname or ""
+    callback = chatgpt_plan.redirect_uri(host, request.url.port)
+    try:
+        url = chatgpt_plan.start(_request_person(request), callback)
+    except chatgpt_plan.SignInError as e:
+        raise _chatgpt_error(e)
+    # On another device, 127.0.0.1 is that device, not FreeHand.
+    return {"url": url, "comes_back": host.strip("[]").lower() in _LOCAL_HOSTS}
+
+
+@app.get("/auth/callback")
+async def chatgpt_callback(code: str = "", state: str = "", client_id: str = "", error: str = ""):
+    """Where ChatGPT sends the browser back. Open (like the OpenRouter
+    callback): it only accepts a state FreeHand handed out, for the
+    person who started it, in the last 10 minutes."""
+    from core import chatgpt_plan
+    try:
+        await chatgpt_plan.finish(code, state, client_id, error)
+    except chatgpt_plan.SignInError as e:
+        return _signin_page("ChatGPT sign-in didn't finish", str(e), False)
+    _wake_runner()
+    return _signin_page("Signed in with ChatGPT",
+                        "FreeHand can now use your ChatGPT plan. Close this window to carry on.", True)
+
+
+@app.post("/api/chatgpt/finish", dependencies=[Depends(require_api_key)])
+async def chatgpt_finish(request: Request):
+    """The address the browser ended up on, pasted from another device."""
+    from core import chatgpt_plan
+    body = await request.json() or {}
+    try:
+        result = await chatgpt_plan.finish_from_address(_request_person(request), str(body.get("address", "")))
+    except chatgpt_plan.SignInError as e:
+        raise _chatgpt_error(e)
+    _wake_runner()
+    return result
+
+
+@app.post("/api/chatgpt/model", dependencies=[Depends(require_api_key)])
+async def chatgpt_model(request: Request):
+    from core import chatgpt_plan
+    body = await request.json() or {}
+    try:
+        return chatgpt_plan.set_model(_request_person(request), str(body.get("model", "")).strip())
+    except chatgpt_plan.SignInError as e:
+        raise _chatgpt_error(e)
+
+
+@app.post("/api/chatgpt/welcomed", dependencies=[Depends(require_api_key)])
+async def chatgpt_welcomed(request: Request):
+    from core import chatgpt_plan
+    chatgpt_plan.welcomed(_request_person(request))
+    return {"ok": True}
+
+
+@app.post("/api/chatgpt/sign-out", dependencies=[Depends(require_api_key)])
+async def chatgpt_sign_out(request: Request):
+    from core import chatgpt_plan
+    result = await chatgpt_plan.sign_out(_request_person(request))
+    return {**result, "status": chatgpt_plan.status(_request_person(request))}
+
+
+def _wake_runner() -> None:
+    """Like saving a key in Settings: jobs waiting for a model can run."""
+    from core.scheduler import run_due_tasks
+    asyncio.get_running_loop().create_task(asyncio.to_thread(run_due_tasks))
 
 
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -1859,6 +1949,9 @@ async def runner_status():
         backups = _ac.get_llm_backups()
         cfg = backups[0] if backups else None
     configured = cfg is not None
+    from core import chatgpt_plan
+    if not configured and chatgpt_plan.anyone_signed_in():
+        return {"llm_configured": True, "provider": "chatgpt", "model": None}
     return {
         "llm_configured": configured,
         "provider": cfg.get("provider") if configured else None,

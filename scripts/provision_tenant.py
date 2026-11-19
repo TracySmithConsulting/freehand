@@ -506,6 +506,9 @@ services:
       - OOMOL_CONNECT_ADMIN_TOKEN=${{OC_ADMIN_TOKEN}}
       # Hosted: the console never hands out the API key by itself.
       - FREEHAND_CONSOLE_AUTO_KEY=0
+      # OpenAI's ChatGPT-plan rules cover apps on people's own computers,
+      # not FreeHands hosted for clients (core/chatgpt_plan.py).
+      - FREEHAND_CHATGPT_PLAN=0
       # This tenant's memory service, and the token it uses to reach
       # FreeHand's model.
       - FREEHAND_HINDSIGHT_URL=http://hindsight:8888

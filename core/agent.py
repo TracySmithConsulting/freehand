@@ -66,12 +66,19 @@ def _switch_note(switched: dict) -> str:
 
 def _model_name(config: dict) -> str:
     from core import llm_providers
+    if config.get("provider") == "chatgpt":
+        return "your ChatGPT plan"
     p = llm_providers.get(llm_providers.identify(config.get("provider", ""), config.get("base_url", "")))
     service = p["name"] if p and p["id"] != "custom" else (config.get("base_url") or "your custom service")
     return f"{service} ({config.get('model', '')})"
 
 
-def _failure_reason(status: Optional[int], timed_out: bool = False) -> str:
+def _failure_reason(status: Optional[int], timed_out: bool = False, provider: str = "") -> str:
+    if provider == "chatgpt" and status == 429:
+        from core.chatgpt_plan import USAGE_URL
+        return f"your ChatGPT plan's limit for FreeHand is used up for now (you can check it at {USAGE_URL})"
+    if provider == "chatgpt" and status == 401:
+        return "your ChatGPT sign-in has ended (sign in again under Connections)"
     if timed_out:
         return "it didn't respond in time"
     if status is None:
@@ -101,8 +108,15 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
         msg, _status, _timed_out = await _call_one(messages, tools, config, last=True)
         return msg
 
+    from core import chatgpt_plan, people
     from core.agent_config import get_llm_chain
-    chain = get_llm_chain() or [get_llm_config()]
+    chain = get_llm_chain()
+    person = people.current()
+    if chatgpt_plan.signed_in(person):
+        # Their own ChatGPT plan first, for their own chats only
+        # (core/chatgpt_plan.py); FreeHand's usual models are the backups.
+        chain = [{"provider": "chatgpt", "person": person}] + chain
+    chain = chain or [get_llm_config()]
     first_failure = None
     for i, cfg in enumerate(chain):
         last = i == len(chain) - 1
@@ -115,7 +129,7 @@ async def call_llm(messages: List[Dict], tools: List[Dict] = None, config: dict 
                 LAST_SWITCH.update({**switched, "at": datetime.now().isoformat(timespec="minutes")})
             return msg
         if first_failure is None:
-            first_failure = _failure_reason(status, timed_out)
+            first_failure = _failure_reason(status, timed_out, cfg.get("provider", ""))
             first_error = msg["error"]
     if len(chain) > 1:
         return {"error": f"{first_error} (your backup models didn't answer either)"}
@@ -132,6 +146,10 @@ async def _call_one(messages: List[Dict], tools: Optional[List[Dict]], config: d
     sooner - one retry, a 60-second limit, no retry after a timeout - so
     a stuck service doesn't keep people waiting minutes.
     """
+    if config.get("provider") == "chatgpt":
+        from core import chatgpt_plan, people
+        return await chatgpt_plan.call(messages, tools, config.get("person") or people.current(),
+                                       timeout_seconds=120 if last else 60)
     from core.agent_config import resolve_llm_endpoint
     model = config.get("model", "gpt-4o-mini")
     temperature = config.get("temperature", 0.7)

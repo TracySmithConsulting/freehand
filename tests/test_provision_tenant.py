@@ -690,6 +690,7 @@ def test_each_tenant_gets_its_own_locked_down_memory():
     env = doc["services"]["freehand"]["environment"]
     assert "FREEHAND_HINDSIGHT_URL=http://hindsight:8888" in env
     assert "FREEHAND_CONSOLE_AUTO_KEY=0" in env
+    assert "FREEHAND_CHATGPT_PLAN=0" in env  # OpenAI's rules don't cover hosted FreeHands
     assert any(line.startswith("FREEHAND_LLM_PROXY_TOKEN=") for line in pt.build_env("acme", 3100, "https://c").splitlines())
 
 
