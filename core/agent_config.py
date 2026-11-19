@@ -659,6 +659,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {
                 "fact": {"type": "string", "description": "One clear sentence, e.g. 'The user's sister Anna lives in Durban.'"},
+                "shared": {"type": "boolean", "description": (
+                    "True only when the user asks to share it with everyone on this FreeHand, "
+                    "for example 'share this with the office' or 'add this to the shared notes'. "
+                    "Otherwise leave it out: what people tell FreeHand is private.")},
             },
             "required": ["fact"],
         },

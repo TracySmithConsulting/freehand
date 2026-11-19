@@ -384,7 +384,8 @@ async def execute_tool(name: str, args: dict) -> dict:
                 search_memory, args.get("query", ""), args.get("limit", 5), True)
             return {"content": json.dumps(results, default=str)}
         elif name == "remember":
-            result = await asyncio.to_thread(long_memory.retain, args.get("fact", ""), "Told to remember", True)
+            result = await asyncio.to_thread(long_memory.retain, args.get("fact", ""), "Told to remember", True,
+                                             bool(args.get("shared")))
             return {"content": json.dumps(result, default=str)}
         elif name == "forget_memory":
             result = await asyncio.to_thread(long_memory.forget_matching, args.get("description", ""))

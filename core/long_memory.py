@@ -199,6 +199,25 @@ def _visible(memory_id: str) -> bool:
     return bool(have & set(tags)) or (not have and match == "any")
 
 
+SHARED_TAG = "shared"
+
+
+def _change_refusal(memory_id: str) -> Optional[str]:
+    """Why the current person may not correct or forget this memory, or
+    None. Anyone recalls the shared pool; only the person who shared a
+    memory, or the owner, changes it."""
+    from core import people
+    code, data = _call("GET", _bank_path(f"/memories/{urllib.parse.quote(memory_id, safe='')}"))
+    if code != 200 or not isinstance(data, dict) or not _visible(memory_id):
+        return "FreeHand couldn't find that memory."  # someone else's is "not found", like a wrong id
+    tags = set(data.get("tags") or [])
+    me = people.current()
+    if SHARED_TAG in tags and me != people.OWNER_ID and f"person:{me}" not in tags:
+        owner = people.list_people()[0]["name"]
+        return f"Someone else shared that memory, so only they or {owner} can change it."
+    return None
+
+
 def recall(query: str, max_tokens: int = 600, timeout: float = 6.0) -> list[str]:
     """Short lines FreeHand should know for this message. [] on any problem."""
     if not enabled() or not (query or "").strip():
@@ -223,8 +242,10 @@ def recall(query: str, max_tokens: int = 600, timeout: float = 6.0) -> list[str]
     return lines
 
 
-def retain(text: str, context: str = "", wait: bool = False) -> dict:
-    """Save text (a conversation turn or a fact). Background by default."""
+def retain(text: str, context: str = "", wait: bool = False, shared: bool = False) -> dict:
+    """Save text (a conversation turn or a fact). Background by default.
+    ``shared``: into the shared pool everyone on this FreeHand recalls
+    ("share this with the office"), still marked as whose it was."""
     if not enabled():
         return {"error": "Long-term memory is turned off."}
     text = (text or "").strip()
@@ -237,7 +258,7 @@ def retain(text: str, context: str = "", wait: bool = False) -> dict:
     # Whose memory this is (core/people.py). Recall, the Memory page and
     # forgetting only reach the person's own and the shared pool (_scope).
     from core import people
-    item = {"content": text[:8000], "tags": people.memory_tags(),
+    item = {"content": text[:8000], "tags": people.memory_tags() + ([SHARED_TAG] if shared else []),
             "metadata": {"person": people.current()}}
     if context:
         item["context"] = context[:200]
@@ -265,12 +286,21 @@ def list_facts(limit: int = 50, offset: int = 0, query: str = "") -> dict:
         code, data = _call("GET", _bank_path("/memories/list?" + urllib.parse.urlencode(params, doseq=True)))
         if code != 200 or not isinstance(data, dict):
             return {"error": "FreeHand couldn't read its memory right now.", "items": []}
+        from core import people
+        me = people.current()
         for m in data.get("items") or []:
+            mtags = set(m.get("tags") or [])
+            mine = f"person:{me}" in mtags or (
+                me == people.OWNER_ID and not any(t.startswith("person:") for t in mtags))
+            shared = SHARED_TAG in mtags
             items.append({
                 "id": m.get("id"),
                 "text": clean_text(m.get("text", "")),
                 "when": m.get("mentioned_at") or m.get("date") or "",
                 "type": fact_type,
+                "shared": shared,
+                "mine": mine,
+                "can_change": mine or not shared or me == people.OWNER_ID,
             })
     items.sort(key=lambda m: m["when"] or "", reverse=True)
     # The same fact is often saved more than once (said on the Memory page,
@@ -294,8 +324,9 @@ def update_fact(memory_id: str, text: str) -> dict:
         return {"error": "The memory can't be empty. Use Forget to remove it."}
     if looks_secret(text):
         return {"error": "That looks like a password or key, so FreeHand won't keep it in memory."}
-    if not _visible(memory_id):  # someone else's is "not found", like a wrong id
-        return {"error": "FreeHand couldn't find that memory."}
+    refused = _change_refusal(memory_id)
+    if refused:
+        return {"error": refused}
     code, data = _call("PATCH", _bank_path(f"/memories/{urllib.parse.quote(memory_id, safe='')}"),
                        {"text": text[:2000]}, timeout=60.0)
     if code == 200:
@@ -304,8 +335,9 @@ def update_fact(memory_id: str, text: str) -> dict:
 
 
 def forget_fact(memory_id: str, reason: str = "Forgotten at the user's request") -> dict:
-    if not _visible(memory_id):  # someone else's is "not found", like a wrong id
-        return {"error": "FreeHand couldn't find that memory."}
+    refused = _change_refusal(memory_id)
+    if refused:
+        return {"error": refused}
     mid = urllib.parse.quote(memory_id, safe="")
     # Hindsight also builds summary "observations" from facts. Retiring a
     # fact left those in place, so a forgotten fact could still be recalled

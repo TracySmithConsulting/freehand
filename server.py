@@ -1909,9 +1909,11 @@ async def memory_choose_bank(request: Request):
 
 @app.get("/api/memory/facts", dependencies=[Depends(require_api_key)])
 async def memory_facts(q: str = "", offset: int = 0, limit: int = 50):
-    from core import long_memory
-    return await asyncio.to_thread(
+    from core import long_memory, people
+    out = await asyncio.to_thread(
         long_memory.list_facts, max(1, min(limit, 200)), max(0, offset), q.strip()[:200])
+    # Sharing only means something with other people on this FreeHand.
+    return {**out, "can_share": len(people.list_people()) > 1}
 
 
 @app.post("/api/memory/facts", dependencies=[Depends(require_api_key)])
@@ -1920,7 +1922,8 @@ async def memory_add_fact(request: Request):
     body = await request.json()
     text = str((body or {}).get("text", "")).strip()[:2000]
     # Wait for Hindsight, so the new memory is listed when the page reloads.
-    result = await asyncio.to_thread(long_memory.retain, text, "Added on the Memory page", True)
+    result = await asyncio.to_thread(long_memory.retain, text, "Added on the Memory page", True,
+                                     bool((body or {}).get("shared")))
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
