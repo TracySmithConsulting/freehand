@@ -491,7 +491,7 @@ class TestJsReplaySuite:
 
     def test_tier_save_updates_badge_and_status(self, js_harness):
         """Tier form: submit posts the select's value and both announce
-        'Tier set to: …' and repaint the header badge."""
+        'FreeHand now has: …' and repaint the header badge."""
         verdict_expr = (
             "({ badge: document.querySelector('#tier-display .tier-badge').textContent,"
             " statusText: document.getElementById('status-region').textContent })"
@@ -518,14 +518,14 @@ class TestJsReplaySuite:
             "steps": [
                 {"set": ["tier-select", "full_access"]},
                 {"click": "#tier-form button"},
-                {"waitForStatus": "Tier set to: full_access"},
+                {"waitForStatus": "FreeHand now has: Full access"},
             ],
             "verdict": verdict_expr,
         })
         assert verdict.get("threw") is None, verdict
         assert verdict.get("stepError") is None, verdict
-        assert verdict["badge"] == "full access"
-        assert "Tier set to: full_access" in verdict["statusText"]
+        assert verdict["badge"] == "Safety: Full access"
+        assert "FreeHand now has: Full access" in verdict["statusText"]
 
     def test_gateway_status_renders_tables_and_prefills_form(self, js_harness):
         """Gateways: status table renders tier/pending/channel badges from
