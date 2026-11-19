@@ -5,6 +5,17 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.21] — 2026-11-19
+
+### Added
+
+- **Bring in what ChatGPT or Claude knows about you.** On the Memory
+  page, choose the export zip they email you, or paste their memory list.
+  Your conversations become notes FreeHand can search, and what they
+  remember goes into FreeHand's memory. "Take it out" removes it all
+  again. Each person's import is their own, and lines that look like a
+  password are left out.
+
 ## [0.1.20] — 2026-11-19
 
 ### Added
