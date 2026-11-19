@@ -4261,11 +4261,24 @@
       // so a new account shows up as connected without reloading the page.
       function openSignIn(service, name) {
         if (service === 'email') { openEmailForm(name); return; }  // a form, not a sign-in page
-        var win = window.open('/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' + encodeURIComponent(name), '_blank', 'width=600,height=700');
+        // Open the window now (a window opened later is blocked as a pop-up),
+        // then send it to the sign-in with a one-time ticket: a new window
+        // can't send FreeHand's key.
+        var win = window.open('', '_blank', 'width=600,height=700');
         if (!win) {
           showStatus('Your browser blocked the sign-in window. Allow pop-ups for FreeHand, then try again.', 'error');
           return;
         }
+        apiFetch('/api/connect-ticket', { method: 'POST' })
+          .then(function(r) { return r.ok ? r.json() : Promise.reject(); })
+          .then(function(d) {
+            win.location.href = '/api/integrations/' + encodeURIComponent(service) + '/authorize?label=' +
+              encodeURIComponent(name) + '&ticket=' + encodeURIComponent(d.ticket);
+          })
+          .catch(function() {
+            win.close();
+            showStatus('FreeHand could not start the sign-in. Try again.', 'error');
+          });
         showStatus('Sign in in the new window. When you finish, come back here.', 'success');
         var timer = setInterval(function() {
           if (!win.closed) return;

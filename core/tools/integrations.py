@@ -143,7 +143,7 @@ async def _oc_run(service: str, kind: str, action: str, inputs: dict, label: str
         err = result.get("error") or {}
         if err.get("code") == "connection_not_found":
             import urllib.parse
-            url = f"/api/integrations/{app}/authorize?label={urllib.parse.quote(label)}"
+            url = "/#connections"  # the Connect button there signs in safely
             return None, {
                 "error": (
                     f"No {name} account called '{label}' is connected yet. In FreeHand, open "
@@ -462,7 +462,7 @@ async def _composio_run(service: str, slug: str, args: dict, label: str):
         return None, {
             "error": (f"No {name} account called '{label}' is connected yet. In FreeHand, open "
                       f"Connections, choose Connect {name} and name the account '{label}'."),
-            "connect_url": f"/api/integrations/{service}/authorize?label={urllib.parse.quote(label)}",
+            "connect_url": "/#connections",
         }
     args = {k: v for k, v in (args or {}).items() if v not in (None, "", [])}
     try:

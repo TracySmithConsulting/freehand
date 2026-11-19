@@ -96,9 +96,15 @@ OOMOL_CONNECT_BASE_URL=http://127.0.0.1:3000 \
 
 Pick a no-auth provider (HackerNews, wttr.in) — no Slack/OAuth app registration needed:
 
+Every /api/integrations route needs FreeHand's key except the provider's
+callback (the console's Connect window uses a one-time ticket instead).
+
 ```bash
+API_KEY=$(python -c "import json; print(json.load(open('vault/settings.json'))['api_key'])")
+H="X-API-Key: $API_KEY"
+
 # Browser flow
-curl -is "http://127.0.0.1:8000/api/integrations/hackernews/authorize?label=tracy"
+curl -is -H "$H" "http://127.0.0.1:8000/api/integrations/hackernews/authorize?label=tracy"
 # Expect: HTTP 302 with Location: http://127.0.0.1:3001/providers/hackernews
 # (In dev, set OOMOL_CONNECT_CONSOLE_URL=http://127.0.0.1:5173 to point at the
 # separate console app — the redirect then goes to :5173/providers/hackernews.)
@@ -117,15 +123,15 @@ print(f'hackernews -> source={source}, creds={(cid, sec)}')
 # into OC's /api/oauth/configs/slack. After that, the consent screen
 # actually fires. Round 8 may add a shared OAuth app so the user
 # never sees this step.
-curl -is "http://127.0.0.1:8000/api/integrations/slack/authorize?label=tracy"
+curl -is -H "$H" "http://127.0.0.1:8000/api/integrations/slack/authorize?label=tracy"
 # Expect: 302 to OC web console
 
 # Make sure the legacy allowlist still works
-curl -is "http://127.0.0.1:8000/api/integrations/google/authorize?label=tracy"
+curl -is -H "$H" "http://127.0.0.1:8000/api/integrations/google/authorize?label=tracy"
 # Expect: 200 with {"authorize_url": ..., "state": ..., "label": "tracy"}
 
 # Negative case — service FreeHand and OC don't know about
-curl -is "http://127.0.0.1:8000/api/integrations/zzzz_nonexistent/authorize"
+curl -is -H "$H" "http://127.0.0.1:8000/api/integrations/zzzz_nonexistent/authorize"
 # Expect: 404 {"detail": "Unknown service: zzzz_nonexistent"}
 ```
 

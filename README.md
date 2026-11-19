@@ -225,7 +225,7 @@ Run `freehand agents list` to detect, then `freehand agents import hermes --stat
 | `POST` | `/api/agent/command` | Run agent command |
 | `GET` | `/api/integrations` | List integrations |
 | `GET` | `/api/integrations/{service}/authorize` | Get OAuth URL |
-| `GET` | `/api/integrations/callback/{service}` | OAuth callback |
+| `GET` | `/api/integrations/{service}/callback` | OAuth callback (the only one without the key) |
 | `POST` | `/api/integrations/{service}/disconnect` | Remove connection |
 | `GET` | `/api/agents` | Detect installed agents |
 | `POST` | `/api/agents/import` | Import from agent |

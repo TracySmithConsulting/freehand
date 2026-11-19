@@ -8,17 +8,18 @@ the key is stored in localStorage and attached to every /api/* call by a
 single apiFetch shim, and the approvals stream is replaced by keyed
 polling of GET /api/approvals. No new server surface.
 
-Connector setup stays reachable before any key is entered:
-/api/integrations/* is key-OPEN by design (the provider's OAuth consent
-screen IS the authorisation), so "connect a service in the browser" works
-with just the connector lifecycle.
+/api/integrations/* used to be key-OPEN (on the idea that the provider's
+consent screen is the authorisation). It isn't enough: the list, Disconnect
+and Test answered anyone, so any web page could disconnect an account
+(November 2026). Now they need the key; only the provider's callback is
+open, and the Connect window gets a one-time ticket.
 
 What this suite pins:
 - static invariants on the shipped HTML (no bare fetch('/api/...') that
   would bypass the key, no headerless EventSource, localStorage key
   storage, remember/forget controls)
-- the live auth BOUNDARY the browser relies on (TestClient): integrations
-  open, approvals + agent command key-gated.
+- the live auth BOUNDARY the browser relies on (TestClient): integrations,
+  approvals + agent command key-gated; the OAuth callback open.
 
 No new runtime deps.
 """
@@ -86,9 +87,41 @@ class TestConnectorBoundary:
     closes /api/integrations or opens /api/approvals would silently break
     'set up a connector from the browser' — this pins it."""
 
-    def test_integrations_list_is_open_no_key(self):
+    def test_integrations_list_requires_key(self):
         c = TestClient(app)
+        assert c.get("/api/integrations").status_code == 401
+        assert c.post("/api/integrations/gmail/disconnect?label=work").status_code == 401
+        assert c.post("/api/integrations/gmail/test").status_code == 401
+
+    def test_integrations_list_works_with_key(self):
+        c = TestClient(app, headers={"X-API-Key": get_or_create_api_key()})
         assert c.get("/api/integrations").status_code == 200
+
+    def test_the_providers_callback_needs_no_key(self):
+        # The provider sends the browser back here; its one-time state is checked.
+        r = TestClient(app).get("/api/integrations/slack/callback?code=x&state=nonsense", follow_redirects=False)
+        assert r.status_code not in (401, 403)
+
+    def test_the_connect_window_needs_a_one_time_ticket(self):
+        anyone = TestClient(app)
+        url = "/api/integrations/nonesuch/authorize?label=work"
+        assert anyone.get(url, follow_redirects=False).status_code == 401
+        assert anyone.get(url + "&ticket=made-up", follow_redirects=False).status_code == 401
+        assert anyone.post("/api/connect-ticket").status_code == 401
+        owner = TestClient(app, headers={"X-API-Key": get_or_create_api_key()})
+        ticket = owner.post("/api/connect-ticket").json()["ticket"]
+        assert anyone.get(f"{url}&ticket={ticket}", follow_redirects=False).status_code != 401
+        assert anyone.get(f"{url}&ticket={ticket}", follow_redirects=False).status_code == 401  # once only
+
+    def test_a_member_cant_disconnect_the_owners_accounts(self):
+        from core import agent_config, sessions
+        from server import SESSION_HEADER
+        s = agent_config._load_settings()
+        s["people"] = [{"id": "thandi", "name": "Thandi", "role": "member"}]
+        agent_config._save_settings(s)
+        thandi = TestClient(app, headers={SESSION_HEADER: sessions.start("thandi")})
+        assert thandi.post("/api/integrations/gmail/disconnect?label=work").status_code == 403
+        assert thandi.post("/api/connect-ticket").status_code == 403
 
     def test_approvals_list_requires_key(self):
         c = TestClient(app)
