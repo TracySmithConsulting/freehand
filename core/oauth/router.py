@@ -315,9 +315,23 @@ def _get_composio_callback_uri(service: str, label: str, request: Request) -> st
     return f"{path}?{urllib.parse.urlencode({'label': label})}"
 
 
+def kind_for(service: str) -> str:
+    """Which backend a new connection to this service goes through, as
+    core/accounts.py names them (the same order as /authorize below)."""
+    service = (service or "").lower()
+    try:
+        import importlib
+        _composio = importlib.import_module("core.oauth.composio")
+        if service in ("facebook", "instagram") and _composio.is_configured(service):
+            return "composio"
+    except Exception:
+        pass
+    return "app" if service in ALLOWED_SERVICES else "oc"
+
+
 @router.get("")
 async def list_integrations(request: Request):
-    from core import accounts
+    from core import accounts, people
     owners = accounts.owners()
 
     def whose(kind, service, label):
@@ -385,6 +399,15 @@ async def list_integrations(request: Request):
             "status": "active",
             "backend": "open_connector",
         })
+
+    # A member sees their own accounts and the shared ones, nobody else's
+    # (core/accounts.py).
+    me = people.current()
+    if me != people.OWNER_ID:
+        for group in services.values():
+            group["connections"] = [c for c in group["connections"]
+                                    if c.get("whose") in (me, accounts.SHARED)]
+        services = {k: v for k, v in services.items() if v["connections"]}
 
     import importlib
     _composio = importlib.import_module("core.oauth.composio")
@@ -798,6 +821,8 @@ async def disconnect(service: str, label: str = "default"):
         # OpenConnector accounts (Gmail, Outlook, Zoom, ...).
         from core.oauth import open_connector as _oc
         if _find_oc_account(service, label) and _oc.disconnect_account(service, label):
+            from core import accounts
+            accounts.forget(service, label)
             return {"status": "disconnected", "service": service, "label": label,
                     "backend": "open_connector"}
         raise HTTPException(status_code=404, detail=f"No connection found: {service} ({label})")
@@ -811,11 +836,15 @@ async def disconnect(service: str, label: str = "default"):
         except _composio.ComposioError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         _composio.remove_account(service, label)
+        from core import accounts
+        accounts.forget(service, label)
         return {"status": "disconnected", "service": service, "label": label, "backend": "composio"}
 
     deleted = delete_connection(service, label)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"No connection found: {service} ({label})")
+    from core import accounts
+    accounts.forget(service, label)
     return {"status": "disconnected", "service": service, "label": label}
 
 

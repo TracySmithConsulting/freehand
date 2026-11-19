@@ -989,7 +989,7 @@
           <li data-advanced data-owner-only><a href="#people">People</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
         <li data-advanced data-owner-only><a href="#skills">Skills</a></li>
-          <li data-advanced data-owner-only><a href="#connections">Connections</a></li>
+          <li data-advanced><a href="#connections">Connections</a></li>
           <li data-advanced data-owner-only><a href="#agents">Agents</a></li>
           <li data-advanced data-owner-only><a href="#settings">Settings</a></li>
           <li data-advanced data-owner-only><a href="#gateways">Gateways</a></li>
@@ -1663,11 +1663,13 @@
     </section>
 
     <!-- Connections Panel -->
-    <section id="connections" data-advanced data-owner-only aria-labelledby="conn-heading">
+    <section id="connections" data-advanced aria-labelledby="conn-heading">
       <h2 id="conn-heading">
         Connections
         <span class="hotkey-hint" aria-hidden="true">Alt+K</span>
       </h2>
+      <p class="hint" id="connections-yours" hidden>Accounts you connect here are yours: only you can use them.
+        Shared accounts, such as the office mailbox, are listed too.</p>
       <div id="connections-list" aria-live="polite">
         <p class="empty-state">Loading connections...</p>
       </div>
@@ -4209,21 +4211,23 @@
                   var when = [timeLeft && !isExpired ? timeLeft : '', conn.connected_at ? 'since ' + escapeHtml(conn.connected_at) : '']
                     .filter(Boolean).join(' · ');
                   // Screen readers hear which account a button belongs to.
-                  var who = escapeHtml(info.name) + ' ' + escapeHtml(conn.label);
+                  var who = escapeHtml(info.name) + ' ' + escapeHtml(shownLabel(conn.label));
 
+                  var mineToManage = !isMember() || conn.whose === signedInAs.id;
                   card.innerHTML =
                     '<div class="connection-info">' +
-                      '<span class="connection-label">' + escapeHtml(conn.label) + '</span>' +
+                      '<span class="connection-label">' + escapeHtml(shownLabel(conn.label)) +
+                        (isMember() && conn.whose === 'shared' ? ' (shared)' : '') + '</span>' +
                       '<div class="connection-meta">' + statusText + (when ? ' · ' + when : '') + '</div>' +
                       (conn.email && conn.email !== conn.label ? '<div class="connection-meta">' + userLabel + '</div>' : '') +
                       (scopes ? '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' : '') +
-                    '</div>' +                      '<div class="connection-actions">' +
+                    '</div>' + (!mineToManage ? '' :                      '<div class="connection-actions">' +
                       (isExpired
                         ? '<button class="secondary" onclick="reconnectConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Reconnect ' + who + '">Reconnect</button> '
                         : '') +
                       '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Test ' + who + '">Test</button>' +
                       '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Disconnect ' + who + '">Disconnect</button>' +
-                    '</div>';
+                    '</div>');
                   if (conn.account && choices.length) {
                     var info2 = card.querySelector('.connection-info');
                     (info2 || card).appendChild(whoseControl(conn, info.name));
@@ -4247,6 +4251,10 @@
             // Show available but not connected services
             var connected = new Set(connections.map(function(c) { return c.service; }));
             var remaining = available.filter(function(s) { return !connected.has(s); });
+            // Email on your own domain is set up with the owner's form.
+            if (isMember()) remaining = remaining.filter(function(s) { return s !== 'email'; });
+            var yours = document.getElementById('connections-yours');
+            if (yours) yours.hidden = !isMember();
             if (remaining.length) {
               var emptyGroup = document.createElement('div');
               emptyGroup.className = 'connection-group';
@@ -4359,8 +4367,19 @@
 
       // Open the sign-in window, then refresh Connections when it closes,
       // so a new account shows up as connected without reloading the page.
+      // A member's own accounts are named after them (core/accounts.py).
+      function isMember() { return !!(signedInAs && !signedInAs.owner); }
+      function ownLabel(name) {
+        var prefix = signedInAs.id + '-';
+        return name.toLowerCase().indexOf(prefix) === 0 ? name : prefix + name;
+      }
+      function shownLabel(label) {
+        return isMember() && label.toLowerCase().indexOf(signedInAs.id + '-') === 0
+          ? label.slice(signedInAs.id.length + 1) : label;
+      }
       function openSignIn(service, name) {
         if (service === 'email') { openEmailForm(name); return; }  // a form, not a sign-in page
+        if (isMember()) name = ownLabel(name);
         // Open the window now (a window opened later is blocked as a pop-up),
         // then send it to the sign-in with a one-time ticket: a new window
         // can't send FreeHand's key.
@@ -6102,9 +6121,9 @@
         loadMemoryFiles();
         loadFacts();
         loadVoiceStatus();
+        loadConnections();  // a member sees their own and the shared accounts
         if (me.owner) {
           loadPeople();
-          loadConnections();
           loadGatewayStatus();
           loadAgents();
           loadSkills();

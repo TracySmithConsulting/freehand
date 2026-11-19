@@ -253,8 +253,18 @@ In a sensible order:
    - **A person isn't offered** tools for accounts they may not use,
      and isn't told those accounts' names.
 
-   Not built yet: a member connecting their own account themselves. For
-   now the owner connects it and chooses "Thandi only".
+   **Built (November 2026): members connecting their own accounts.**
+   A member has the Connections page too, showing their own accounts and
+   the shared ones, nobody else's.
+   - **Their account is named after them** ("thandi-personal": they
+     choose "Personal"), so it can never take the name of anyone else's,
+     and it's theirs from the moment they start connecting it.
+   - **Only they test or disconnect it.** They can't touch the owner's
+     or the shared accounts, or say whose an account is.
+   - **Disconnecting** an account (anyone's) also forgets whose it was.
+   - **When they leave,** their accounts are disconnected (the default).
+   - Email on your own domain is still set up by the owner (it's a form
+     with a password, not a sign-in page).
 6. **Roles and permissions:** what members may do, set per person.
 
    **Built (November 2026): the limits every member has**
