@@ -271,6 +271,58 @@ def retain(text: str, context: str = "", wait: bool = False, shared: bool = Fals
     return {"saved": True}
 
 
+def retain_many(lines: list, context: str, tag: str) -> dict:
+    """Save several facts at once, marked with ``tag`` so they can all be
+    found again (core/chat_import.py: what came from ChatGPT or Claude).
+    Lines that look like a password or key are left out. In the
+    background: Hindsight works through them in its own time."""
+    if not enabled():
+        return {"error": "Long-term memory is turned off."}
+    clean = [str(x).strip()[:2000] for x in lines if str(x or "").strip()]
+    kept = [x for x in clean if not looks_secret(x)]
+    if not kept:
+        return {"saved": 0, "left_out": len(clean)}
+    if not _ensure_bank():
+        return {"error": "FreeHand's memory (Hindsight) isn't reachable right now."}
+    from core import people
+    tags = people.memory_tags() + [tag]
+    items = [{"content": x, "tags": tags, "context": context[:200], "metadata": {"person": people.current()}}
+             for x in kept]
+    for start in range(0, len(items), 50):  # a few requests, not hundreds
+        code, _ = _call("POST", _bank_path("/memories"), {"items": items[start:start + 50], "async": True},
+                        timeout=30.0)
+        if code is None or not (200 <= code < 300):
+            return {"error": "FreeHand couldn't save those to memory. Try again later.", "saved": start}
+    return {"saved": len(kept), "left_out": len(clean) - len(kept)}
+
+
+def forget_tagged(tag: str) -> Optional[int]:
+    """Delete the current person's memories marked with ``tag`` (their
+    documents, so the facts and summaries made from them go too). How
+    many, or None if memory can't be reached."""
+    from core import people
+    if not enabled():
+        return 0
+    if not _ensure_bank():
+        return None
+    me, done = f"person:{people.current()}", 0
+    for _ in range(1000):
+        params = {"tags": [me, tag], "tags_match": "all_strict", "limit": 100}  # theirs, from this import
+        code, data = _call("GET", _bank_path("/documents?" + urllib.parse.urlencode(params, doseq=True)))
+        if code != 200 or not isinstance(data, dict):
+            return None
+        mine = [d for d in data.get("items") or [] if isinstance(d, dict) and d.get("id")
+                and me in (d.get("tags") or []) and tag in (d.get("tags") or [])]
+        if not mine:
+            return done
+        for d in mine:
+            code, _ = _call("DELETE", _bank_path(f"/documents/{urllib.parse.quote(d['id'], safe='')}"), timeout=60.0)
+            if code is None or not 200 <= code < 300:
+                return None
+            done += 1
+    return done
+
+
 def list_facts(limit: int = 50, offset: int = 0, query: str = "") -> dict:
     """Editable facts, newest first, for the Memory page."""
     if not _ensure_bank():
