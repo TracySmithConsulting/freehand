@@ -566,7 +566,14 @@ async def re_execute_approval(approval_id: int, approver: str = "local") -> dict
 
     args = payload.get("args") or {}
     import core.agent as _agent  # lazy: avoid import cycle + respect tests
-    result = await _agent.execute_tool(tool, args)
+    # It runs as the person who asked for it, not whoever approved it, so
+    # approving can't let someone use an account that isn't theirs.
+    from core import people
+    token = people.set_current(str(row.get("person") or people.OWNER_ID))
+    try:
+        result = await _agent.execute_tool(tool, args)
+    finally:
+        people.reset(token)
     return {"re_executed": True, "tool": tool, "result": result}
 
 

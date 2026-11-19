@@ -399,6 +399,19 @@ async def people_remove(person_id: str):
     return _people_page()
 
 
+@app.post("/api/accounts/whose", dependencies=[Depends(require_api_key)])
+async def accounts_whose(body: dict):
+    """The owner says who may use a connected account: one person, or
+    everyone ("shared"). Owner only: not in MEMBER_ROUTES."""
+    from core import accounts
+    body = body or {}
+    try:
+        whose = accounts.set_owner(str(body.get("account") or ""), str(body.get("whose") or ""))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"account": str(body.get("account")).lower(), "whose": whose}
+
+
 @app.post("/api/people/{person_id}/sign-in-link", dependencies=[Depends(require_api_key)])
 async def people_sign_in_link(person_id: str):
     """The owner makes a one-time sign-in link for someone."""

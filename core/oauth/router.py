@@ -317,6 +317,15 @@ def _get_composio_callback_uri(service: str, label: str, request: Request) -> st
 
 @router.get("")
 async def list_integrations(request: Request):
+    from core import accounts
+    owners = accounts.owners()
+
+    def whose(kind, service, label):
+        # Each account and who may use it (core/accounts.py).
+        account = accounts.key(kind, service, label)
+        from core import people
+        return {"account": account, "whose": owners.get(account, people.OWNER_ID)}
+
     connections = list_connections()
     services = {}
     for conn in connections:
@@ -324,6 +333,7 @@ async def list_integrations(request: Request):
         if svc not in services:
             services[svc] = {"service": svc, "connections": []}
         services[svc]["connections"].append({
+            **whose("app", svc, conn["label"]),
             "label": conn["label"],
             "user_id": conn.get("user_id", ""),
             "connected_at": conn["connected_at"],
@@ -346,6 +356,7 @@ async def list_integrations(request: Request):
                 continue
             services.setdefault(svc, {"service": svc, "connections": []})
             services[svc]["connections"].append({
+                **whose("composio", svc, account.get("label", "default")),
                 "label": account.get("label", "default"),
                 "user_id": account.get("user_id", ""),
                 "connected_at": account.get("connected_at", ""),
@@ -365,6 +376,7 @@ async def list_integrations(request: Request):
         svc = account["service"]
         services.setdefault(svc, {"service": svc, "connections": []})
         services[svc]["connections"].append({
+            **whose("oc", svc, account["label"]),
             "label": account["label"],
             "email": account["display"],
             "connected_at": "",

@@ -491,6 +491,12 @@ async def execute_tool(name: str, args: dict) -> dict:
         return {"content": json.dumps({"error": str(e)})}
 
 
+def _usable_tools() -> list:
+    """Every tool, without the ones for accounts this person may not use."""
+    from core import accounts
+    return accounts.usable_tools(list_available_tools())
+
+
 async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_id: str = "",
                     job: bool = False, member: Optional[dict] = None,
                     person: Optional[str] = None) -> dict:
@@ -607,10 +613,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         from core import team
         allowed = set(team.tool_names(member))
         tools, tool_state = tool_selection.select(
-            [s for s in list_available_tools() if s["function"]["name"] in allowed], [command], lean=False)
+            [s for s in _usable_tools() if s["function"]["name"] in allowed], [command], lean=False)
     else:
         allowed = None
-        tools, tool_state = tool_selection.select(list_available_tools(), [command, *earlier], lean=lean,
+        tools, tool_state = tool_selection.select(_usable_tools(), [command, *earlier], lean=lean,
                                                   by_topic=tool_selection.tools_by_topic(get_llm_config()))
     if not job and not delegated:
         tools = [*tools, ask_user.schema()]
@@ -820,7 +826,15 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         from core.agent_config import get_tool_permission
         permission = get_tool_permission(tool_name)
 
-        if allowed is not None and tool_name not in allowed:
+        # Someone else's account (core/accounts.py): refused before anyone
+        # is asked to approve it, whatever the permission level.
+        from core import accounts
+        account_refusal = accounts.tool_refusal(tool_name, tool_args)
+
+        if account_refusal:
+            tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(
+                {"error": "not_your_account", "tell_the_person": account_refusal})}
+        elif allowed is not None and tool_name not in allowed:
             # A team member asked for a tool it wasn't given.
             tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps(
                 {"error": f"{tool_name} isn't one of {member['name']}'s tools."})}

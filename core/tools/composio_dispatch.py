@@ -12,6 +12,10 @@ async def dispatch_composio_tool(tool_name: str, args: dict) -> dict:
     if not record:
         return {"ok": False, "error": {"code": "unknown_tool", "message": f"Composio tool not registered: {tool_name}"}}
 
+    from core import accounts
+    refusal = accounts.refusal(accounts.key("composio", record["service"], record.get("label", "default")))
+    if refusal:
+        return {"ok": False, "error": {"code": "not_your_account", "message": refusal}}
     account = composio.get_account(record["service"], record.get("label", "default"))
     if not account or not account.get("connected_account_id"):
         return {"ok": False, "error": {"code": "not_connected", "message": f"No active Composio account for {record['service']}"}}

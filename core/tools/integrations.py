@@ -23,6 +23,10 @@ WRITE_ACTIONS = {
 
 
 async def _ensure_token(service, label):
+    from core import accounts
+    refusal = accounts.refusal(accounts.key("app", service, label))
+    if refusal:
+        return None, refusal
     conn = get_connection(service, label)
     if not conn:
         return None, f"Not connected: {service} ({label})"
@@ -448,6 +452,10 @@ async def _composio_run(service: str, slug: str, args: dict, label: str):
 
     label = label or "default"
     name = service.capitalize()
+    from core import accounts
+    refusal = accounts.refusal(accounts.key("composio", service, label))
+    if refusal:
+        return None, {"error": refusal}
     account = composio.get_account(service, label)
     if not account or not account.get("connected_account_id"):
         import urllib.parse
@@ -543,9 +551,12 @@ def get_connections_summary() -> List[Dict]:
             f"label ('default' unless renamed). Manage accounts at {_oc_console_url()}."
         ),
     } for family in ("google", "microsoft", "zoom")]
+    from core import accounts
     for svc in ["facebook", "github", "email"]:
         conns = list_connections(svc)
         for c in conns:
+            if not accounts.may_use(accounts.key("app", svc, c["label"])):
+                continue  # someone else's: not even its name
             results.append({
                 "service": svc,
                 "label": c["label"],
