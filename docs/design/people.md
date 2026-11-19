@@ -108,8 +108,21 @@ In a sensible order:
 1. **Sign-in per person** in the console, and a People page in Settings to add
    people and link their chats. That replaces editing settings by hand.
 
-   **Built (November 2026): sign-in** (`core/sessions.py`). The People
-   page is next.
+   **Built (November 2026): sign-in** (`core/sessions.py`), and **the
+   People page** in the console (owner only):
+   - **Add, change or remove** a person, with their Telegram chat ID
+     and WhatsApp number.
+   - **Mistakes are explained:** a group's chat ID, a number without a
+     country code, or a chat that's already someone else's.
+   - **"Wrote to FreeHand, but isn't on it"** (`core/newcomers.py`):
+     people who wrote to the bot privately but aren't on FreeHand. They
+     aren't answered, as before, but their name and chat ID are
+     remembered for a day, the last 10 only, so the owner adds them in
+     one click instead of hunting for a chat ID. Groups aren't listed.
+   - **Make a sign-in link** for someone, and **sign them out
+     everywhere**.
+   - **Removing someone** signs them out and stops FreeHand answering
+     their chats. What they made stays for now ("When someone leaves").
    - **On your own computer**, the console still signs itself in with
      FreeHand's API key. The key is always the owner.
    - **A code to your chat:** you choose your name, and FreeHand sends a

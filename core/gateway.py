@@ -556,6 +556,12 @@ async def handle_telegram_update(update: dict, *, from_polling: bool = False) ->
             return {"ok": True}
     # N12a: allow_from check (second layer after the secret token)
     elif not _check_allow_from("telegram", chat_id):
+        # Not answered, but remembered for a day so the owner can add them
+        # on the People page (core/newcomers.py).
+        from core import newcomers
+        who = message.get("from", {})
+        newcomers.note("telegram", chat_id, " ".join(
+            x for x in (who.get("first_name"), who.get("last_name")) if x) or who.get("username") or "")
         settings = _load_settings()
         nobody_allowed = not (settings.get("telegram_allow_from") or settings.get("telegram_chat_whitelist"))
         if from_polling and nobody_allowed and chat_id and chat_id not in _told_unknown_chats:
@@ -684,6 +690,8 @@ async def handle_whatsapp_message(
         # Logged so the owner can find the exact id to allow (WhatsApp may
         # send a hidden-number "...@lid" id instead of the phone number).
         log.warning("WhatsApp message from %s ignored: not on whatsapp_allow_from", remote_jid)
+        from core import newcomers, people
+        newcomers.note("whatsapp", people.identity("whatsapp", remote_jid))
         return {"ok": True, "skipped": "allow_from"}
 
     if message_id and not _first_delivery(f"whatsapp:{message_id}"):
