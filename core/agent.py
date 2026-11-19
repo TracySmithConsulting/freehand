@@ -520,12 +520,20 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     from core import people
     token = people.set_current(person or people.person_for(source, caller_id) or people.OWNER_ID)
     try:
+        # A member's monthly limit on AI (core/ai_use.py): over it, no AI call.
+        from core import ai_use
+        over = ai_use.refusal()
+        if over:
+            return {"text": over, "tools_used": [], "error": None, "over_limit": True}
         if member is None and not job:
             from core import team
             member, command = team.addressed(command)
         if member is not None:
-            return await _run_member(command, source, caller_id, job, member)
-        return await _run_agent(command, max_turns, source, caller_id, job)
+            result = await _run_member(command, source, caller_id, job, member)
+        else:
+            result = await _run_agent(command, max_turns, source, caller_id, job)
+        ai_use.count(result.get("usage"))
+        return result
     finally:
         people.reset(token)
 

@@ -86,6 +86,8 @@ def list_people(settings: Optional[dict] = None) -> list[dict]:
             "role": role,
             **{ch: [str(x) for x in (p.get(ch) or [])] for ch in CHANNELS},
         })
+        if isinstance(p.get("ai_per_month"), int) and not isinstance(p.get("ai_per_month"), bool):
+            out[-1]["ai_per_month"] = p["ai_per_month"]  # their monthly limit (core/ai_use.py)
     return out
 
 
