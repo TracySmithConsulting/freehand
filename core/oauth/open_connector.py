@@ -573,6 +573,11 @@ def execute_action(
     via the search_actions lookup at registry time - see
     core/tools/registry.py for the translation.
     """
+    # Only an account the current person may use (core/accounts.py).
+    from core import accounts
+    refusal = accounts.refusal(accounts.key("oc", str(action_id).split(".", 1)[0], connection_name))
+    if refusal:
+        return {"ok": False, "error": {"code": "not_your_account", "message": refusal}}
     token = _load_runtime_token()
     if not token:
         log.debug("execute_action: no runtime token, returning None")

@@ -140,6 +140,7 @@ def _preview(msg) -> str:
 def read(label: str = "default", query: str = "", limit: int = 10) -> dict:
     """The newest emails in the inbox, trimmed like the others (sender,
     subject, date, preview, unread). Reading doesn't mark them as read."""
+    _check_whose(label)
     creds = credentials(label)
     try:
         box = _imap(creds)
@@ -167,7 +168,16 @@ def read(label: str = "default", query: str = "", limit: int = 10) -> dict:
             pass
 
 
+def _check_whose(label: str) -> None:
+    """Only a mailbox the current person may use (core/accounts.py)."""
+    from core import accounts
+    refusal = accounts.refusal(accounts.key("app", "email", label))
+    if refusal:
+        raise EmailError(refusal)
+
+
 def send(label: str, to: list, subject: str, body: str) -> dict:
+    _check_whose(label)
     creds = credentials(label)
     msg = EmailMessage()
     msg["From"] = creds["address"]

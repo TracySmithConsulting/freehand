@@ -3959,9 +3959,50 @@
         var listEl = document.getElementById('connections-list');
         listEl.innerHTML = '<p class="empty-state">Loading...</p>';
 
-        apiFetch('/api/integrations')
-          .then(function(res) { return res.json(); })
-          .then(function(data) {
+        // Who may use each account (core/accounts.py). Only asked about
+        // when there's someone besides the owner on this FreeHand.
+        var peopleReq = apiFetch('/api/people')
+          .then(function(r) { return r.ok ? r.json() : null; }).catch(function() { return null; });
+        Promise.all([apiFetch('/api/integrations').then(function(res) { return res.json(); }), peopleReq])
+          .then(function(both) {
+            var data = both[0];
+            var team = both[1];
+            var choices = team && team.people && team.people.length
+              ? [{ id: 'owner', name: team.owner.name + ' only (you)' }]
+                  .concat(team.people.map(function(p) { return { id: p.id, name: p.name + ' only' }; }))
+                  .concat([{ id: 'shared', name: 'Everyone (shared)' }])
+              : [];
+            function whoseControl(conn, serviceName) {
+              var wrap = document.createElement('div');
+              wrap.className = 'connection-meta';
+              var label = document.createElement('label');
+              label.textContent = 'Who can use it ';
+              var select = document.createElement('select');
+              select.setAttribute('aria-label', 'Who can use ' + serviceName + ' ' + conn.label);
+              var known = choices.some(function(c) { return c.id === (conn.whose || 'owner'); });
+              (known ? choices : choices.concat([{ id: conn.whose, name: 'Someone no longer on FreeHand' }]))
+                .forEach(function(c) {
+                  var o = document.createElement('option');
+                  o.value = c.id; o.textContent = c.name;
+                  select.appendChild(o);
+                });
+              select.value = conn.whose || 'owner';
+              select.onchange = function() {
+                var chosen = select.value;
+                apiFetch('/api/accounts/whose', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                  body: JSON.stringify({ account: conn.account, whose: chosen }) })
+                  .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'Not saved.'); return d; }); })
+                  .then(function() {
+                    var picked = choices.filter(function(c) { return c.id === chosen; })[0];
+                    showStatus(serviceName + ' ' + conn.label + ': ' + (picked ? picked.name : chosen) + '.', 'success');
+                    conn.whose = chosen;
+                  })
+                  .catch(function(e) { showStatus(e.message, 'error'); select.value = conn.whose || 'owner'; });
+              };
+              label.appendChild(select);
+              wrap.appendChild(label);
+              return wrap;
+            }
             // Walkthrough finding (R17.1): /api/integrations returns
             // accounts grouped per service — [{ service, connections: [...] }]
             // — but this panel was still mapping the payload flat, so every
@@ -4054,6 +4095,10 @@
                       '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Test ' + who + '">Test</button>' +
                       '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Disconnect ' + who + '">Disconnect</button>' +
                     '</div>';
+                  if (conn.account && choices.length) {
+                    var info2 = card.querySelector('.connection-info');
+                    (info2 || card).appendChild(whoseControl(conn, info.name));
+                  }
                   bodyDiv.appendChild(card);
                 });
 

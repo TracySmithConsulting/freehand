@@ -221,6 +221,30 @@ In a sensible order:
    - a Composio user ID per person;
    - FreeHand only lets each person use their own connections and the shared
      ones.
+
+   **Built (November 2026): whose each account is** (`core/accounts.py`).
+   - **An account is one person's, or shared.** Every account is the
+     owner's until the owner says otherwise, so nothing becomes shared
+     by accident. On the Connections screen, once there's someone
+     besides the owner, each account has "Who can use it": the owner
+     only, one person only, or everyone (shared). That's kept in
+     settings (`account_owners`).
+   - **A person's account is theirs alone.** The owner can't use
+     Thandi's either.
+   - **The check is made twice.**
+     - Before FreeHand asks anyone to approve a step, so nobody
+       approves something that can't run.
+     - Where each account is actually used, so no route gets past it:
+       OpenConnector (`execute_action`, which FreeHand's own email,
+       calendar, sheets and Zoom tools use too), Composio, email on
+       your own domain, and FreeHand's own sign-ins (Facebook, GitHub).
+   - **An approved step runs as the person who asked**, not whoever
+     approved it.
+   - **A person isn't offered** tools for accounts they may not use,
+     and isn't told those accounts' names.
+
+   Not built yet: a member connecting their own account themselves. For
+   now the owner connects it and chooses "Thandi only".
 6. **Roles and permissions:** what members may do, set per person.
 7. **Families:** the child role, parents' approvals, limits and oversight
    (see "Families and children" below).
