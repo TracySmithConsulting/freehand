@@ -122,6 +122,11 @@ async function main() {
     <section id="skills"><h2 id="skills-heading">Skills</h2><p id="skills-status"></p><ul id="skills-active"></ul><ul id="skills-draft"></ul><ul id="skills-archived"></ul><div id="skill-viewer"></div></section>
     <button type="button" id="voice-speak-btn">Speak</button><input type="checkbox" id="voice-read-aloud"><input type="checkbox" id="voice-conversation"><p id="voice-status"></p>
     <div id="signin-banner" role="alert" hidden><button type="button" id="signin-banner-settings">Go to Settings</button></div>
+    <section id="sign-in" hidden><h2 id="sign-in-heading">Sign in to FreeHand</h2><div id="sign-in-people"></div>
+      <button type="button" id="sign-in-send">Send me a code</button>
+      <div id="sign-in-code-step" hidden><input id="sign-in-code"><button type="button" id="sign-in-check">Sign in</button></div>
+      <p id="sign-in-message" role="status"></p></section>
+    <p id="signed-in-as" hidden><strong id="signed-in-name"></strong><button type="button" id="sign-out">Sign out</button></p>
     <section id="approvals-section" hidden><div id="approvals-list"></div></section>
   </main>
 </body></html>`;
@@ -160,7 +165,9 @@ async function main() {
   sandboxWindow.__fetchLog = _fetchLog;
   Object.assign(sandboxWindow, {
     localStorage: {
-      _d: {},
+      // The owner's console, signed in with the key (a page with neither a
+      // key nor a session shows only the sign-in screen and loads nothing).
+      _d: { freehand_api_key: 'replay-owner-key' },
       getItem(k) { return this._d[k] || null; },
       setItem(k, v) { this._d[k] = String(v); },
       removeItem(k) { delete this._d[k]; },

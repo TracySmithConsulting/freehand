@@ -582,6 +582,10 @@
     .approvals-waiting { border: 3px solid #b26a00; border-radius: 8px; padding: 1rem; }
     @media (prefers-color-scheme: dark) { .approvals-waiting { border-color: #ffb74d; } }
     [data-advanced][hidden] { display: none !important; }
+    [data-owner-only][hidden] { display: none !important; }
+    .sign-in-people { border: none; padding: 0; margin: 0 0 1rem; }
+    .sign-in-people label { display: block; padding: 0.4rem 0; font-size: 1.1rem; }
+    .signed-in-as { margin: 0 0 1rem; }
     .model-results { list-style: none; padding-left: 0; margin: 0.25rem 0 0.75rem; }
     .model-results li { margin: 0.15rem 0; }
     .runner-alert {
@@ -981,13 +985,13 @@
           <li><a href="#command">Command</a></li>
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Scheduled jobs</a></li>
-          <li><a href="#team">Team</a></li>
+          <li data-owner-only><a href="#team">Team</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
-        <li data-advanced><a href="#skills">Skills</a></li>
-          <li data-advanced><a href="#connections">Connections</a></li>
-          <li data-advanced><a href="#agents">Agents</a></li>
-          <li data-advanced><a href="#settings">Settings</a></li>
-          <li data-advanced><a href="#gateways">Gateways</a></li>
+        <li data-advanced data-owner-only><a href="#skills">Skills</a></li>
+          <li data-advanced data-owner-only><a href="#connections">Connections</a></li>
+          <li data-advanced data-owner-only><a href="#agents">Agents</a></li>
+          <li data-advanced data-owner-only><a href="#settings">Settings</a></li>
+          <li data-advanced data-owner-only><a href="#gateways">Gateways</a></li>
     </ul>
   </nav>
 
@@ -1001,6 +1005,27 @@
         "Remember key in this browser".</p>
       <button type="button" id="signin-banner-settings">Go to Settings</button>
     </div>
+
+    <!-- Signing in as a person (core/sessions.py): a code to their own chat. -->
+    <section id="sign-in" aria-labelledby="sign-in-heading" hidden>
+      <h2 id="sign-in-heading" tabindex="-1">Sign in to FreeHand</h2>
+      <fieldset class="sign-in-people">
+        <legend>Who are you?</legend>
+        <div id="sign-in-people"></div>
+      </fieldset>
+      <button type="button" id="sign-in-send">Send me a code</button>
+      <div id="sign-in-code-step" hidden>
+        <label for="sign-in-code">The code we sent you</label>
+        <input type="text" id="sign-in-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+        <button type="button" id="sign-in-check">Sign in</button>
+      </div>
+      <p id="sign-in-message" role="status" aria-live="polite"></p>
+    </section>
+
+    <p id="signed-in-as" class="signed-in-as" hidden>
+      Signed in as <strong id="signed-in-name"></strong>.
+      <button type="button" class="secondary" id="sign-out">Sign out</button>
+    </p>
 
     <!-- The first-run setup (core/first_run.py): shown while FreeHand has no AI model. -->
     <section id="welcome" class="welcome" aria-labelledby="welcome-heading" hidden>
@@ -1310,7 +1335,7 @@
     </section>
 
     <!-- Team members (core/team.py, docs/design/scheduled-jobs-and-team-members.md) -->
-    <section id="team" aria-labelledby="team-heading">
+    <section id="team" data-owner-only aria-labelledby="team-heading">
       <h2 id="team-heading">My team members</h2>
       <p class="hint">
         Team members are helpers with one job each, such as marketing or sorting email. You give them their names.
@@ -1488,7 +1513,7 @@
     </section>
 
     <!-- Skills: saved instructions that have to earn their place -->
-    <section id="skills" data-advanced aria-labelledby="skills-heading">
+    <section id="skills" data-advanced data-owner-only aria-labelledby="skills-heading">
       <h2 id="skills-heading" tabindex="-1">Skills</h2>
       <p class="hint">
         Skills are instructions FreeHand saves for tasks you do more than once.
@@ -1507,7 +1532,7 @@
     </section>
 
     <!-- Connections Panel -->
-    <section id="connections" data-advanced aria-labelledby="conn-heading">
+    <section id="connections" data-advanced data-owner-only aria-labelledby="conn-heading">
       <h2 id="conn-heading">
         Connections
         <span class="hotkey-hint" aria-hidden="true">Alt+K</span>
@@ -1518,7 +1543,7 @@
     </section>
 
     <!-- Help on my computer: the FreeHand Helper (docs/design/computer-helper.md) -->
-    <section id="computer-help" data-advanced aria-labelledby="helper-heading">
+    <section id="computer-help" data-advanced data-owner-only aria-labelledby="helper-heading">
       <h2 id="helper-heading">Help on my computer</h2>
       <p class="hint">
         The FreeHand Helper is a small program on your computer. With it, FreeHand can see what's on
@@ -1542,7 +1567,7 @@
     </section>
 
     <!-- Agents Import Panel -->
-    <section id="agents" data-advanced aria-labelledby="agents-heading">
+    <section id="agents" data-advanced data-owner-only aria-labelledby="agents-heading">
       <h2 id="agents-heading">Agents</h2>
       <div id="agents-status" aria-live="polite">
         <p class="empty-state">Loading agent status...</p>
@@ -1551,7 +1576,7 @@
     </section>
 
     <!-- Settings & Approvals -->
-    <section id="settings" data-advanced aria-labelledby="set-heading">
+    <section id="settings" data-advanced data-owner-only aria-labelledby="set-heading">
       <h2 id="set-heading">
         Settings & Approvals
         <span class="hotkey-hint" aria-hidden="true">Alt+A</span>
@@ -1912,6 +1937,20 @@
         try { localStorage.removeItem(API_KEY_STORAGE); } catch (e) {}
       }
 
+      // Signed in as a person (core/sessions.py): a session instead of the
+      // key. It wins over the key, and makes the console that person's.
+      var SESSION_STORAGE = 'freehand_session';
+      function storedSession() {
+        try { return localStorage.getItem(SESSION_STORAGE) || ''; } catch (e) { return ''; }
+      }
+      function storeSession(token) {
+        try { localStorage.setItem(SESSION_STORAGE, token); } catch (e) {}
+      }
+      function forgetSession() {
+        try { localStorage.removeItem(SESSION_STORAGE); } catch (e) {}
+      }
+      var signedInAs = null;  // from /api/me: {id, name, owner}
+
       var last401WarnAt = 0;
       var lastRefusedSaveAt = 0;
       var REFUSED_SAVE_MSG =
@@ -1919,6 +1958,8 @@
         'See the message at the top of the page.';
 
       function showSignedOut(signedOut) {
+        var box = document.getElementById('sign-in');
+        if (box && !box.hidden) signedOut = false;  // the sign-in screen says it already
         var banner = document.getElementById('signin-banner');
         if (banner) banner.hidden = !signedOut;
       }
@@ -1946,9 +1987,20 @@
         var headers = options.headers || {};
         var key = storedApiKey();
         if (key) headers['X-API-Key'] = key;
+        var session = storedSession();
+        if (session) headers['X-FreeHand-Session'] = session;
         options.headers = headers;
         var method = (options.method || 'GET').toUpperCase();
         return fetch(url, options).then(function(res) {
+          if (res.status === 401 && session) {
+            // The session ended (signed out elsewhere, or removed): sign in again.
+            forgetSession();
+            location.reload();
+            throw new Error('signed out');
+          }
+          if (res.status === 403 && method !== 'GET') {
+            showStatus('Only the owner can do this.', 'error');
+          }
           if (res.status === 401) showSignedOut(true);
           if (res.status === 401 && method !== 'GET') {
             // A refused save must never look like success: the save
@@ -5338,22 +5390,136 @@
         if (field) field.focus();
       });
 
+      // ---- Signing in as a person ----
+      function signInSay(text) { document.getElementById('sign-in-message').textContent = text; }
+      function postJson(url, body) {
+        return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body || {}) })
+          .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
+      }
+      function chosenPerson() {
+        var r = document.querySelector('input[name="sign-in-person"]:checked');
+        return r ? r.value : '';
+      }
+      function showSignIn() {
+        showSignedOut(false);
+        // Signed out, the sign-in screen is all there is.
+        [].forEach.call(document.querySelectorAll('nav, main > section, main > .welcome'), function(el) {
+          if (el.id !== 'sign-in') el.hidden = true;
+        });
+        var box = document.getElementById('sign-in');
+        box.hidden = false;
+        fetch('/api/sign-in/people').then(function(r) { return r.json(); }).then(function(d) {
+          var list = document.getElementById('sign-in-people');
+          list.textContent = '';
+          (d.people || []).forEach(function(p, i) {
+            var label = document.createElement('label');
+            var input = document.createElement('input');
+            input.type = 'radio'; input.name = 'sign-in-person'; input.value = p.id;
+            input.dataset.codeBy = p.code_by || '';
+            if (i === 0) input.checked = true;
+            label.appendChild(input);
+            label.appendChild(document.createTextNode(' ' + p.name));
+            list.appendChild(label);
+          });
+          document.getElementById('sign-in-heading').focus();
+        }).catch(function() { signInSay('FreeHand isn\'t answering. Try again in a moment.'); });
+      }
+      document.getElementById('sign-in-send').addEventListener('click', function() {
+        var who = chosenPerson();
+        if (!who) { signInSay('Choose your name first.'); return; }
+        signInSay('Sending...');
+        postJson('/api/sign-in/code', { person: who }).then(function(d) {
+          signInSay('We sent a code to your ' + d.sent_to + '. Type it in below.');
+          document.getElementById('sign-in-code-step').hidden = false;
+          document.getElementById('sign-in-code').focus();
+        }).catch(function(e) { signInSay(e.message); });
+      });
+      function checkCode() {
+        var code = document.getElementById('sign-in-code').value;
+        postJson('/api/sign-in/check', { person: chosenPerson(), code: code }).then(function(d) {
+          storeSession(d.session);
+          signInSay('Signed in.');
+          location.reload();
+        }).catch(function(e) { signInSay(e.message); document.getElementById('sign-in-code').focus(); });
+      }
+      document.getElementById('sign-in-check').addEventListener('click', checkCode);
+      document.getElementById('sign-in-code').addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') checkCode();
+      });
+      document.getElementById('sign-out').addEventListener('click', function() {
+        apiFetch('/api/sign-out', { method: 'POST' }).catch(function() {}).then(function() {
+          forgetSession();
+          location.reload();
+        });
+      });
+
+      // A one-time sign-in link from the owner: #sign-in=<link>.
+      function useSignInLink() {
+        var m = /(?:^#|&)sign-in=([A-Za-z0-9_-]+)/.exec(location.hash || '');
+        if (!m) return Promise.resolve();
+        history.replaceState(null, '', location.pathname + location.search);
+        return postJson('/api/sign-in/link', { link: m[1] })
+          .then(function(d) {
+            // Load again signed in: parts of the page have already asked without it.
+            storeSession(d.session);
+            location.reload();
+            return new Promise(function() {});
+          })
+          .catch(function(e) { showSignIn(); signInSay(e.message); });
+      }
+
+      // Who this console is signed in as. A member sees only their own
+      // screens: the owner's (settings, team, connections...) are hidden.
+      function whoAmI() {
+        if (!storedSession() && !storedApiKey()) return Promise.resolve(null);
+        // The API key is always the owner: nothing to ask.
+        if (!storedSession()) return Promise.resolve({ owner: true });
+        return apiFetch('/api/me').then(function(r) { return r.ok ? r.json() : null; })
+          .then(function(me) {
+            signedInAs = me;
+            if (me && storedSession()) {
+              document.getElementById('signed-in-name').textContent = me.name;
+              document.getElementById('signed-in-as').hidden = false;
+            }
+            if (me && !me.owner) {
+              [].forEach.call(document.querySelectorAll('[data-owner-only]'), function(el) { el.hidden = true; });
+            }
+            return me;
+          }).catch(function() { return null; });
+      }
+
+      // A link opened in a tab that already shows FreeHand only changes the #.
+      if (window.addEventListener) {
+        window.addEventListener('hashchange', function() {
+          if (/(?:^#|&)sign-in=/.test(location.hash || '')) location.reload();
+        });
+      }
+
       // ---- Init ----
       // Sign in first (on this computer it's automatic), then load.
-      ensureConsoleKey().then(function() {
+      useSignInLink().then(function() {
+        return storedSession() ? null : ensureConsoleKey();
+      }).then(whoAmI).then(function(me) {
+        if (!me) {
+          if (!storedApiKey()) showSignIn();
+          return;
+        }
         refreshKeyButtons();
         loadTasks();
         loadTier();
-        loadConnections();
-        loadGatewayStatus();
-        loadAgents();
         startApprovalsPolling();
         startNoticesPolling();
         loadMemoryFiles();
         loadFacts();
-        loadSkills();
-        loadLlm();
         loadVoiceStatus();
+        if (me.owner) {
+          loadConnections();
+          loadGatewayStatus();
+          loadAgents();
+          loadSkills();
+          loadLlm();
+        }
       });
     })();
   </script>

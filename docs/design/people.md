@@ -107,6 +107,35 @@ In a sensible order:
 
 1. **Sign-in per person** in the console, and a People page in Settings to add
    people and link their chats. That replaces editing settings by hand.
+
+   **Built (November 2026): sign-in** (`core/sessions.py`). The People
+   page is next.
+   - **On your own computer**, the console still signs itself in with
+     FreeHand's API key. The key is always the owner.
+   - **A code to your chat:** you choose your name, and FreeHand sends a
+     6-digit code to your own Telegram or WhatsApp. The owner's are the
+     old allow-from lists. A code is never sent to a group. Nothing to
+     remember (the granny test). A code lasts 10 minutes, allows 5 tries
+     and works once; a new one can be asked for once a minute.
+   - **A one-time link** the owner makes (`POST
+     /api/people/<id>/sign-in-link`), for someone with no chat linked.
+     It works once, within 24 hours.
+   - **A session** per device, kept only as a hash. It lasts 30 days
+     from its last use and stops at once if the person is removed from
+     settings. The owner can sign someone out everywhere.
+   - **Signed in, the console is that person's.** Every request runs as
+     them, so the separation below applies.
+   - **A member only reaches their own screens** (`MEMBER_ROUTES` in
+     `server.py`): chat, jobs, approvals, messages, memory and the pad.
+     Everything else answers "Only the owner can do this", and the page
+     hides those screens. It's a list of what's allowed, so a new screen
+     is the owner's until someone decides otherwise.
+   - **A member's chat message is always their own console chat.** They
+     can't say it came from someone's Telegram.
+   - **A member's browser doesn't change FreeHand's time zone.**
+
+   On a hosted FreeHand this sits behind the office password at the
+   front door (Caddy), which stays.
 2. **Private memories and the shared pool:**
    - FreeHand recalls with `person:<me>` or `shared`;
    - "share this" saves with `shared`;
