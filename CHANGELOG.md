@@ -5,6 +5,27 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.15] — 2026-11-19
+
+### Added
+
+- **Each person signs in as themselves.** On a FreeHand with more than
+  one person, someone chooses their name and types the code FreeHand
+  sends to their own Telegram or WhatsApp. There's no password to
+  remember. The owner can also make a one-time sign-in link. Signed in,
+  the console is theirs: their own chat, jobs, approvals, memories and
+  notes, and the owner's screens are hidden. On your own computer the
+  console still signs you in by itself.
+- **The People page** (next to Team): add, change and remove the
+  people who use FreeHand, make sign-in links and sign people out.
+  Someone who messages your FreeHand bot but isn't on FreeHand is
+  listed under "Wrote to FreeHand, but isn't on it", with an Add
+  button, so there's no hunting for a Telegram chat ID.
+
+Personal and shared accounts (each person's own mailbox) are still to
+come, so share FreeHand only with people you'd trust with your
+connected accounts for now.
+
 ## [0.1.14] — 2026-11-19
 
 ### Changed
