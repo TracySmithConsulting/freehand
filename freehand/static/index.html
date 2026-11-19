@@ -1449,6 +1449,35 @@
       </p>
       <div id="people-newcomers" aria-live="polite"></div>
       <div id="people-list" aria-live="polite"><p class="empty-state">Loading...</p></div>
+      <div id="people-unfinished"></div>
+      <form id="people-leaving" class="stack-top" novalidate hidden>
+        <h3 id="people-leaving-heading" tabindex="-1"></h3>
+        <p id="people-leaving-intro"></p>
+        <fieldset>
+          <legend>What happens to their things</legend>
+          <div class="form-group" id="leave-files-group">
+            <label><input type="checkbox" id="leave-keep-files" aria-describedby="leave-files-hint"> Keep their notes for you</label>
+            <p class="hint" id="leave-files-hint"></p>
+          </div>
+          <div class="form-group" id="leave-jobs-group">
+            <label><input type="checkbox" id="leave-keep-jobs" aria-describedby="leave-jobs-hint"> Keep their scheduled jobs for you</label>
+            <p class="hint" id="leave-jobs-hint"></p>
+          </div>
+          <div class="form-group" id="leave-memories-group">
+            <label><input type="checkbox" id="leave-keep-memories" aria-describedby="leave-memories-hint"> Keep what FreeHand remembers about them for you</label>
+            <p class="hint" id="leave-memories-hint"></p>
+          </div>
+          <div class="form-group" id="leave-accounts-group">
+            <label><input type="checkbox" id="leave-disconnect" aria-describedby="leave-accounts-hint"> Disconnect the accounts that were theirs</label>
+            <p class="hint" id="leave-accounts-hint"></p>
+          </div>
+        </fieldset>
+        <p class="hint">Their chats are deleted, and approvals they were waiting for are cancelled.
+          To delete everything about them (for example, when they ask you to), untick every "Keep".</p>
+        <button type="submit" class="danger" id="leave-confirm"></button>
+        <button type="button" class="secondary" id="leave-cancel">Cancel</button>
+      </form>
+      <div id="people-leaving-done" class="stack-top" aria-live="polite"></div>
       <div id="people-link" class="stack-top" hidden>
         <h3 id="people-link-heading" tabindex="-1"></h3>
         <p>Send this link to them. It signs them in once, within a day, and then stops working.</p>
@@ -5542,8 +5571,89 @@
             box.appendChild(row);
           });
         }
+        // ---- When someone leaves (core/leaving.py) ----
+        var leaving = null;
+        function plural(n, one, many) { return n + ' ' + (n === 1 ? one : many); }
+        function showDone(lines) {
+          var box = el('people-leaving-done');
+          box.textContent = '';
+          var h = document.createElement('h3');
+          h.textContent = 'Done';
+          h.tabIndex = -1;
+          box.appendChild(h);
+          var ul = document.createElement('ul');
+          lines.forEach(function(t) { var li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+          box.appendChild(ul);
+          h.focus();
+        }
+        function closeLeaving() {
+          el('people-leaving').hidden = true;
+          leaving = null;
+        }
+        function askLeaving(p) {
+          el('people-leaving-done').textContent = '';
+          send('GET', '/api/people/' + encodeURIComponent(p.id) + '/leaving').then(function(h) {
+            leaving = p;
+            el('people-leaving-heading').textContent = 'Remove ' + p.name;
+            el('people-leaving-intro').textContent = p.name + ' is signed out straight away, and FreeHand stops answering their chats. ' +
+              'Choose what happens to what they made.';
+            el('leave-files-group').hidden = !h.files;
+            el('leave-keep-files').checked = true;
+            el('leave-files-hint').textContent = plural(h.files, 'note or file', 'notes and files') +
+              '. Kept, they go in a folder "From ' + p.name + '" in yours. Not kept, they are deleted.';
+            el('leave-jobs-group').hidden = !h.jobs;
+            el('leave-keep-jobs').checked = true;
+            el('leave-jobs-hint').textContent = h.jobs === 1
+              ? '1 job. Kept, it becomes yours, paused until you resume it. Not kept, it is deleted.'
+              : h.jobs + ' jobs. Kept, they become yours, paused until you resume them. Not kept, they are deleted.';
+            el('leave-memories-group').hidden = h.memories === 0;
+            el('leave-keep-memories').checked = false;
+            el('leave-memories-hint').textContent = (h.memories === null
+              ? 'FreeHand\'s memory can\'t be reached right now, so it can\'t say how many. If it still can\'t, you finish this later. '
+              : plural(h.memories, 'thing', 'things') + ' remembered. ') +
+              'They are private, so they are deleted unless you keep them. What they shared stays shared.';
+            el('leave-accounts-group').hidden = !h.accounts.length;
+            el('leave-disconnect').checked = true;
+            el('leave-accounts-hint').textContent = h.accounts.map(function(a) { return a.name; }).join(', ') +
+              '. Not disconnected, they become yours.';
+            var nothing = !h.files && !h.jobs && h.memories === 0 && !h.accounts.length;
+            el('people-leaving').querySelector('fieldset').hidden = nothing;
+            if (nothing) el('people-leaving-intro').textContent += ' They have nothing else to keep.';
+            el('leave-confirm').textContent = 'Remove ' + p.name;
+            el('people-leaving').hidden = false;
+            el('people-leaving-heading').focus();
+          }).catch(function(e) { showStatus(e.message, 'error'); });
+        }
+        function renderUnfinished(list) {
+          var box = el('people-unfinished');
+          box.textContent = '';
+          list.forEach(function(f) {
+            var row = document.createElement('div');
+            row.className = 'task-item';
+            var info = document.createElement('div');
+            info.className = 'task-info';
+            info.textContent = f.name + ' has left. Their memories are still to ' +
+              (f.memories === 'keep' ? 'give to you' : 'delete') + ': FreeHand\'s memory couldn\'t be reached.';
+            var btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'secondary';
+            btn.textContent = 'Finish';
+            btn.setAttribute('aria-label', 'Finish removing ' + f.name);
+            btn.onclick = function() {
+              send('POST', '/api/people/' + encodeURIComponent(f.id) + '/finish').then(function(r) {
+                showDone(r.done);
+                render(r);
+              }).catch(function(e) { showStatus(e.message, 'error'); });
+            };
+            row.appendChild(info);
+            row.appendChild(document.createTextNode(' '));
+            row.appendChild(btn);
+            box.appendChild(row);
+          });
+        }
         function render(d) {
           renderNewcomers(d.newcomers || []);
+          renderUnfinished(d.unfinished || []);
           var list = el('people-list');
           list.textContent = '';
           var owner = document.createElement('div');
@@ -5594,15 +5704,7 @@
                   .then(function(r) { showStatus(p.name + ' is signed out on ' + r.signed_out + ' device(s).', 'success'); })
                   .catch(function(e) { showStatus(e.message, 'error'); });
               }],
-             ['Remove', 'Remove ' + p.name, 'danger', function() {
-                if (!confirm('Remove ' + p.name + ' from FreeHand? They are signed out, and FreeHand stops answering their ' +
-                             'chats. What they made (chats, jobs, memories, notes) stays for now, and their jobs stop running.')) return;
-                send('DELETE', '/api/people/' + encodeURIComponent(p.id)).then(function(r) {
-                  showStatus(p.name + ' has been removed.', 'success');
-                  if (editing === p.id) reset();
-                  render(r);
-                }).catch(function(e) { showStatus(e.message, 'error'); });
-              }]].forEach(function(b) {
+             ['Remove', 'Remove ' + p.name, 'danger', function() { askLeaving(p); }]].forEach(function(b) {
               var btn = document.createElement('button');
               btn.type = 'button';
               btn.className = b[2];
@@ -5635,6 +5737,28 @@
               .catch(function(err) { el('person-form-error').textContent = err.message; el('person-name').focus(); });
           });
           el('person-cancel').onclick = reset;
+          el('leave-cancel').onclick = function() {
+            var who = leaving;
+            closeLeaving();
+            var back = who && document.querySelector('[aria-label="Remove ' + who.name.replace(/"/g, '\\"') + '"]');
+            if (back) back.focus();
+          };
+          el('people-leaving').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!leaving) return;
+            var p = leaving;
+            var body = { keep_files: el('leave-keep-files').checked, keep_jobs: el('leave-keep-jobs').checked,
+                         keep_memories: el('leave-keep-memories').checked, disconnect_accounts: el('leave-disconnect').checked };
+            el('leave-confirm').disabled = true;
+            send('DELETE', '/api/people/' + encodeURIComponent(p.id), body).then(function(r) {
+              closeLeaving();
+              if (editing === p.id) reset();
+              render(r);
+              showDone(r.done);
+              showStatus(p.name + ' has been removed.', 'success');
+            }).catch(function(err) { showStatus(err.message, 'error'); })
+              .then(function() { el('leave-confirm').disabled = false; });
+          });
           el('people-link-copy').onclick = function() {
             var text = el('people-link-text').value;
             if (navigator.clipboard) navigator.clipboard.writeText(text).then(function() { showStatus('Link copied.', 'success'); });

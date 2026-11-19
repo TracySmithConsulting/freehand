@@ -122,7 +122,8 @@ In a sensible order:
    - **Make a sign-in link** for someone, and **sign them out
      everywhere**.
    - **Removing someone** signs them out and stops FreeHand answering
-     their chats. What they made stays for now ("When someone leaves").
+     their chats, and the owner chooses what of theirs to keep ("When
+     someone leaves").
    - **On your own computer**, the console still signs itself in with
      FreeHand's API key. The key is always the owner.
    - **A code to your chat:** you choose your name, and FreeHand sends a
@@ -269,6 +270,34 @@ In a sensible order:
 7. **Families:** the child role, parents' approvals, limits and oversight
    (see "Families and children" below).
 8. **When someone leaves** (see below).
+
+   **Built (November 2026)** (`core/leaving.py`). Remove on the People
+   page opens a short form instead of a yes/no box:
+   - **It shows what they have:** notes and files, scheduled jobs,
+     memories, and accounts that were theirs.
+   - **Notes and files:** kept by default, in a folder "From <name>" in
+     the owner's vault, or deleted.
+   - **Scheduled jobs:** kept by default, as the owner's, paused, and
+     never sent to the person's old chat. Or deleted.
+   - **Memories:** deleted by default, or given to the owner. Each thing
+     remembered is one Hindsight document, and changing or deleting it
+     reaches its facts and summaries (checked against a real Hindsight).
+     What they shared stays shared.
+   - **Accounts that were theirs:** disconnected by default, or given to
+     the owner.
+   - **Always:** they're signed out, FreeHand stops answering their
+     chats, and their chats and waiting approvals are deleted.
+   - **Deleting everything about them** (a POPIA request) is unticking
+     every "Keep".
+   - **Nothing is left under their id, and the id is never given to
+     anyone new** (`former_people` in settings, and any folder an older
+     FreeHand left under `people/`). So a newcomer with the same name
+     can't inherit anything.
+   - **If memory can't be reached,** the rest is still done, and the
+     person is listed with Finish, to do their memories later.
+
+   Not built: telling the person what was kept. The page reminds the
+   owner to.
 
 The isolation tests were written first, and failed until each piece was
 built (`tests/test_people_isolation.py`, November 2026). As Thandi,
