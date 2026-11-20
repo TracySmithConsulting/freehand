@@ -82,7 +82,7 @@ def test_people_are_told_once_an_hour_and_the_note_is_not_remembered(models, mon
     first = asyncio.run(agent.run_agent("hello", source="web"))
     second = asyncio.run(agent.run_agent("again", source="web"))
     assert "didn't answer because it has no credit left" in first["text"]
-    assert "Check your main model in Settings" in first["text"]
+    assert "Check your main model on the AI model page" in first["text"]
     assert second["text"] == "Answer."  # not repeated within the hour
     assert saved == ["Answer.", "Answer."]  # the note is shown, not saved
 

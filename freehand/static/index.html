@@ -1081,7 +1081,8 @@
           <li data-advanced data-owner-only><a href="#computer-help">Computer help</a></li>
           <li data-advanced data-owner-only><a href="#agents">Agents</a></li>
           <li data-advanced data-owner-only><a href="#settings">Settings</a></li>
-          <li data-advanced data-owner-only><a href="#gateways">Gateways</a></li>
+          <li data-advanced data-owner-only><a href="#ai-model">AI model</a></li>
+          <li data-advanced data-owner-only><a href="#gateways">Chat apps</a></li>
     </ul>
   </nav>
 
@@ -1837,10 +1838,10 @@
       <div id="agents-imports" aria-live="polite" class="stack-top"></div>
     </section>
 
-    <!-- Settings & Approvals -->
+    <!-- Settings: web search, the safety level, FreeHand's key -->
     <section id="settings" data-page data-advanced data-owner-only aria-labelledby="set-heading">
       <h2 id="set-heading">
-        Settings & Approvals
+        Settings
         <span class="hotkey-hint" aria-hidden="true">Alt+A</span>
       </h2>
 
@@ -1947,9 +1948,13 @@
         <button type="button" id="oauth-save-btn">Save Facebook app</button>
       </fieldset>
 
-      <!-- LLM Settings -->
+    </section>
+
+    <!-- The AI model FreeHand thinks with (core/llm_providers.py) -->
+    <section id="ai-model" data-page data-advanced data-owner-only aria-labelledby="ai-model-heading">
+      <h2 id="ai-model-heading">AI model</h2>
       <fieldset id="llm-setup">
-        <legend>AI model</legend>
+        <legend>How FreeHand thinks</legend>
         <p class="hint">
           FreeHand needs an AI model to think with. Models come from online services that
           charge a little per message (some have a free allowance), or can run free on this computer.
@@ -2053,17 +2058,16 @@
         </div>
       </fieldset>
 
-      <!-- Remote Gateways -->
-      <section id="gateways" aria-labelledby="gw-heading">
-        <h2 id="gw-heading">Remote Gateways</h2>
+    </section>
+
+    <!-- Chat apps (the gateways): talking to FreeHand from Telegram, Slack and WhatsApp -->
+    <section id="gateways" data-page data-advanced data-owner-only aria-labelledby="gw-heading">
+        <h2 id="gw-heading">Chat apps</h2>
         <p class="hint">
-          Connectors vs gateways: a <strong>connector</strong> is an account the agent
-          acts <em>with</em> (e.g. your Slack shared app → post/read channels).
-          A <strong>gateway</strong> is a channel that reaches <em>you</em> — where
-          approval requests and remote commands arrive (Telegram / Slack / WhatsApp
-          bot tokens below). Different credentials, different jobs.
-          From chat you can approve or deny only requests made from that same
-          chat; destructive actions must be approved here in the console.
+          Talk to FreeHand from Telegram, Slack or WhatsApp, and get its questions and approval requests there.
+          These are different from Connections: a connection is an account FreeHand uses for you, such as your
+          Gmail. From a chat app, you can approve or deny only what was asked in that same chat. Anything that
+          deletes or can't be undone is approved here, on FreeHand's page.
         </p>
         <div id="gateway-status" aria-live="polite">
           <p class="empty-state">Loading gateway status...</p>
@@ -2157,12 +2161,10 @@
             </label>
             <p class="hint">Leave this on if you linked your own number.</p>
           </div>
-          <p class="hint">Press "Save Gateway Settings" below when you're done.</p>
+          <p class="hint">Press Save, at the bottom, when you're done.</p>
         </fieldset>
 
-        <button type="button" id="gateway-save-btn">Save Gateway Settings</button>
-      </section>
-
+        <button type="button" id="gateway-save-btn">Save</button>
     </section>
   </main>
 
@@ -2505,6 +2507,15 @@
         var name = pageName(page);
         document.title = name ? name + ' - ' + baseTitle : baseTitle;
         if (navToggle) navToggle.textContent = name ? 'Menu: ' + name : 'Menu';
+        // Keep the address in step (a shortcut or a fallback changed the page),
+        // so reloading shows the same page. Never a sign-in link's address.
+        var hash = currentHash();
+        if (hash.indexOf('=') === -1) {
+          var named = hash.length > 1 ? document.getElementById(hash.slice(1)) : null;
+          if (named ? pageOf(named) !== page : page.id !== 'command') {
+            try { history.replaceState(null, '', '#' + (target === page ? page.id : target.id)); } catch (e) {}
+          }
+        }
         closeMenu();
         if (!moveFocus) return;
         var spot = target !== page ? target : (page.querySelector('h2') || page);
@@ -4243,7 +4254,7 @@
           } else {
             box.innerHTML =
               '<p class="runner-alert">No AI model is set up, so only the free jobs (reminders and your to-do list) will run. ' +
-              '<a href="#settings">Set up a model under Settings</a> for the others.</p>';
+              '<a href="#ai-model">Set up a model on the AI model page</a> for the others.</p>';
           }
         })
         .catch(function() { /* status is advisory; leave the box untouched */ });
@@ -6157,7 +6168,7 @@
           oi.className = 'task-info';
           oi.textContent = d.owner.name + ' (the owner). ' + (d.owner.code_by
             ? 'Can sign in elsewhere with a code on ' + d.owner.code_by + '.'
-            : 'Signs in on this computer. Add your Telegram under Gateways to sign in elsewhere.') +
+            : 'Signs in on this computer. Add your Telegram under Chat apps to sign in elsewhere.') +
             ' Used AI ' + ((d.owner.ai_this_month || 0) === 1 ? 'once' : (d.owner.ai_this_month || 0) + ' times') + ' this month.';
           owner.appendChild(oi);
           list.appendChild(owner);

@@ -115,7 +115,7 @@ async function main() {
         <input id="wa-phone"><p id="wa-code-hint"></p>
         <textarea id="wa-allow"></textarea><input type="checkbox" id="wa-allow-self" checked>
         <button id="wa-pair-btn" type="button">Pair</button>
-        <button type="button" id="gateway-save-btn">Save Gateway Settings</button>
+        <button type="button" id="gateway-save-btn">Save</button>
       </form>
     </section>
     <div id="status-region" role="status" aria-live="polite"></div>

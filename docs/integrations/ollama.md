@@ -5,7 +5,7 @@ nothing you say leaves the computer. They're slower and less capable than
 online models, especially at using tools, so they make a good backup, or a
 model for simple chats.
 
-FreeHand manages this in Settings, AI model, **Models on this computer
+FreeHand manages this on the AI model page, **Models on this computer
 (Ollama)**.
 
 ## Setting it up

@@ -61,7 +61,7 @@ def _switch_note(switched: dict) -> str:
         return ""
     _SWITCH_NOTICED[key] = now
     return (f"(Note: your main AI model, {switched['from']}, didn't answer because {switched['reason']}, "
-            f"so I used your backup, {switched['to']}. Check your main model in Settings.)")
+            f"so I used your backup, {switched['to']}. Check your main model on the AI model page.)")
 
 
 def _model_name(config: dict) -> str:

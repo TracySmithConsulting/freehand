@@ -59,6 +59,14 @@ def test_every_page_has_a_heading_for_its_title_and_focus():
         assert page in o.h2_in, f"#{page} has no h2"
 
 
+def test_settings_is_split_into_short_pages():
+    o = outline()
+    assert {"settings", "ai-model", "gateways"} <= pages(o)
+    for part in ("ai-model", "gateways", "llm-setup", "gateway-save-btn"):
+        assert "settings" not in o.elements[part]["inside"], f"#{part} is still inside Settings"
+    assert "settings" in o.elements["api-key"]["inside"] and "settings" in o.elements["tier-form"]["inside"]
+
+
 def test_the_setup_signing_in_and_approvals_stay_above_every_page():
     o = outline()
     for always in ("welcome", "sign-in", "approvals-section"):
