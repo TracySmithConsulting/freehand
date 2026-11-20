@@ -583,6 +583,8 @@
     @media (prefers-color-scheme: dark) { .approvals-waiting { border-color: #ffb74d; } }
     [data-advanced][hidden] { display: none !important; }
     [data-owner-only][hidden] { display: none !important; }
+    #bs-card-text p, #bs-card-warning p { margin: 0.6rem 0; }
+    #bs-card-warning ul { margin: 0.4rem 0 0.8rem; }
     .sign-in-people { border: none; padding: 0; margin: 0 0 1rem; }
     .sign-in-people label { display: block; padding: 0.4rem 0; font-size: 1.1rem; }
     .signed-in-as { margin: 0 0 1rem; }
@@ -1074,6 +1076,7 @@
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Scheduled jobs</a></li>
           <li><a href="#team">Team</a></li>
+          <li><a href="#brush-strokes">Brush strokes</a></li>
           <li id="nav-family" hidden><a href="#family">Your children</a></li>
           <li data-advanced data-owner-only><a href="#people">People</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
@@ -1539,6 +1542,41 @@
     </dialog>
 
     <!-- Memory Panel -->
+    <!-- Brush strokes: ways to make FreeHand your own, shared (core/brush_strokes.py). -->
+    <section id="brush-strokes" data-page aria-labelledby="bs-heading">
+      <h2 id="bs-heading">Brush strokes</h2>
+      <p class="hint">Ways to make FreeHand your own, that other people made and shared: for now, team members and skills.
+        A brush stroke is only words and settings, never a program. FreeHand checks it and shows you what it is before
+        you add it, and you can remove it again at any time.</p>
+      <p class="hint" id="bs-not-allowed" hidden></p>
+      <form id="bs-link-form" novalidate>
+        <div class="form-group">
+          <label for="bs-link">Link to a brush stroke on GitHub</label>
+          <input type="url" id="bs-link" autocomplete="off" placeholder="https://github.com/..." aria-describedby="bs-link-error">
+          <p class="error" id="bs-link-error" role="alert"></p>
+        </div>
+        <button type="submit" id="bs-look">Look at it</button>
+      </form>
+      <div class="form-group stack-top">
+        <label for="bs-file">Or open a brush stroke file you were sent (it ends in .brushstroke.json)</label>
+        <input type="file" id="bs-file" accept=".json,application/json">
+      </div>
+      <div id="bs-card" class="stack-top" hidden>
+        <h3 id="bs-card-heading" tabindex="-1">Before you add it</h3>
+        <div id="bs-card-text"></div>
+        <div id="bs-card-warning" role="alert"></div>
+        <details>
+          <summary>Show its instructions</summary>
+          <pre id="bs-card-words" style="white-space: pre-wrap;"></pre>
+        </details>
+        <p class="hint" id="bs-card-why-not" hidden></p>
+        <button type="button" id="bs-add">Add it</button>
+        <button type="button" class="secondary" id="bs-dont">Don't add it</button>
+      </div>
+      <h3 class="stack-top" id="bs-added-heading" tabindex="-1">Brush strokes you've added</h3>
+      <div id="bs-list" aria-live="polite"><p class="empty-state">None yet.</p></div>
+    </section>
+
     <!-- Your children: what their parents chose to see (core/children.py). Shown only to parents. -->
     <section id="family" data-page hidden aria-labelledby="family-heading">
       <h2 id="family-heading">Your children</h2>
@@ -1563,6 +1601,10 @@
       <label class="stack-top"><input type="checkbox" id="people-team-sharing" aria-describedby="people-team-sharing-hint">
         Let people share their team members with others</label>
       <p class="hint" id="people-team-sharing-hint">You can always share yours. Switched off, theirs stop being shared at once.</p>
+      <label class="stack-top"><input type="checkbox" id="people-brush-strokes" aria-describedby="people-brush-strokes-hint">
+        Let people add brush strokes for themselves</label>
+      <p class="hint" id="people-brush-strokes-hint">Team members only, and only for themselves. Skills change FreeHand for
+        everyone, so only you add them. Children can't add brush strokes.</p>
       <form id="people-leaving" class="stack-top" novalidate hidden>
         <h3 id="people-leaving-heading" tabindex="-1"></h3>
         <p id="people-leaving-intro"></p>
@@ -3602,6 +3644,7 @@
               '<button class="secondary" data-act="edit" aria-label="Change ' + escapeHtml(m.name) + '">Change</button> ' +
               '<button class="secondary" data-act="pause" aria-label="' + (m.paused ? 'Resume ' : 'Pause ') + escapeHtml(m.name) + '">' +
                 (m.paused ? 'Resume' : 'Pause') + '</button> ' +
+              '<button class="secondary" data-act="share-bs" aria-label="Share ' + escapeHtml(m.name) + ' as a brush stroke">Share as a brush stroke</button> ' +
               '<button class="danger" data-act="delete" aria-label="Delete ' + escapeHtml(m.name) + '">Delete</button>' : '');
             list.appendChild(div);
             if (!m.mine) return;
@@ -3618,6 +3661,27 @@
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ paused: !m.paused })
               }).then(function() { showStatus(m.name + (m.paused ? ' is back at work.' : ' is paused.'), 'success'); loadTeam(); });
+            };
+            div.querySelector('[data-act="share-bs"]').onclick = function() {
+              var me = (signedInAs && signedInAs.name) || '';
+              var by = prompt('Whose name should it say made it? Leave it empty to share it without a name.', me);
+              if (by === null) return;
+              apiFetch('/api/team/' + encodeURIComponent(m.id) + '/brush-stroke?made_by=' + encodeURIComponent(by))
+                .then(function(r) {
+                  if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || 'That did not work.'); });
+                  return r.blob();
+                })
+                .then(function(blob) {
+                  var a = document.createElement('a');
+                  a.href = URL.createObjectURL(blob);
+                  a.download = m.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.brushstroke.json';
+                  document.body.appendChild(a);
+                  a.click();
+                  setTimeout(function() { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+                  showStatus('Saved ' + a.download + '. It has ' + m.name + '\'s name, job, tools and instructions, ' +
+                             'and none of your keys, accounts or memories. Send it to someone, or share it on GitHub.', 'success');
+                })
+                .catch(function(e) { showStatus(e.message, 'error'); });
             };
             div.querySelector('[data-act="delete"]').onclick = function() {
               if (!confirm('Delete ' + m.name + '? Their scheduled jobs will stop working.')) return;
@@ -3704,6 +3768,7 @@
           .catch(function(err) { showError('team-form-error', err.message || 'That could not be saved.'); });
         });
 
+        window.loadTeam = loadTeam;  // Brush strokes adds and removes team members too
         loadTeam();
       })();
 
@@ -6025,6 +6090,109 @@
         if (field) field.focus();
       });
 
+      // ---- Brush strokes (core/brush_strokes.py) ----
+      var loadBrushStrokes = (function() {
+        function el(id) { return document.getElementById(id) || {}; }
+        var ticket = null;
+        function send(method, url, body) {
+          return apiFetch(url, { method: method, headers: { 'Content-Type': 'application/json' },
+                                 body: body ? JSON.stringify(body) : undefined })
+            .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
+        }
+        function add(parent, tag, text, cls) {
+          var e = document.createElement(tag);
+          if (text !== undefined) e.textContent = text;
+          if (cls) e.className = cls;
+          parent.appendChild(e);
+          return e;
+        }
+        function hideCard() { el('bs-card').hidden = true; ticket = null; }
+        function showCard(c) {
+          ticket = c.ticket || null;
+          var warn = el('bs-card-warning');
+          warn.textContent = '';
+          if (c.warnings && c.warnings.length) {
+            add(warn, 'p', 'CAREFUL: some of its words could try to make FreeHand do things you didn\'t ask for. ' +
+                'Read them before you add it.', 'error visible');
+            var ul = add(warn, 'ul');
+            c.warnings.forEach(function(w) { add(ul, 'li', 'It ' + w.why + (w.words ? ': "' + w.words + '"' : '.')); });
+          }
+          var text = el('bs-card-text');
+          text.textContent = '';
+          String(c.card).split('\n\n').forEach(function(p) { add(text, 'p', p); });
+          el('bs-card-words').textContent = c.instructions;
+          el('bs-card-why-not').hidden = !!c.may_add;
+          el('bs-card-why-not').textContent = c.may_add ? '' : c.why_not;
+          el('bs-add').hidden = !c.may_add;
+          el('bs-card').hidden = false;
+          el('bs-card-heading').focus();
+        }
+        function render(d) {
+          var box = el('bs-list');
+          box.textContent = '';
+          var not = el('bs-not-allowed');
+          not.hidden = !!d.may_add;
+          not.textContent = d.may_add ? '' : d.why_not;
+          if (!d.added.length) { add(box, 'p', 'None yet.', 'empty-state'); return; }
+          d.added.forEach(function(b) {
+            var row = add(box, 'div', undefined, 'task-item');
+            var info = add(row, 'div', undefined, 'task-info');
+            add(info, 'span', b.name, 'task-title');
+            add(info, 'div', b.kind_words.charAt(0).toUpperCase() + b.kind_words.slice(1) + ', added ' + niceDate(b.added_at) +
+                (d.owner && b.person !== 'owner' ? ' by ' + b.added_by : '') + '. ' +
+                (b.gallery ? 'From the FreeHand gallery.' : 'From ' + (b.source || 'a file') + '.'), 'task-meta');
+            var remove = add(row, 'button', 'Remove', 'danger');
+            remove.type = 'button';
+            remove.setAttribute('aria-label', 'Remove ' + b.name);
+            remove.onclick = function() {
+              if (!confirm('Remove ' + b.name + '? ' + (b.kind === 'team_member' ? 'The team member and its scheduled jobs go.' : 'The skill goes.'))) return;
+              send('DELETE', '/api/brush-strokes/' + b.id).then(function(r) {
+                showStatus(r.message, 'success');
+                load();
+                if (window.loadTeam) window.loadTeam();
+              }).catch(function(e) { showStatus(e.message, 'error'); });
+            };
+          });
+        }
+        function load() {
+          return apiFetch('/api/brush-strokes').then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) { if (d) render(d); }).catch(function() {});
+        }
+        var form = document.getElementById('bs-link-form');
+        if (form) {
+          form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            el('bs-link-error').textContent = '';
+            hideCard();
+            showStatus('Checking the brush stroke...', '');
+            send('POST', '/api/brush-strokes/look', { url: el('bs-link').value })
+              .then(showCard)
+              .catch(function(err) { el('bs-link-error').textContent = err.message; el('bs-link').focus(); });
+          });
+          el('bs-file').onchange = function() {
+            var f = el('bs-file').files && el('bs-file').files[0];
+            if (!f) return;
+            hideCard();
+            f.text().then(function(text) { return send('POST', '/api/brush-strokes/look', { file: text }); })
+              .then(showCard)
+              .catch(function(err) { showStatus(err.message, 'error'); })
+              .then(function() { el('bs-file').value = ''; });
+          };
+          el('bs-add').onclick = function() {
+            if (!ticket) return;
+            send('POST', '/api/brush-strokes/add', { ticket: ticket }).then(function(r) {
+              hideCard();
+              el('bs-link').value = '';
+              showStatus(r.message, 'success');
+              load().then(function() { el('bs-added-heading').focus(); });
+              if (window.loadTeam) window.loadTeam();
+            }).catch(function(e) { showStatus(e.message, 'error'); });
+          };
+          el('bs-dont').onclick = function() { hideCard(); showStatus('Nothing was added.', 'success'); el('bs-link').focus(); };
+        }
+        return load;
+      })();
+
       // ---- Your children (a parent's view, core/children.py) ----
       // The page is hidden until FreeHand knows there are children, so an
       // address ending #family is remembered and opened once it shows.
@@ -6285,6 +6453,7 @@
           renderNewcomers(d.newcomers || []);
           renderUnfinished(d.unfinished || []);
           el('people-team-sharing').checked = !!d.team_sharing_by_members;
+          el('people-brush-strokes').checked = d.brush_strokes_by_members !== false;
           var list = el('people-list');
           list.textContent = '';
           var owner = document.createElement('div');
@@ -6393,6 +6562,13 @@
             el('person-child').hidden = !child;
             if (child && !document.querySelector('#person-parents input')) fillChild({ parents: ['owner'] });
             if (child) { el('person-role').value = 'child'; el('person-child').hidden = false; el('person-child-consent').hidden = false; }
+          };
+          el('people-brush-strokes').onchange = function() {
+            var on = el('people-brush-strokes').checked;
+            send('POST', '/api/people/brush-strokes', { allowed: on }).then(function(d) {
+              showStatus(on ? 'People can now add brush strokes for themselves.' : 'Only you can add brush strokes now.', 'success');
+              render(d);
+            }).catch(function(e) { showStatus(e.message, 'error'); });
           };
           el('people-team-sharing').onchange = function() {
             var on = el('people-team-sharing').checked;
@@ -6564,6 +6740,7 @@
         loadVoiceStatus();
         loadConnections();  // a member sees their own and the shared accounts
         loadFamily();  // a parent: their children (core/children.py)
+        loadBrushStrokes();
         if (me.owner) {
           loadPeople();
           loadGatewayStatus();

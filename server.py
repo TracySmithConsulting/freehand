@@ -226,6 +226,10 @@ MEMBER_ROUTES = frozenset({
     # Their own team members, and the ones shared with them (core/team.py).
     ("GET", "/api/team"), ("POST", "/api/team"), ("PUT", "/api/team/{member_id}"),
     ("POST", "/api/team/{member_id}/pause"), ("DELETE", "/api/team/{member_id}"),
+    # Brush strokes they add for themselves, and sharing their own
+    # (core/brush_strokes.py checks who may add what).
+    ("GET", "/api/brush-strokes"), ("POST", "/api/brush-strokes/look"), ("POST", "/api/brush-strokes/add"),
+    ("DELETE", "/api/brush-strokes/{added_id}"), ("GET", "/api/team/{member_id}/brush-stroke"),
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
@@ -366,7 +370,7 @@ async def me(request: Request):
 # ── The People page (owner only: not in MEMBER_ROUTES) ───────────────
 
 def _people_page() -> dict:
-    from core import ai_use, children, leaving, newcomers, people, sessions, team
+    from core import ai_use, brush_strokes, children, leaving, newcomers, people, sessions, team
     s = people._settings()
     everyone = people.list_people(s)
     owner = everyone[0]
@@ -385,6 +389,7 @@ def _people_page() -> dict:
         "newcomers": newcomers.recent(),
         "unfinished": leaving.unfinished(s),
         "team_sharing_by_members": team.members_may_share(s),
+        "brush_strokes_by_members": brush_strokes.members_may_add(s),
     }
 
 
@@ -500,6 +505,76 @@ async def people_team_sharing(body: dict):
     s[team.MEMBERS_MAY_SHARE] = bool((body or {}).get("allowed"))
     agent_config._save_settings(s)
     return _people_page()
+
+
+@app.post("/api/people/brush-strokes", dependencies=[Depends(require_api_key)])
+async def people_brush_strokes(body: dict):
+    """The owner lets members add brush strokes for themselves, or stops it.
+    What they added already stays (they can remove it)."""
+    from core import agent_config, brush_strokes
+    s = agent_config._load_settings()
+    s[brush_strokes.SETTING] = bool((body or {}).get("allowed"))
+    agent_config._save_settings(s)
+    return _people_page()
+
+
+# ── Brush strokes (core/brush_strokes.py, docs/design/brush-strokes.md) ──
+
+@app.get("/api/brush-strokes", dependencies=[Depends(require_api_key)])
+async def brush_strokes_list(request: Request):
+    from core import brush_strokes, people
+    pid = _request_person(request)
+    return {"added": brush_strokes.list_added(pid), "owner": pid == people.OWNER_ID,
+            "may_add": brush_strokes.refusal("team_member", pid) is None,
+            "why_not": brush_strokes.refusal("team_member", pid) or ""}
+
+
+@app.post("/api/brush-strokes/look", dependencies=[Depends(require_api_key)])
+async def brush_strokes_look(body: dict):
+    """Check a brush stroke (a GitHub link, or a downloaded file's text)
+    without adding it: the card, the warnings, and a ticket to add it."""
+    from core import brush_strokes
+    body = body or {}
+    try:
+        if body.get("url"):
+            url = str(body["url"]).strip()
+            bundle = await asyncio.to_thread(brush_strokes.fetch, url)
+            return brush_strokes.look(bundle, url)
+        return brush_strokes.look(brush_strokes.from_upload(body.get("file") or ""), "a file you opened")
+    except brush_strokes.BrushStrokeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/brush-strokes/add", dependencies=[Depends(require_api_key)])
+async def brush_strokes_add(body: dict):
+    from core import brush_strokes
+    try:
+        return brush_strokes.add((body or {}).get("ticket"))
+    except brush_strokes.BrushStrokeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.delete("/api/brush-strokes/{added_id}", dependencies=[Depends(require_api_key)])
+async def brush_strokes_remove(added_id: int):
+    from core import brush_strokes
+    try:
+        return brush_strokes.remove(added_id)
+    except brush_strokes.BrushStrokeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/team/{member_id}/brush-stroke", dependencies=[Depends(require_api_key)])
+async def team_brush_stroke(member_id: str, made_by: str = ""):
+    """One of the person's own team members as a brush stroke file to
+    share: only its name, job, tools and instructions."""
+    from fastapi.responses import Response
+    from core import brush_strokes
+    try:
+        bundle = brush_strokes.export_team_member(member_id, made_by)
+    except brush_strokes.BrushStrokeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return Response(content=json.dumps(bundle, indent=2, ensure_ascii=False), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{brush_strokes.file_name(bundle)}"'})
 
 
 @app.post("/api/people/{person_id}/finish", dependencies=[Depends(require_api_key)])
