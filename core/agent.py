@@ -569,6 +569,9 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         else:
             result = await _run_agent(command, max_turns, source, caller_id, job)
         ai_use.count(result.get("usage"))
+        # A child: today's AI allowance, and what their parents chose to see.
+        children.count_ai(result.get("usage"))
+        children.record(command, result)
         return result
     finally:
         people.reset(token)
@@ -668,6 +671,9 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
                                                   by_topic=tool_selection.tools_by_topic(get_llm_config()))
     if not job and not delegated:
         tools = [*tools, ask_user.schema()]
+    # A child: telling their parents when FreeHand is worried (core/children.py).
+    if not job and not member and _children.is_child():
+        tools.append(_children.alert_schema())
     # The main FreeHand can hand work to a team member (core/team.py). Team
     # members can't, so it only ever goes one level down.
     from core import team as _team
@@ -796,6 +802,15 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": out[:200]})
             continue
 
+        if tool_name == _children.ALERT_TOOL and not job and not member:
+            # A child's FreeHand is worried (core/children.py): it's only
+            # offered to a child, and raise_alert checks that again.
+            out = json.dumps(await _children.raise_alert(tool_args.get("worry", ""), tool_args.get("about_a_parent")))
+            messages.append(llm_resp)
+            messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": out})
+            final_response["tools_used"].append({"name": tool_name, "args": tool_args, "result": out[:200]})
+            continue
+
         if tool_name == manage_jobs.TOOL and not job and not member:
             try:
                 out = await asyncio.to_thread(manage_jobs.run_tool, tool_args, source, caller_id, command)
@@ -898,7 +913,8 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
                 source, caller_id, force_confirm=True,
             )
             if child and result.get("approval_id"):
-                _children.tell_parents(result["approval_id"], describe_action(tool_name, tool_args))
+                # On each parent's console and phone (core/children.py).
+                await _children.ask_parents(result["approval_id"], describe_action(tool_name, tool_args))
             tool_result = {"role": "tool", "tool_call_id": tool_call["id"], "content": json.dumps({
                 "error": f"Waiting for {'a parent' if child else 'the owner'}'s approval for {tool_name}.",
                 "approval_id": result.get("approval_id"),

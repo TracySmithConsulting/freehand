@@ -200,8 +200,10 @@ def test_the_child_is_told_honestly_what_parents_see(family):
     lerato = TestClient(app, headers={SESSION_HEADER: sessions.start("lerato")})
     me = lerato.get("/api/me").json()
     assert me["child"] is True
-    assert me["what_parents_see"] == ("Tracy or Sipho can see and answer anything FreeHand would send, post or "
-                                      "do outside for you. They can't read your chats.")
+    # Under 13, full view is suggested (tests/test_children_oversight.py has the others).
+    assert me["what_parents_see"] == ("Tracy or Sipho can read your chats with FreeHand. They see and answer "
+                                      "anything FreeHand would send, post or do outside for you, and FreeHand "
+                                      "tells them if you seem to be in danger.")
 
 
 def test_a_child_cant_change_their_own_limits(family):

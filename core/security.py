@@ -592,6 +592,15 @@ def _remote_ownership_refusal(row: Optional[dict], source: str, caller_id: str,
     everyone shares the chat."""
     if row is None or row.get("status") != "pending":
         return "That approval was not found or has already been handled."
+    # A parent answering their child's request from their own phone
+    # (core/children.py): it was sent to their chat, not the child's.
+    payload = _payload_of(row)
+    if person is not None and isinstance(payload.get("parents"), list):
+        from core import children
+        child = str(row.get("person") or "")
+        if (child != person and children.may_approve_for(child, person)
+                and children.parent_chat_matches(person, source, caller_id)):
+            return None
     if person is not None and str(row.get("person") or "owner") != person:
         return ("You can only approve or deny your own requests from chat. "
                 "Use the FreeHand web console for others.")

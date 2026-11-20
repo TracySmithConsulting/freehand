@@ -343,7 +343,8 @@ In a sensible order:
    - **The child is told honestly** what their parents can see, next to
      their name: what FreeHand would send or do for them, not their chats.
 
-   **Decided (20 November 2026), not built yet:**
+   **Decided and built (20 November 2026)** (`core/children.py`, and a
+   "Your children" page for parents):
    - **How much parents see:** each child's parents choose full view
      (reading the chats), a weekly summary, or alerts only. FreeHand
      suggests full view under 13 and a weekly summary for teenagers. The
@@ -357,6 +358,23 @@ In a sensible order:
      allow. An unanswered one is still never done.
    - **A daily spending cap** for each child, set by the parent. Over it,
      FreeHand says when it starts again, like the message limit.
+
+   How it was built:
+   - **The cap is an AI allowance** (small, medium or large), counted in
+     how much AI the child's messages use, not in rand: FreeHand doesn't
+     know every model's price.
+   - **Chats are kept only in full view,** for 30 days. Switching out of
+     full view deletes the words already kept.
+   - **The weekly summary is made without AI** and holds no words: how
+     many messages, on how many days, and what kinds of help (looking
+     things up, documents, email...). It goes to each parent's console
+     and phone.
+   - **Telling a parent** is a tool only a child's FreeHand has
+     (`tell_parents_im_worried`). Unless the AI clearly says a parent
+     isn't the danger, FreeHand's code tells no parent. At most three
+     alerts a day.
+   - **From a phone,** a parent answers with /approve or /deny, only from
+     their own chat. Destructive steps still need the console.
 8. **When someone leaves** (see below).
 
    **Built (November 2026)** (`core/leaving.py`). Remove on the People
