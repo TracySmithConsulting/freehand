@@ -1058,8 +1058,26 @@ def get_scheduler() -> Optional[BackgroundScheduler]:
             name="Task Runner",
             replace_existing=True,
         )
+        # A child's weekly summary for their parents (core/children.py),
+        # checked each hour, sent once a week.
+        _scheduler.add_job(
+            _children_summaries,
+            IntervalTrigger(hours=1),
+            id="children_summaries",
+            name="Children's weekly summaries",
+            replace_existing=True,
+        )
         _scheduler.start()
     return _scheduler
+
+
+def _children_summaries() -> None:
+    try:
+        from core import children, people
+        if any(p["role"] == children.ROLE for p in people.list_people()):
+            asyncio.run(children.send_weekly_summaries())
+    except Exception as e:
+        print(f"[WARN] Couldn't send the children's weekly summaries: {e}")
 
 
 def shutdown_scheduler() -> None:

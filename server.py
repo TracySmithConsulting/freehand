@@ -229,6 +229,8 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
+    # A parent's own children: what they chose to see (core/children.py).
+    ("GET", "/api/children"),
     ("POST", "/api/timezone"),  # kept as theirs (see set_timezone)
 })
 
@@ -376,7 +378,8 @@ def _people_page() -> dict:
                     "telegram": p.get("telegram", []), "whatsapp": p.get("whatsapp", []),
                     "ai_per_month": p.get("ai_per_month"), "ai_this_month": ai_use.used(p["id"])["runs"],
                     "timezone": people.timezone_of(p["id"], s),
-                    **({"child": {**children.rules(p["id"], s), "messages_today": children.messages_today(p["id"])}}
+                    **({"child": {**children.rules(p["id"], s), "messages_today": children.messages_today(p["id"]),
+                                  "allowance_used": children.allowance_used(p["id"])}}
                        if p["role"] == children.ROLE else {})}
                    for p in everyone[1:]],
         "newcomers": newcomers.recent(),
@@ -443,6 +446,16 @@ async def people_update(person_id: str, body: dict):
     except (people.PeopleError, children.ChildError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"person": person, **_people_page()}
+
+
+@app.get("/api/children", dependencies=[Depends(require_api_key)])
+async def children_activity(request: Request):
+    """The signed-in person's children (the owner: every child), and what
+    their parents chose to see: the chats, a weekly summary, or alerts."""
+    from core import children
+    pid = _request_person(request)
+    return {"children": [children.activity(c) for c in children.children_for(pid)
+                         if children.parent_may_see(c, pid)]}
 
 
 @app.get("/api/people/{person_id}/leaving", dependencies=[Depends(require_api_key)])

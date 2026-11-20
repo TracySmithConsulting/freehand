@@ -1074,6 +1074,7 @@
           <li><a href="#scribble">Scribble</a></li>
           <li><a href="#tasks">Scheduled jobs</a></li>
           <li><a href="#team">Team</a></li>
+          <li id="nav-family" hidden><a href="#family">Your children</a></li>
           <li data-advanced data-owner-only><a href="#people">People</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
         <li data-advanced data-owner-only><a href="#skills">Skills</a></li>
@@ -1538,6 +1539,16 @@
     </dialog>
 
     <!-- Memory Panel -->
+    <!-- Your children: what their parents chose to see (core/children.py). Shown only to parents. -->
+    <section id="family" data-page hidden aria-labelledby="family-heading">
+      <h2 id="family-heading">Your children</h2>
+      <p class="hint">What you chose to see for each child: their chats, a weekly summary, or only alerts.
+        Each child is told what you can see. FreeHand tells you when it's worried about them, but it depends on
+        the AI noticing, so it can miss things.</p>
+      <button type="button" class="secondary" id="family-refresh">Check again</button>
+      <div id="family-list" aria-live="polite"></div>
+    </section>
+
     <!-- The People page: who uses this FreeHand (core/people.py, core/sessions.py). -->
     <section id="people" data-page data-advanced data-owner-only aria-labelledby="people-heading">
       <h2 id="people-heading">People who use this FreeHand</h2>
@@ -1633,6 +1644,29 @@
           <div class="form-group">
             <label for="person-daily">Messages a day</label>
             <input type="number" id="person-daily" min="1" max="1000" value="50">
+          </div>
+          <div class="form-group">
+            <label for="person-allowance">AI allowance a day</label>
+            <select id="person-allowance" aria-describedby="person-allowance-hint">
+              <option value="none">No daily allowance</option>
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+            </select>
+            <p class="hint" id="person-allowance-hint">How much AI their messages may use in a day, which is what costs money.
+              Long answers, documents and web searches use more than short questions. Over it, FreeHand rests until tomorrow.</p>
+          </div>
+          <div class="form-group">
+            <label for="person-oversight">What their parents see</label>
+            <select id="person-oversight" aria-describedby="person-oversight-hint">
+              <option value="full">Full view: read their chats</option>
+              <option value="summary">A weekly summary, not their chats</option>
+              <option value="alerts">Only alerts, when FreeHand is worried</option>
+            </select>
+            <p class="hint" id="person-oversight-hint">Suggested: full view under 13, a weekly summary for teenagers. The summary
+              says how much they used FreeHand and what kinds of help, never their words. Whichever you choose, the child is
+              told, and FreeHand tells a parent if they seem to be in danger (unless they say a parent is hurting them: then
+              only Childline). That depends on the AI noticing, so it can miss things.</p>
           </div>
           <div id="person-child-consent">
             <p class="hint">Before you add a child: many AI services only allow people from 13, or 18, in their terms,
@@ -5991,6 +6025,63 @@
         if (field) field.focus();
       });
 
+      // ---- Your children (a parent's view, core/children.py) ----
+      // The page is hidden until FreeHand knows there are children, so an
+      // address ending #family is remembered and opened once it shows.
+      var familyWanted = /^#family$/.test(location.hash || '');
+      function loadFamily() {
+        var list = document.getElementById('family-list');
+        var nav = document.getElementById('nav-family');
+        var page = document.getElementById('family');
+        if (!list || !nav || !page) return Promise.resolve();
+        function when(value) {
+          var d = new Date(value);
+          return isNaN(d.getTime()) ? String(value) :
+            d.toLocaleString(undefined, { weekday: 'long', day: 'numeric', month: 'long', hour: 'numeric', minute: '2-digit' });
+        }
+        function add(parent, tag, text, cls) {
+          var e = document.createElement(tag);
+          if (text !== undefined) e.textContent = text;
+          if (cls) e.className = cls;
+          parent.appendChild(e);
+          return e;
+        }
+        return apiFetch('/api/children').then(function(r) { return r.ok ? r.json() : { children: [] }; })
+          .then(function(d) {
+            var kids = d.children || [];
+            nav.hidden = page.hidden = !kids.length;
+            if (kids.length && familyWanted && window.revealSection) window.revealSection('family', true);
+            familyWanted = false;
+            list.textContent = '';
+            kids.forEach(function(c) {
+              var box = add(list, 'div', undefined, 'stack-top');
+              add(box, 'h3', c.name);
+              add(box, 'p', c.oversight_words + '. ' + c.messages_today + ' of ' + c.daily_messages + ' messages today' +
+                (c.allowance_used === null || c.allowance_used === undefined ? '.' : ', and ' + c.allowance_used + '% of today\'s AI allowance.'));
+              if (c.alerts.length) {
+                add(box, 'h4', 'When FreeHand was worried');
+                var ul = add(box, 'ul');
+                c.alerts.forEach(function(a) { add(ul, 'li', when(a.at) + ': ' + a.worry); });
+              }
+              if (c.summary) { add(box, 'h4', 'This week'); add(box, 'p', c.summary); }
+              if (c.chats) {
+                add(box, 'h4', 'Their chats (the last 30 days)');
+                if (!c.chats.length) add(box, 'p', 'No chats yet.', 'empty-state');
+                var chats = add(box, 'ul');
+                c.chats.forEach(function(m) {
+                  var li = add(chats, 'li');
+                  add(li, 'p', when(m.at) + '. ' + c.name + ' asked: ' + m.asked);
+                  add(li, 'p', 'FreeHand answered: ' + m.answered);
+                });
+              }
+            });
+          }).catch(function() {});
+      }
+      var familyRefresh = document.getElementById('family-refresh');
+      if (familyRefresh) familyRefresh.onclick = function() {
+        loadFamily().then(function() { showStatus('Up to date.', 'success'); });
+      };
+
       // ---- The People page (owner only) ----
       var loadPeople = (function() {
         function el(id) { return document.getElementById(id) || {}; }
@@ -6001,12 +6092,16 @@
             .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); });
         }
         var everyone = [];
+        var oversightChosen = false;
         function nameOf(id) { var f = everyone.filter(function(x) { return x.id === id; })[0]; return f ? f.name : id; }
         function childLine(p) {
           var c = p.child;
+          var seen = { full: 'Parents read the chats.', summary: 'Parents get a weekly summary.', alerts: 'Parents get alerts only.' };
           return 'A child. Parents: ' + c.parents.map(nameOf).join(' and ') + '.' +
             (c.quiet_hours ? ' Quiet ' + c.quiet_hours.from + ' to ' + c.quiet_hours.to + '.' : '') +
-            ' ' + c.messages_today + ' of ' + c.daily_messages + ' messages today.';
+            ' ' + c.messages_today + ' of ' + c.daily_messages + ' messages today.' +
+            (c.allowance_used === null || c.allowance_used === undefined ? '' : ' ' + c.allowance_used + '% of today\'s AI allowance used.') +
+            ' ' + (seen[c.oversight] || '');
         }
         function fillChild(c) {
           el('person-role').value = c ? 'child' : 'member';
@@ -6017,6 +6112,10 @@
           el('person-quiet-from').value = (c && c.quiet_hours && c.quiet_hours.from) || '';
           el('person-quiet-to').value = (c && c.quiet_hours && c.quiet_hours.to) || '';
           el('person-daily').value = (c && c.daily_messages) || 50;
+          var sizes = { 100000: 'small', 300000: 'medium', 1000000: 'large' };
+          el('person-allowance').value = (c && sizes[c.daily_ai]) || 'none';
+          el('person-oversight').value = (c && c.oversight) || (el('person-age').value === 'under_13' ? 'full' : 'summary');
+          oversightChosen = !!(c && c.oversight && editing);
           var box = el('person-parents');
           box.textContent = '';
           var legend = document.createElement('p');
@@ -6270,6 +6369,8 @@
               body.quiet_from = el('person-quiet-from').value;
               body.quiet_to = el('person-quiet-to').value;
               body.daily_messages = el('person-daily').value;
+              body.daily_ai = el('person-allowance').value;
+              body.oversight = el('person-oversight').value;
               body.consent = !!el('person-consent').checked;
             }
             var was = editing;
@@ -6282,6 +6383,11 @@
               .catch(function(err) { el('person-form-error').textContent = err.message; el('person-name').focus(); });
           });
           el('person-cancel').onclick = reset;
+          // The suggestion follows their age until the parent chooses.
+          el('person-age').onchange = function() {
+            if (!oversightChosen) el('person-oversight').value = el('person-age').value === 'under_13' ? 'full' : 'summary';
+          };
+          el('person-oversight').onchange = function() { oversightChosen = true; };
           el('person-role').onchange = function() {
             var child = el('person-role').value === 'child';
             el('person-child').hidden = !child;
@@ -6457,6 +6563,7 @@
         loadFacts();
         loadVoiceStatus();
         loadConnections();  // a member sees their own and the shared accounts
+        loadFamily();  // a parent: their children (core/children.py)
         if (me.owner) {
           loadPeople();
           loadGatewayStatus();
