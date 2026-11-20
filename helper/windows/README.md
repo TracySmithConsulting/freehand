@@ -37,6 +37,11 @@ first time, it asks where FreeHand runs:
   **Turn FreeHand off** and **on**, and **Uninstall FreeHand** (which offers
   to keep a copy of your data first). It starts with Windows, in the
   background, unless you switch that off.
+  If Hermes or OpenClaw is on the computer, the install screen offers to let
+  FreeHand read them, to bring in their memories (a tick box, ticked). By
+  the clock, **Let FreeHand read Hermes and OpenClaw** does the same for a
+  FreeHand already installed, after asking. FreeHand reads them read-only,
+  through `/mnt/c`, and never changes them (`core/folders.py`).
 - **Somewhere else** (FreeHand already runs on a server, or was set up another way): only the Helper part is used, as before.
 
 If the Helper is already paired, it carries on exactly as before: no setup.

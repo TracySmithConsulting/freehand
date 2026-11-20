@@ -432,6 +432,9 @@ namespace FreeHand.Helper
                 // FreeHand installed on this computer by this app.
                 menu.Items.Add("Open FreeHand", null, delegate { SetupForm.OpenFreeHand(); });
                 menu.Items.Add("Update FreeHand", null, delegate { UpdateLocal(); });
+                var found = Engine.FoundFolders();
+                if (found.Count > 0)
+                    menu.Items.Add("Let FreeHand read " + Engine.FolderNames(found.Keys), null, delegate { ShareFoldersLocal(); });
                 menu.Items.Add("Turn FreeHand off", null, delegate { TurnOffLocal(); });
                 menu.Items.Add("Turn FreeHand on", null, delegate { TurnOnLocal(); });
                 menu.Items.Add("Uninstall FreeHand", null, delegate { UninstallLocal(); });
@@ -494,6 +497,32 @@ namespace FreeHand.Helper
             {
                 try { Engine.Update((pct, text) => { if (text != null) work.Say(pct + "%: " + text); }); work.Say("Done. You can close this window."); }
                 catch (Exception ex) { work.Say("The update didn't finish: " + ex.Message); }
+                finally { localBusy = false; }
+            });
+        }
+
+        void ShareFoldersLocal()
+        {
+            if (localBusy) return;
+            var names = Engine.FolderNames(Engine.FoundFolders().Keys);
+            if (OnTop("Let FreeHand read " + names + " on this computer?\r\n\r\nFreeHand brings in their memories, and what's new " +
+                "in them whenever you ask. It reads them and never changes them. FreeHand restarts, which takes a minute or two.",
+                "FreeHand", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            localBusy = true;
+            var work = new WorkForm("Letting FreeHand read " + names);
+            work.Show();
+            Task.Run(() =>
+            {
+                try
+                {
+                    var unshared = Engine.UnsharedFolders();
+                    if (unshared.Count == 0) { work.Say("FreeHand can already read " + names + ". You can close this window."); return; }
+                    work.Say("Restarting FreeHand so it can see " + Engine.FolderNames(unshared.Keys) + "...");
+                    Engine.ShareFoldersNow(unshared);
+                    work.Say("Done. In FreeHand, choose Check for new memories on the Agents page, or ask it to check " + names +
+                             " for anything new. You can close this window.");
+                }
+                catch (Exception ex) { work.Say("That didn't finish: " + ex.Message); }
                 finally { localBusy = false; }
             });
         }

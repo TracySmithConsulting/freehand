@@ -382,7 +382,88 @@ namespace FreeHand.Helper
                 env.Append("BRIDGE_SECRET=").Append(RandomHex(32)).Append('\n');
                 WriteFile(AppDir + "/.env", env.ToString());
                 Must(Sh("chmod 600 " + AppDir + "/.env", 30), "FreeHand's secrets couldn't be protected");
+                // A new FreeHand: the person chose on the Ready to install screen.
+                if (ShareFolders) AddFoldersToEnv(FoundFolders());
             }
+        }
+
+        // ── Hermes and OpenClaw (core/folders.py) ───────────────────────
+        // FreeHand reads them, never changes them, to bring in their
+        // memories. compose.yml shows them to FreeHand read-only, from .env.
+
+        /// Set by the Ready to install screen's tick box.
+        public static bool ShareFolders = true;
+
+        /// Hermes and OpenClaw on this computer: .env name -> Windows folder.
+        public static Dictionary<string, string> FoundFolders()
+        {
+            var found = new Dictionary<string, string>();
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            Found(found, "FREEHAND_HERMES_DIR", Path.Combine(local, "hermes"), "SOUL.md");
+            foreach (var place in new[] { Path.Combine(home, ".openclaw"), Path.Combine(roaming, "openclaw") })
+                if (!found.ContainsKey("FREEHAND_OPENCLAW_DIR"))
+                    Found(found, "FREEHAND_OPENCLAW_DIR", place, Path.Combine("workspace", "SOUL.md"));
+            return found;
+        }
+
+        static void Found(Dictionary<string, string> found, string key, string folder, string marker)
+        {
+            if (!string.IsNullOrEmpty(folder) && File.Exists(Path.Combine(folder, marker))) found[key] = folder;
+        }
+
+        /// "Hermes", "OpenClaw" or "Hermes and OpenClaw".
+        public static string FolderNames(ICollection<string> keys)
+        {
+            var names = new List<string>();
+            if (keys.Contains("FREEHAND_HERMES_DIR")) names.Add("Hermes");
+            if (keys.Contains("FREEHAND_OPENCLAW_DIR")) names.Add("OpenClaw");
+            return string.Join(" and ", names.ToArray());
+        }
+
+        /// C:\Users\Thandi\AppData\Local\hermes -> /mnt/c/Users/Thandi/AppData/Local/hermes
+        /// (where FreeHand's Linux sees Windows' drives). Null for other places.
+        public static string WslPath(string windowsPath)
+        {
+            if (string.IsNullOrEmpty(windowsPath) || windowsPath.Length < 3 || windowsPath[1] != ':' || !char.IsLetter(windowsPath[0]))
+                return null;
+            return "/mnt/" + char.ToLowerInvariant(windowsPath[0]) + windowsPath.Substring(2).Replace('\\', '/');
+        }
+
+        static bool InEnv(string key)
+        {
+            return Yes("grep -q '^" + key + "=' " + AppDir + "/.env", 30);
+        }
+
+        static void AddFoldersToEnv(Dictionary<string, string> folders)
+        {
+            foreach (var kv in folders)
+            {
+                var path = WslPath(kv.Value);
+                if (path == null || InEnv(kv.Key)) continue;
+                // As base64, so a space or quote in a name can't break the command.
+                var line = Convert.ToBase64String(Encoding.UTF8.GetBytes(kv.Key + "=" + path + "\n"));
+                Must(Sh("echo " + line + " | base64 -d >> " + AppDir + "/.env", 30), "FreeHand's settings couldn't be written");
+            }
+        }
+
+        /// The folders found that FreeHand can't read yet.
+        public static Dictionary<string, string> UnsharedFolders()
+        {
+            var unshared = new Dictionary<string, string>();
+            foreach (var kv in FoundFolders())
+                if (!InEnv(kv.Key)) unshared[kv.Key] = kv.Value;
+            return unshared;
+        }
+
+        /// The person said yes (tray menu): let FreeHand read them, and
+        /// restart it so it sees them.
+        public static void ShareFoldersNow(Dictionary<string, string> folders)
+        {
+            StartEngine();
+            AddFoldersToEnv(folders);
+            Must(Compose("up -d", 900), "FreeHand didn't restart");
         }
 
         static string ComposeFile()

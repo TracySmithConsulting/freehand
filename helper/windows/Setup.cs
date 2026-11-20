@@ -238,8 +238,17 @@ namespace FreeHand.Helper
             var words = Words(l, "FreeHand will now set itself up. It downloads about 1.8 GB the first time and takes about 7 GB of space, so on a slow internet connection " +
                 "this can take an hour or more. It says how far it has got as it goes. You can use the computer while it works, and close this window: it carries on " +
                 "from where it stopped next time.\r\n\r\nFreeHand stays on this computer: only this computer can reach it." + notes);
+            // Hermes or OpenClaw here: FreeHand can bring in their memories, if the person wants.
+            CheckBox share = null;
+            var found = Engine.FoundFolders();
+            if (found.Count > 0)
+            {
+                share = new CheckBox { Text = "Let FreeHand read " + Engine.FolderNames(found.Keys) + ", to bring in their memories. It never changes them.",
+                                       AutoSize = true, Checked = true };
+                l.Controls.Add(share);
+            }
             AddButton("Cancel", Close);
-            AddButton("Install", Install, true);
+            AddButton("Install", delegate { Engine.ShareFolders = share == null || share.Checked; Install(); }, true);
             words.Focus();
         }
 
