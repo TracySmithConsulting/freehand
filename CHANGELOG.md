@@ -5,6 +5,25 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.27] — 2026-11-20
+
+### Added
+
+- **Brush strokes: ways to make FreeHand your own, shared.** A new
+  Brush strokes page adds team members and skills that other people made,
+  from a GitHub link or a file someone sent you.
+  - FreeHand checks each one first, without AI, and shows a short card:
+    what it is, who made it, what it can use, its instructions, and any
+    worrying words under CAREFUL. Nothing is added until you say yes.
+  - A brush stroke is only words and settings, never a program. A team
+    member you add always asks you first; a skill starts as a draft.
+    **Remove** takes it away again.
+  - **Share as a brush stroke** saves one of your team members as a file,
+    without your keys, accounts or memories.
+  - People add team members for themselves unless the owner switches it
+    off on the People page. Only the owner adds skills, and children
+    can't add brush strokes.
+
 ## [0.1.26] — 2026-11-20
 
 ### Added
