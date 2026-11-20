@@ -241,6 +241,9 @@ def describe_action(tool: str, args: dict) -> str:
     if tool == "send_email":
         return (f"Send an email to {args.get('to', '?')}\nSubject: {args.get('subject', '')}\n\n"
                 f"{str(args.get('body', ''))[:1500]}")
+    if tool == "reply_to_email":
+        return (f"Reply to {args.get('about') or 'an email'}, in its conversation:\n\n"
+                f"{str(args.get('body', ''))[:1500]}")
     if tool == "create_calendar_event":
         from core.tools.integrations import _local
         begins = _local(args.get("start", ""))
@@ -298,6 +301,37 @@ async def execute_tool(name: str, args: dict) -> dict:
                 filter_query=args.get("filter", ""),
             )
             return {"content": json.dumps(slim_emails(service, result), default=str)}
+        elif name == "open_email":
+            from core.tools.integrations import open_email
+            result = await open_email(service=args.get("service", "google"), label=args.get("label", "default"),
+                                      message_id=str(args.get("id", "")))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "reply_to_email":
+            from core.tools.integrations import reply_to_email
+            result = await reply_to_email(service=args.get("service", "google"), label=args.get("label", "default"),
+                                          message_id=str(args.get("id", "")), body=args.get("body", ""))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "save_email_draft":
+            from core.tools.integrations import save_email_draft
+            result = await save_email_draft(service=args.get("service", "google"), label=args.get("label", "default"),
+                                            to=args.get("to", ""), subject=args.get("subject", ""),
+                                            body=args.get("body", ""), reply_to_id=str(args.get("reply_to_id", "")))
+            return {"content": json.dumps(result, default=str)}
+        elif name in ("read_text_file", "list_folder"):
+            from core import folders
+            result = (folders.read_text_file(args.get("path", "")) if name == "read_text_file"
+                      else folders.list_folder(args.get("path", "")))
+            return {"content": json.dumps(result, default=str)}
+        elif name == "bring_in_new_memories":
+            import asyncio as _asyncio
+            from core import folders, people
+            if people.current() != people.OWNER_ID:
+                return {"content": json.dumps({"error": "Only the owner can bring in memories from other programs."})}
+            try:
+                result = await _asyncio.to_thread(folders.bring_in_new, str(args.get("source") or "all"))
+            except ValueError as e:
+                result = {"error": str(e)}
+            return {"content": json.dumps(result, default=str)}
         elif name == "send_email":
             from core.tools.integrations import send_email
             result = await send_email(service=args.get("service", "google"), label=args.get("label", "default"),

@@ -289,10 +289,145 @@ def slim_emails(service: str, data) -> dict:
                         "attachments": bool(m.get("hasAttachments"))})
         else:
             labels = m.get("labelIds") or []
-            out.append({"id": m.get("messageId"), "from": m.get("sender") or "", "subject": m.get("subject") or "",
+            out.append({"id": m.get("messageId"), "thread": m.get("threadId") or "",
+                        "from": m.get("sender") or "", "subject": m.get("subject") or "",
                         "date": m.get("messageTimestamp") or "", "unread": "UNREAD" in labels,
                         "preview": (m.get("snippet") or "")[:300]})
-    return {"emails": out, "count": len(out)}
+    return {"emails": out, "count": len(out),
+            "note": "These are previews. To read one in full, use open_email with its id."}
+
+
+MAX_EMAIL_CHARS = 20_000
+
+
+def _plain(text: str) -> str:
+    """An email body as plain text: Outlook can send HTML."""
+    import html as _html
+    import re
+    if "<" not in text or ">" not in text:
+        return text.strip()
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", text)
+    text = re.sub(r"(?i)<br\s*/?>|</p>|</div>|</li>|</tr>", "\n", text)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = _html.unescape(text)
+    return re.sub(r"[ \t\xa0]+", " ", re.sub(r"\n\s*\n+", "\n\n", text)).strip()
+
+
+def _addresses(items) -> str:
+    out = []
+    for r in items or []:
+        a = (r.get("emailAddress") or {}) if isinstance(r, dict) else {}
+        out.append(f"{a.get('name') or ''} <{a.get('address') or ''}>".strip() if a else str(r))
+    return ", ".join(x for x in out if x and x != "<>")
+
+
+def slim_email(service: str, data) -> dict:
+    """One whole email, for the model: who, when, and the text."""
+    if not isinstance(data, dict) or data.get("error"):
+        return data
+    if service == "microsoft":
+        body = data.get("body") or {}
+        text = body.get("content") if isinstance(body, dict) else str(body)
+        sender = _addresses([data.get("from") or data.get("sender")])
+        out = {"id": data.get("id"), "from": sender, "to": _addresses(data.get("toRecipients")),
+               "cc": _addresses(data.get("ccRecipients")), "subject": data.get("subject") or "",
+               "date": data.get("receivedDateTime") or "", "text": _plain(str(text or data.get("bodyPreview") or ""))}
+    else:
+        out = {"id": data.get("messageId"), "thread": data.get("threadId"), "from": data.get("from") or "",
+               "to": data.get("to") or "", "subject": data.get("subject") or "", "date": data.get("date") or "",
+               "text": _plain(str(data.get("body") or ""))}
+    if len(out["text"]) > MAX_EMAIL_CHARS:
+        out["text"] = out["text"][:MAX_EMAIL_CHARS]
+        out["cut_short"] = f"Only the first {MAX_EMAIL_CHARS} characters are shown."
+    return {k: v for k, v in out.items() if v not in ("", None)}
+
+
+async def open_email(service: str = "google", label: str = "default", message_id: str = "") -> dict:
+    """One email in full (read_email gives only previews)."""
+    if not message_id:
+        return {"error": "Which email? Give the id from read_email."}
+    if service == "google":
+        data, err = await _oc_run(service, "email", "get_message", {"messageId": message_id}, label)
+        return err or slim_email(service, data)
+    if service == "microsoft":
+        data, err = await _oc_run(service, "email", "get_message",
+                                  {"messageId": message_id, "bodyContentType": "text"}, label)
+        return err or slim_email(service, data)
+    return {"error": "Opening a whole email works for Gmail and Outlook. For this account, read_email shows "
+                     "each email's text."}
+
+
+async def reply_to_email(service: str = "google", label: str = "default", message_id: str = "",
+                         body: str = "", thread_id: str = "") -> dict:
+    """Reply within the email's own conversation, to whoever sent it.
+    The approval is asked for before this runs, like send_email."""
+    if not message_id or not str(body or "").strip():
+        return {"error": "message_id and body are required"}
+    if service == "google":
+        if not thread_id:
+            found, err = await _oc_run(service, "email", "get_message", {"messageId": message_id}, label)
+            if err:
+                return err
+            thread_id = (found or {}).get("threadId") or ""
+        data, err = await _oc_run(service, "email", "reply_email",
+                                  {"threadId": thread_id, "messageId": message_id, "body": body}, label)
+        return err or {"sent": True, "replied_in_the_conversation": True, **(data or {})}
+    if service == "microsoft":
+        # comment keeps the earlier messages quoted below, as Outlook's own Reply does.
+        data, err = await _oc_run(service, "email", "reply_email", {"messageId": message_id, "comment": body}, label)
+        return err or {"sent": True, "replied_in_the_conversation": True}
+    return {"error": "Replying in the conversation works for Gmail and Outlook. For this account, use "
+                     "send_email with \"Re: \" and the subject."}
+
+
+async def save_email_draft(service: str = "google", label: str = "default", to: str = "", subject: str = "",
+                           body: str = "", reply_to_id: str = "") -> dict:
+    """Put an email in the person's Drafts, to finish and send themselves.
+    Nothing is sent, so it needs no approval."""
+    if not str(body or "").strip():
+        return {"error": "body is required"}
+    recipients = _recipients(to)
+    if service == "google":
+        inputs = {"to": recipients[0] if recipients else "", "extraRecipients": recipients[1:],
+                  "subject": subject, "body": body}
+        if reply_to_id:
+            found, err = await _oc_run(service, "email", "get_message", {"messageId": reply_to_id}, label)
+            if err:
+                return err
+            found = found or {}
+            inputs["threadId"] = found.get("threadId") or ""
+            inputs["to"] = inputs["to"] or _reply_address(found.get("from") or "")
+            inputs["subject"] = subject or _re(found.get("subject") or "")
+        data, err = await _oc_run(service, "email", "create_email_draft", inputs, label)
+        return err or {"saved_to_drafts": True, "in_the_conversation": bool(inputs.get("threadId")), **(data or {})}
+    if service == "microsoft":
+        inputs = {"toRecipients": recipients, "subject": subject, "body": body}
+        if reply_to_id:
+            found, err = await _oc_run(service, "email", "get_message", {"messageId": reply_to_id}, label)
+            if err:
+                return err
+            found = found or {}
+            sender = ((found.get("from") or {}).get("emailAddress") or {}).get("address") or ""
+            inputs["toRecipients"] = recipients or ([sender] if sender else [])
+            inputs["subject"] = subject or _re(found.get("subject") or "")
+        data, err = await _oc_run(service, "email", "create_draft", inputs, label)
+        if err:
+            return err
+        out = {"saved_to_drafts": True, "id": (data or {}).get("id")}
+        if reply_to_id:
+            out["note"] = "Outlook keeps it as a new draft addressed to them, not inside the conversation."
+        return out
+    return {"error": "Saving a draft works for Gmail and Outlook."}
+
+
+def _re(subject: str) -> str:
+    return subject if subject.lower().startswith("re:") else f"Re: {subject}".strip()
+
+
+def _reply_address(sender: str) -> str:
+    import re
+    found = re.search(r"<([^>]+)>", sender or "")
+    return (found.group(1) if found else sender or "").strip()
 
 
 async def read_email(service: str = "google", label: str = "default", filter_query: str = "") -> dict:

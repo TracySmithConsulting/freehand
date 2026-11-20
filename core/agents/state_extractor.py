@@ -115,8 +115,7 @@ def extract_hermes_state(db_path: Path, output_path: Path) -> Tuple[int, List[st
         return 0, [f"state.db not found: {db_path}"]
 
     try:
-        uri = f"file:{db_path}?mode=ro"
-        conn = sqlite3.connect(uri, uri=True)
+        conn, copy_dir = _open_readonly(db_path)
     except Exception as e:
         return 0, [f"Failed to open state.db: {e}"]
 
@@ -126,6 +125,7 @@ def extract_hermes_state(db_path: Path, output_path: Path) -> Tuple[int, List[st
         )]
     except Exception as e:
         conn.close()
+        _drop(copy_dir)
         return 0, [f"Failed to read tables: {e}"]
 
     sections = [f"# Hermes State Memory (extracted from state.db)\n"]
@@ -152,8 +152,42 @@ def extract_hermes_state(db_path: Path, output_path: Path) -> Tuple[int, List[st
             errors.append(f"Failed to extract {table}: {e}")
 
     conn.close()
+    _drop(copy_dir)
     output_path.write_text("".join(sections), encoding="utf-8")
     return len(extracted), errors
+
+
+def _open_readonly(db_path: Path):
+    """(connection, folder of a temporary copy or None).
+
+    A database in WAL mode needs to write its -shm file even to read, so
+    in a read-only folder (Hermes shown to FreeHand in Docker) it won't
+    open. Then FreeHand reads a copy, with its -wal so the newest changes
+    are there too, and deletes the copy afterwards."""
+    import shutil
+    import tempfile
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
+        return conn, None
+    except sqlite3.OperationalError:
+        pass
+    copy_dir = Path(tempfile.mkdtemp(prefix="freehand-state-"))
+    try:
+        for suffix in ("", "-wal"):
+            source = Path(str(db_path) + suffix)
+            if source.exists():
+                shutil.copyfile(source, copy_dir / ("state.db" + suffix))
+        return sqlite3.connect(str(copy_dir / "state.db")), copy_dir
+    except Exception:
+        _drop(copy_dir)
+        raise
+
+
+def _drop(folder) -> None:
+    if folder:
+        import shutil
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def get_state_db_tables(db_path: Path) -> List[Dict]:

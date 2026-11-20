@@ -28,6 +28,8 @@ def record_import(result: ImportResult) -> int:
 
     for entry in result.files_imported:
         vault_path = Path(entry["vault"])
+        conn.execute("DELETE FROM imported_sources WHERE agent = ? AND vault_path = ?",
+                     (result.agent, entry["vault"]))
         conn.execute(
             """
             INSERT INTO imported_sources
@@ -88,12 +90,14 @@ def list_imported_sources(agent: str = None) -> List[dict]:
     conn.row_factory = sqlite3.Row
     if agent:
         rows = conn.execute(
-            "SELECT * FROM imported_sources WHERE agent = ? ORDER BY imported_at DESC",
+            "SELECT * FROM imported_sources WHERE agent = ? AND id IN "
+            "(SELECT MAX(id) FROM imported_sources GROUP BY agent, vault_path) ORDER BY imported_at DESC",
             (agent,),
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT * FROM imported_sources ORDER BY imported_at DESC"
+            "SELECT * FROM imported_sources WHERE id IN "
+            "(SELECT MAX(id) FROM imported_sources GROUP BY agent, vault_path) ORDER BY imported_at DESC"
         ).fetchall()
     conn.close()
     return [dict(r) for r in rows]

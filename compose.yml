@@ -204,6 +204,12 @@ services:
       # The image's chown -R freehand:freehand /app/vault makes the
       # empty volume writable; bind-mount overlays that ownership.
       - ./vault:/app/vault
+      # Folders FreeHand may read, never change (core/folders.py): Hermes and
+      # OpenClaw, to bring in their memories, and a notes folder (wikis,
+      # Obsidian vaults). Set in .env; when one isn't, an empty folder.
+      - ${FREEHAND_HERMES_DIR:-./host-folders/none}:/host/hermes:ro
+      - ${FREEHAND_OPENCLAW_DIR:-./host-folders/none}:/host/openclaw:ro
+      - ${FREEHAND_NOTES_DIR:-./host-folders/none}:/host/notes:ro
     healthcheck:
       # uvicorn returns the FreeHand HTML index at /. A 200 there
       # means the server bound and the lifespan startup_event ran

@@ -2543,6 +2543,21 @@ async def agents_import(body: dict):
     }
 
 
+@app.post("/api/agents/refresh", dependencies=[Depends(require_api_key)])
+async def agents_refresh(request: Request):
+    """Bring in what's new or changed from Hermes, OpenClaw and the notes
+    folder (core/folders.py). Owner only: not in MEMBER_ROUTES."""
+    from core import folders
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    try:
+        return await asyncio.to_thread(folders.bring_in_new, str((body or {}).get("source") or "all"))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.post("/api/agents/import/preview", dependencies=[Depends(require_api_key)])
 async def agents_import_preview(body: dict):
     """Preview an import without writing."""

@@ -200,6 +200,6 @@ def test_an_approved_facebook_post_is_posted(monkeypatch):
 
 def test_team_members_can_be_given_email_sending():
     from core import team
-    assert team.TOOL_CHOICES["email_send"]["tools"] == ["send_email"]
+    assert team.TOOL_CHOICES["email_send"]["tools"] == ["send_email", "reply_to_email", "save_email_draft"]
     m = team.save({"name": "Sipho", "job": "Answers customer emails.", "tools": ["email_read", "email_send"]})
     assert m["auto_tools"] == []  # asks first unless the person says otherwise

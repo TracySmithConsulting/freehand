@@ -114,6 +114,7 @@ def test_email_results_are_trimmed_to_what_matters():
                              "from": {"emailAddress": {"name": "Sam", "address": "sam@x.com"}},
                              "body": {"content": "<html>" + "y" * 50000 + "</html>"}, "webLink": "https://..."}]}
     slim = slim_emails("microsoft", outlook)
+    assert slim.pop("note").startswith("These are previews")  # open_email reads one in full
     assert slim == {"count": 1, "emails": [{"id": "a", "from": "Sam <sam@x.com>", "subject": "Invoice",
                                             "date": "2026-11-15T08:00:00Z", "unread": True,
                                             "preview": ("Please pay " + "x" * 900)[:300], "attachments": True}]}

@@ -1832,7 +1832,15 @@
     <!-- Agents Import Panel -->
     <section id="agents" data-page data-advanced data-owner-only aria-labelledby="agents-heading">
       <h2 id="agents-heading">Agents</h2>
-      <div id="agents-status" aria-live="polite">
+      <div id="agents-refresh">
+        <h3>Bring in what's new</h3>
+        <p class="hint">FreeHand brings in what's new or changed since last time from Hermes, OpenClaw and your
+          notes folder. It reads them and never changes them. You can also just ask FreeHand, for example
+          "check Hermes for anything new".</p>
+        <button type="button" id="agents-refresh-btn">Check for new memories</button>
+        <p id="agents-refresh-status" role="status" aria-live="polite"></p>
+      </div>
+      <div id="agents-status" aria-live="polite" class="stack-top">
         <p class="empty-state">Loading agent status...</p>
       </div>
       <div id="agents-imports" aria-live="polite" class="stack-top"></div>
@@ -5292,6 +5300,24 @@
       })();
 
       // ---- Agents Panel ----
+      (function() {
+        var btn = document.getElementById('agents-refresh-btn');
+        if (!btn) return;
+        btn.addEventListener('click', function() {
+          var say = document.getElementById('agents-refresh-status');
+          btn.disabled = true;
+          say.textContent = 'Checking for anything new...';
+          apiFetch('/api/agents/refresh', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+            .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; }); })
+            .then(function(d) {
+              say.textContent = (d.done || []).concat(d.help ? [d.help] : []).join(' ') || 'Nothing to bring in.';
+              loadAgents();
+            })
+            .catch(function(e) { say.textContent = e.message; })
+            .then(function() { btn.disabled = false; });
+        });
+      })();
+
       function loadAgents() {
         var el = document.getElementById('agents-status');
         var importEl = document.getElementById('agents-imports');

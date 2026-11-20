@@ -48,14 +48,15 @@ LOG_KEEP = 200
 
 # What a team member may use, in plain words -> FreeHand's tool names.
 TOOL_CHOICES: dict[str, dict] = {
-    "email_read": {"label": "Read email", "tools": ["read_email"]},
-    "email_send": {"label": "Send email", "tools": ["send_email"]},
+    "email_read": {"label": "Read email", "tools": ["read_email", "open_email"]},
+    "email_send": {"label": "Send email", "tools": ["send_email", "reply_to_email", "save_email_draft"]},
     "calendar": {"label": "Calendar (read)", "tools": ["list_calendar_events"]},
     "calendar_add": {"label": "Add to calendar", "tools": ["create_calendar_event"]},
     "facebook": {"label": "Facebook", "tools": ["list_facebook_pages", "post_to_facebook"]},
     "instagram": {"label": "Instagram", "tools": ["list_instagram_accounts", "post_to_instagram"]},
     "web": {"label": "Search the web and read websites", "tools": ["web_search", "extract_text", "get_axtree", "take_screenshot"]},
-    "documents": {"label": "Word, Excel and PowerPoint files", "tools": ["read_docx", "write_docx", "read_xlsx", "read_pptx"]},
+    "documents": {"label": "Word, Excel and PowerPoint files, and notes", "tools": ["read_docx", "write_docx", "read_xlsx", "read_pptx",
+                                                                                 "read_text_file", "list_folder"]},
     "sheets": {"label": "Google Sheets", "tools": ["read_sheets", "read_sheet_range"]},
     "zoom": {"label": "Zoom", "tools": ["list_zoom_meetings", "schedule_zoom_meeting"]},
     "github": {"label": "GitHub (read only)", "tools": ["github_activity"]},

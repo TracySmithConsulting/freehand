@@ -18,6 +18,11 @@ VAULT_SUBDIR = "hermes"
 SKILLS_VAULT_SUBDIR = "hermes-imports"
 
 
+def _same(a: Path, b: Path) -> bool:
+    from core.folders import _same as same
+    return same(a, b)
+
+
 def _safe_filename(name: str) -> str:
     return name.replace("/", "_").replace("\\", "_")
 
@@ -82,6 +87,10 @@ def import_hermes(agent: DetectedAgent, options: ImportOptions, vault_dir: Path)
                     continue
                 skill_name = source_path.parent.name
                 dest_skill_dir = vault_dir / "skills" / SKILLS_VAULT_SUBDIR / skill_name
+                if (dest_skill_dir / "SKILL.md").exists() and not options.overwrite:
+                    # FreeHand may have improved it since (skill_outcome): keep that.
+                    result.add_skipped(f"skill already here: {skill_name}")
+                    continue
                 dest_skill_dir.mkdir(parents=True, exist_ok=True)
                 if source_path.is_file():
                     shutil.copy2(source_path, dest_skill_dir / "SKILL.md")
@@ -91,10 +100,10 @@ def import_hermes(agent: DetectedAgent, options: ImportOptions, vault_dir: Path)
 
             vault_name = _safe_filename(f["relative"])
             dest = result.vault_root / vault_name
-            if dest.exists() and not options.overwrite:
-                result.add_skipped(f"already exists: {vault_name}")
+            if dest.exists() and not options.overwrite and _same(source_path, dest):
+                result.add_skipped(f"unchanged: {vault_name}")
                 continue
-            shutil.copy2(source_path, dest)
+            shutil.copy2(source_path, dest)  # new, or changed since last time
             result.add_file(f["path"], str(dest), f["size"], f["type"])
         except Exception as e:
             result.add_error(f"Failed to import {f['relative']}: {e}")
