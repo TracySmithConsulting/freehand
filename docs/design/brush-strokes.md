@@ -54,7 +54,8 @@ with their own design and much stronger checks. Not in the first version.
 ## What a brush stroke looks like
 
 A small folder with a `brush-stroke.json` that says what it is, and its
-words. The folder is the same whether it's on GitHub or in a download.
+words, on GitHub. To send to someone, the same thing is one file,
+`<name>.brushstroke.json`, with the folder's two files inside it.
 
 ```
 marketing-helper/
@@ -204,8 +205,18 @@ That's a later step, and every download would be asked first.
 
 ## Building it, in steps
 
-1. **Team members and skills,** from a link or a downloaded folder, with
+1. **Team members and skills,** from a link or a downloaded file, with
    the checks and the card. Plus **Share as a brush stroke**.
+   **Built (20 November 2026)** (`core/brush_strokes.py`, the Brush
+   strokes page):
+   - **What was checked is what's added:** looking at one gives a ticket
+     for that exact copy, for 15 minutes and for that person only, so it
+     can't change on GitHub between the card and the yes.
+   - **Warning words** are quoted on the card under CAREFUL. Words like
+     "for you to approve" don't warn: only ones about getting round
+     FreeHand's checks or approving things itself.
+   - **The owner's switch** is on the People page: "Let people add brush
+     strokes for themselves".
 2. **The gallery:** the GitHub repository, its review guide, and the
    Brush strokes page listing it.
 3. **Voice packs.**
