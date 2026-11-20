@@ -343,9 +343,20 @@ In a sensible order:
    - **The child is told honestly** what their parents can see, next to
      their name: what FreeHand would send or do for them, not their chats.
 
-   Not built yet, and the parents' choice: reading the child's chats,
-   weekly summaries, alerts to a parent, approving from a parent's phone,
-   and a daily spending cap.
+   **Decided (20 November 2026), not built yet:**
+   - **How much parents see:** each child's parents choose full view
+     (reading the chats), a weekly summary, or alerts only. FreeHand
+     suggests full view under 13 and a weekly summary for teenagers. The
+     child is told which, next to their name.
+   - **Danger:** besides answering kindly and giving Childline (116),
+     FreeHand tells a parent, and tells the child it will. If the child
+     says a parent is the one hurting them, it tells no parent and gives
+     only Childline.
+   - **Approving from a phone:** a child's request also goes to the
+     parent on Telegram or WhatsApp, if connected, with Allow and Don't
+     allow. An unanswered one is still never done.
+   - **A daily spending cap** for each child, set by the parent. Over it,
+     FreeHand says when it starts again, like the message limit.
 8. **When someone leaves** (see below).
 
    **Built (November 2026)** (`core/leaving.py`). Remove on the People
