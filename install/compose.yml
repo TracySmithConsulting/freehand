@@ -92,6 +92,12 @@ services:
     volumes:
       - voice-models:/models
       - ./vault:/app/vault
+      # Folders FreeHand may read, never change (core/folders.py): Hermes and
+      # OpenClaw, to bring in their memories, and a notes folder. Set in .env
+      # by the installer or the app; when one isn't, an empty folder.
+      - ${FREEHAND_HERMES_DIR:-./host-folders/none}:/host/hermes:ro
+      - ${FREEHAND_OPENCLAW_DIR:-./host-folders/none}:/host/openclaw:ro
+      - ${FREEHAND_NOTES_DIR:-./host-folders/none}:/host/notes:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()"]
       interval: 10s
