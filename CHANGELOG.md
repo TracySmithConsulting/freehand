@@ -5,6 +5,17 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.23] — 2026-11-20
+
+### Changed
+
+- **Settings is split into three shorter pages:** Settings (web search,
+  how much FreeHand may do on its own, FreeHand's key), **AI model**, and
+  **Chat apps** (Telegram, Slack and WhatsApp, which used to be called
+  Gateways).
+- **The address follows the page.** After a shortcut such as Alt+A,
+  reloading shows the same page.
+
 ## [0.1.22] — 2026-11-19
 
 ### Changed
