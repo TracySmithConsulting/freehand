@@ -43,6 +43,11 @@ def preview_openclaw(agent: DetectedAgent, options: ImportOptions) -> dict:
     return preview
 
 
+def _same(a: Path, b: Path) -> bool:
+    from core.folders import _same as same
+    return same(a, b)
+
+
 def import_openclaw(agent: DetectedAgent, options: ImportOptions, vault_dir: Path) -> ImportResult:
     """Import safe workspace files from OpenClaw into FreeHand vault."""
     result = ImportResult(agent="openclaw", vault_root=vault_dir / "imports" / VAULT_SUBDIR)
@@ -68,8 +73,8 @@ def import_openclaw(agent: DetectedAgent, options: ImportOptions, vault_dir: Pat
             if f["type"] == "journal":
                 dest_name = _safe_filename(f["relative"].replace("memory/", ""))
                 dest = journals_dir / dest_name
-                if dest.exists() and not options.overwrite:
-                    result.add_skipped(f"already exists: memory/{dest_name}")
+                if dest.exists() and not options.overwrite and _same(source_path, dest):
+                    result.add_skipped(f"unchanged: memory/{dest_name}")
                     continue
                 shutil.copy2(source_path, dest)
                 result.add_file(f["path"], str(dest), f["size"], "journal")
@@ -77,8 +82,8 @@ def import_openclaw(agent: DetectedAgent, options: ImportOptions, vault_dir: Pat
 
             vault_name = _safe_filename(f["relative"])
             dest = result.vault_root / vault_name
-            if dest.exists() and not options.overwrite:
-                result.add_skipped(f"already exists: {vault_name}")
+            if dest.exists() and not options.overwrite and _same(source_path, dest):
+                result.add_skipped(f"unchanged: {vault_name}")
                 continue
             shutil.copy2(source_path, dest)
             result.add_file(f["path"], str(dest), f["size"], f["type"])

@@ -196,6 +196,18 @@ if [ ! -s "$HOME_DIR/.env" ]; then
 fi
 chmod 600 "$HOME_DIR/.env"
 
+# Hermes and OpenClaw, if they're here: FreeHand reads them (never changes
+# them) to bring in their memories (core/folders.py, compose.yml).
+USER_HOME="$HOME"
+if [ -n "${SUDO_USER:-}" ]; then USER_HOME="$(getent passwd "$SUDO_USER" | cut -d: -f6)"; fi
+for pair in "FREEHAND_HERMES_DIR:$USER_HOME/.hermes" "FREEHAND_OPENCLAW_DIR:$USER_HOME/.openclaw"; do
+    name="${pair%%:*}"
+    dir="${pair#*:}"
+    if [ -d "$dir" ] && ! grep -q "^$name=" "$HOME_DIR/.env"; then
+        printf '%s=%s\n' "$name" "$dir" >> "$HOME_DIR/.env"
+    fi
+done
+
 # ── Download and start ──────────────────────────────────────────────
 
 # Says it's still going every minute while a long step works.

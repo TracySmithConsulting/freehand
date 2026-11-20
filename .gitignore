@@ -86,3 +86,6 @@ caddy/sites/*
 # The FreeHand Helper is built on each PC (helper/windows/build.cmd), or
 # downloaded signed from a release later; never committed.
 helper/windows/*.exe
+
+# Empty folder compose.yml shows FreeHand when a folder isn't shared (core/folders.py).
+host-folders/

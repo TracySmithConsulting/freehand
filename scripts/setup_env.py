@@ -134,6 +134,30 @@ def write_private(path: Path, text: str) -> None:
 
 HINDSIGHT_PROBE = "http://127.0.0.1:8888"
 MEMORY_DECIDED_KEYS = ("FREEHAND_OWN_MEMORY", "FREEHAND_HINDSIGHT_URL")
+FOLDER_KEYS = ("FREEHAND_HERMES_DIR", "FREEHAND_OPENCLAW_DIR")
+
+
+def found_folders(env=None, home=None) -> dict:
+    """Hermes and OpenClaw on this computer, for FreeHand to read (never
+    change) in Docker, so it can bring in their memories (core/folders.py)."""
+    env = os.environ if env is None else env
+    home = Path(home) if home else Path.home()
+    hermes = [Path(env["LOCALAPPDATA"]) / "hermes"] if env.get("LOCALAPPDATA") else []
+    hermes += [home / ".hermes", home / ".local/share/hermes"]
+    openclaw = [home / ".openclaw"] + ([Path(env["APPDATA"]) / "openclaw"] if env.get("APPDATA") else [])
+    out = {}
+    for key, places, marker in (("FREEHAND_HERMES_DIR", hermes, "SOUL.md"),
+                                ("FREEHAND_OPENCLAW_DIR", openclaw, "workspace/SOUL.md")):
+        for place in places:
+            if (place / marker).exists():
+                out[key] = str(place)
+                break
+    return out
+
+
+def folder_changes(values: dict) -> dict:
+    """Fill in the folders that were found and aren't set yet."""
+    return {k: v for k, v in found_folders().items() if not values.get(k)}
 
 
 def _get_json(url: str, timeout: float = 3.0):
@@ -226,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
     oc_data = False if created else oc_has_data()
     values = current_values(lines)
     changes, notes = plan_changes(values, oc_data, args.new_encryption_key)
+    folders = folder_changes(values)
+    changes.update(folders)
 
     # Memory: asked once (on a new .env, or with --memory), and only when
     # another Hindsight is already running here.
@@ -248,11 +274,14 @@ def main(argv: list[str] | None = None) -> int:
     elif changes:
         memory_keys = {"FREEHAND_OWN_MEMORY", "FREEHAND_HINDSIGHT_URL", "FREEHAND_MEMORY_BANK",
                        "HINDSIGHT_PORT", "HINDSIGHT_CONSOLE_PORT"}
-        secrets = sorted(k for k in changes if k not in memory_keys)
+        secrets = sorted(k for k in changes if k not in memory_keys and k not in FOLDER_KEYS)
         if secrets:
             print("Updated .env: replaced " + ", ".join(secrets) + " with new random values.")
         if any(k in memory_keys for k in changes):
             print("Updated .env: saved how FreeHand keeps its memories.")
+    if folders:
+        names = " and ".join("Hermes" if k == "FREEHAND_HERMES_DIR" else "OpenClaw" for k in folders)
+        print(f"FreeHand may now read {names}, to bring in their memories. It never changes them.")
     else:
         print(".env is already set up. Nothing changed.")
     for note in notes:

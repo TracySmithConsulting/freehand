@@ -83,6 +83,10 @@ def allowed_read_roots() -> List[Path]:
     for d in extra:
         if isinstance(d, str) and d.strip():
             roots.append(Path(d.strip()).expanduser())
+    from core import folders
+    notes = folders.notes_dir()
+    if notes is not None:
+        roots.append(notes)  # the person's notes, shown to FreeHand (core/folders.py)
     return roots
 
 

@@ -30,7 +30,7 @@ BUILTIN_GROUPS: dict[str, tuple[str, ...]] = {
     # skill_care is also loaded as soon as a skill is used.
     "skill_care": ("save_skill", "skill_outcome"),
     "forget": ("forget_memory",),
-    "email": ("read_email", "send_email"),
+    "email": ("read_email", "open_email", "reply_to_email", "save_email_draft", "send_email"),
     "calendar": ("list_calendar_events", "create_calendar_event"),
     "zoom": ("list_zoom_meetings", "schedule_zoom_meeting"),
     "github": ("github_activity",),
@@ -40,6 +40,7 @@ BUILTIN_GROUPS: dict[str, tuple[str, ...]] = {
     "facebook": ("list_facebook_pages", "post_to_facebook"),
     "instagram": ("list_instagram_accounts", "post_to_instagram"),
     "documents": ("read_docx", "write_docx", "read_xlsx", "read_pptx"),
+    "files": ("read_text_file", "list_folder", "bring_in_new_memories"),
     "sheets": ("read_sheets", "read_sheet_range"),
     "browser": ("get_axtree", "take_screenshot", "navigate", "click", "fill",
                 "get_validation_summary", "save_checkpoint", "restore_checkpoint",
@@ -50,7 +51,7 @@ BUILTIN_GROUPS: dict[str, tuple[str, ...]] = {
 GROUP_SUMMARIES = {
     "skill_care": "save a new skill, or say how a skill went",
     "forget": "forget something FreeHand remembers",
-    "email": "read and send email (Gmail, Outlook)",
+    "email": "read, reply to, draft and send email (Gmail, Outlook)",
     "calendar": "calendar events",
     "zoom": "Zoom meetings",
     "github": "GitHub projects: issues, pull requests and test runs (read only)",
@@ -58,6 +59,7 @@ GROUP_SUMMARIES = {
     "facebook": "Facebook pages and posts",
     "instagram": "Instagram account, posts, comments and messages",
     "documents": "Word, Excel and PowerPoint files",
+    "files": "the person's notes and folders: read Markdown or text files, list a folder, bring in what's new from Hermes, OpenClaw or their notes",
     "sheets": "Google Sheets",
     "browser": "work on web pages: click, fill in forms, screenshots",
 }
@@ -68,7 +70,7 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
                    "recipe", "workflow"),
     "forget": ("forget", "forgot", "wrong", "incorrect", "remove", "delete", "mistake", "outdated",
                "untrue", "remembered"),
-    "email": ("email", "e-mail", "mail", "inbox", "gmail", "outlook", "reply", "send"),
+    "email": ("email", "emails", "e-mail", "mail", "inbox", "gmail", "outlook", "reply", "send", "draft", "drafts"),
     "calendar": ("calendar", "diary", "meeting", "meetings", "appointment", "appointments",
                  "event", "events", "schedule", "today", "tomorrow", "week", "busy", "free"),
     "zoom": ("zoom",),
@@ -82,6 +84,9 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "documents": ("doc", "docx", "word", "document", "documents", "excel", "xlsx", "spreadsheet",
                   "powerpoint", "pptx", "slides", "presentation", "file", "files"),
     "sheets": ("sheet", "sheets", "spreadsheet"),
+    "files": ("folder", "folders", "vault", "vaults", "note", "notes", "markdown", "md", "txt", "text",
+              "csv", "file", "files", "hermes", "openclaw", "wiki", "wikis", "obsidian", "import",
+              "memories", "pull"),
     "browser": ("website", "site", "url", "http", "https", "www", "browse", "browser", "form", "forms",
                 "click", "fill", "screenshot", "login", "sign", "button"),
 }

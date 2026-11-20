@@ -30,7 +30,7 @@ def _windows_openclaw_paths() -> List[Path]:
 
 
 def _unix_hermes_paths() -> List[Path]:
-    paths = []
+    paths = [Path("/host/hermes")]  # shown to FreeHand in Docker (core/folders.py)
     home = Path.home()
     paths.append(home / ".hermes")
     paths.append(home / ".local/share/hermes")
@@ -40,7 +40,7 @@ def _unix_hermes_paths() -> List[Path]:
 
 def _unix_openclaw_paths() -> List[Path]:
     home = Path.home()
-    paths = []
+    paths = [Path("/host/openclaw")]  # shown to FreeHand in Docker (core/folders.py)
     paths.append(home / ".openclaw")
     paths.append(home / ".config/openclaw")
     return paths

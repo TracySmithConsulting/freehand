@@ -37,7 +37,8 @@ SETTING = "account_owners"
 # FreeHand's own tools that take a service and a label, and the kind of
 # OpenConnector app each uses (core/tools/integrations.py, OC_APPS).
 _TOOL_KINDS = {
-    "read_email": "email", "send_email": "email",
+    "read_email": "email", "send_email": "email", "open_email": "email",
+    "reply_to_email": "email", "save_email_draft": "email",
     "list_calendar_events": "calendar", "create_calendar_event": "calendar",
     "read_sheets": "sheets", "read_sheet_range": "sheets",
     "list_zoom_meetings": "meetings", "schedule_zoom_meeting": "meetings",
