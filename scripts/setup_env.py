@@ -233,6 +233,10 @@ def main(argv: list[str] | None = None) -> int:
              "(those connections become unreadable).",
     )
     parser.add_argument(
+        "--folders", action="store_true",
+        help="Let FreeHand read (never change) Hermes and OpenClaw, if they're on this computer.",
+    )
+    parser.add_argument(
         "--memory", action="store_true",
         help="Ask again how FreeHand keeps its memories, if Hindsight is already on this computer.",
     )
@@ -250,8 +254,16 @@ def main(argv: list[str] | None = None) -> int:
     oc_data = False if created else oc_has_data()
     values = current_values(lines)
     changes, notes = plan_changes(values, oc_data, args.new_encryption_key)
+    # A new .env shares them straight away; an existing one only when asked,
+    # so running this to repair secrets never changes what FreeHand can see.
     folders = folder_changes(values)
-    changes.update(folders)
+    if created or args.folders:
+        changes.update(folders)
+    elif folders:
+        names = " and ".join("Hermes" if k == "FREEHAND_HERMES_DIR" else "OpenClaw" for k in folders)
+        notes.append(f"{names} {'is' if len(folders) == 1 else 'are'} on this computer. To let FreeHand read "
+                     "them (never change them) and bring in their memories, run: python scripts/setup_env.py --folders")
+        folders = {}
 
     # Memory: asked once (on a new .env, or with --memory), and only when
     # another Hindsight is already running here.

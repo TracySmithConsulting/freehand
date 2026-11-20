@@ -557,6 +557,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {"path": {"type": "string", "description": "The folder's full path (optional)"}},
+            "required": [],
         },
     },
     "bring_in_new_memories": {
@@ -566,6 +567,7 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "parameters": {
             "type": "object",
             "properties": {"source": {"type": "string", "enum": ["all", "hermes", "openclaw", "notes"]}},
+            "required": [],
         },
     },
     "create_calendar_event": {
