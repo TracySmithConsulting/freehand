@@ -57,15 +57,20 @@ def status() -> dict:
     """What the setup page needs to know: is a model set up yet, and what's done."""
     from core import llm_providers
     from core.agent_config import get_llm_backups, get_llm_config, llm_is_configured
+    from core import chatgpt_plan, people
     main = get_llm_config()
-    has_model = llm_is_configured(main)
+    chatgpt = chatgpt_plan.signed_in(people.OWNER_ID)
+    has_model = llm_is_configured(main) or chatgpt
     out = {
         "needed": not has_model,
         "done": bool(_settings().get("setup_done")),
         "name": name(),
         "backups": len(get_llm_backups()),
     }
-    if has_model:
+    if chatgpt:
+        out["model"] = {"service": "your ChatGPT plan",
+                        "model": chatgpt_plan.status(people.OWNER_ID).get("model", "")}
+    elif has_model:
         p = llm_providers.get(llm_providers.identify(main.get("provider", ""), main.get("base_url", ""))) or {}
         out["model"] = {"service": p.get("name") or main.get("provider", ""), "model": main.get("model", "")}
     try:

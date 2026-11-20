@@ -139,8 +139,10 @@ def _call_omniroute(text: str) -> Optional[dict]:
 def _llm_ready() -> bool:
     """Is there a model to use: the main one (get_llm_config, so tests can
     patch it here) or any backup (Nov 2026)?"""
+    from core import chatgpt_plan
     from core.agent_config import get_llm_backups, llm_is_configured
-    return llm_is_configured(get_llm_config()) or bool(get_llm_backups())
+    return (llm_is_configured(get_llm_config()) or bool(get_llm_backups())
+            or chatgpt_plan.anyone_signed_in())  # someone's own ChatGPT plan
 
 
 def _classify_via_llm(text: str) -> Optional[dict]:

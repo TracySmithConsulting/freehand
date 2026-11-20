@@ -276,6 +276,16 @@ async def remove(person_id: str, keep_files: bool = True, keep_jobs: bool = True
     from core import ai_use, children
     ai_use.forget(person_id)
     children.forget(person_id)
+    from core import chatgpt_plan
+    if chatgpt_plan.signed_in(person_id):
+        # Their ChatGPT plan is theirs alone: it can't be handed to anyone.
+        if await chatgpt_plan.forget(person_id):
+            done.append("FreeHand stopped using their ChatGPT plan.")
+        else:
+            done.append("FreeHand stopped using their ChatGPT plan, but ChatGPT didn't confirm it. "
+                        "They can disconnect FreeHand in ChatGPT's settings.")
+    else:
+        await chatgpt_plan.forget(person_id)
 
     folder = _handle_files(person_id, name, keep_files)
     if folder:

@@ -1149,6 +1149,10 @@
           <label><input type="radio" name="welcome-way" value="paid"> The best results (paid)</label>
           <p class="hint">OpenRouter with credit, for the best models. Usually about R50 to R200 a month
             for everyday use, paid to OpenRouter.</p>
+          <div id="welcome-chatgpt-choice" hidden>
+            <label><input type="radio" name="welcome-way" value="chatgpt"> I pay for ChatGPT (Plus or Pro)</label>
+            <p class="hint">FreeHand uses your ChatGPT plan, at no extra cost. It counts towards your plan's usage.</p>
+          </div>
           <label><input type="radio" name="welcome-way" value="ollama"> On this computer, free and private</label>
           <p class="hint">Needs a powerful computer, and the free Ollama app with a model downloaded.</p>
           <label><input type="radio" name="welcome-way" value="key"> I've been given a key</label>
@@ -1158,6 +1162,10 @@
           <p>A window opens at OpenRouter. Sign in (or create an account, for example with Google), then
             approve FreeHand. When the window closes, come back here.</p>
           <button type="button" id="welcome-signin">Sign in with OpenRouter</button>
+        </div>
+        <div id="welcome-way-chatgpt" hidden>
+          <p>A window opens at ChatGPT. Sign in, then approve FreeHand. When the window closes, come back here.</p>
+          <button type="button" id="welcome-chatgpt">Continue with ChatGPT</button>
         </div>
         <div id="welcome-way-ollama" hidden>
           <p>Install Ollama from ollama.com, start it, and download a model in it (for example llama3.2).
@@ -1231,6 +1239,8 @@
         </div>
         <button type="submit">Send</button>
       </form>
+      <p id="chatgpt-in-use" class="hint" hidden>Using your ChatGPT plan.
+        <a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener">Manage usage (opens ChatGPT's settings in a new tab)</a></p>
       <div class="voice-controls stack-top" role="group" aria-labelledby="voice-heading">
         <h3 id="voice-heading">Voice <span class="hotkey-hint" aria-hidden="true">Alt+V</span></h3>
         <button type="button" id="voice-speak-btn" aria-keyshortcuts="Alt+V">Speak</button>
@@ -1803,7 +1813,43 @@
       <div id="connections-list" aria-live="polite">
         <p class="empty-state">Loading connections...</p>
       </div>
+
+      <div id="chatgpt-plan" class="stack-top" hidden>
+        <h3 id="chatgpt-heading">Use your ChatGPT plan</h3>
+        <p class="hint">If you pay for ChatGPT Plus or Pro, FreeHand can think with it, at no extra cost. It counts
+          towards your plan's usage, and in ChatGPT's settings you can set a weekly limit for FreeHand. It's only used
+          for your own chats and jobs, never for anyone else on this FreeHand. If your plan's limit is used up,
+          FreeHand's usual model takes over.</p>
+        <p id="chatgpt-state" role="status" aria-live="polite"></p>
+        <button type="button" id="chatgpt-continue">Continue with ChatGPT</button>
+        <div id="chatgpt-paste" hidden>
+          <p class="hint">After you approve FreeHand, the browser goes to an address starting with http://127.0.0.1,
+            which may not open on this device. Copy that whole address from the address bar and paste it here.</p>
+          <div class="form-group">
+            <label for="chatgpt-address">The address the browser went to</label>
+            <input type="url" id="chatgpt-address" autocomplete="off">
+          </div>
+          <button type="button" id="chatgpt-address-btn">Finish signing in</button>
+        </div>
+        <div id="chatgpt-signed-in" hidden>
+          <div class="form-group">
+            <label for="chatgpt-model">ChatGPT model</label>
+            <select id="chatgpt-model"></select>
+          </div>
+          <p><a href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener">Manage usage
+            (opens ChatGPT's settings in a new tab)</a></p>
+          <button type="button" class="secondary" id="chatgpt-sign-out">Stop using my ChatGPT plan</button>
+        </div>
+      </div>
     </section>
+
+    <!-- Shown once, after the first ChatGPT sign-in (OpenAI's guidelines). -->
+    <dialog id="chatgpt-welcome" aria-labelledby="chatgpt-welcome-heading">
+      <h2 id="chatgpt-welcome-heading">You're using your ChatGPT plan</h2>
+      <p>FreeHand's answers to you now use your ChatGPT plan. You can see how much FreeHand uses, and set a limit
+        for it, in ChatGPT's settings under Usage.</p>
+      <button type="button" id="chatgpt-welcome-ok">Got it</button>
+    </dialog>
 
     <!-- Help on my computer: the FreeHand Helper (docs/design/computer-helper.md) -->
     <section id="computer-help" data-page data-advanced data-owner-only aria-labelledby="helper-heading">
@@ -1967,6 +2013,13 @@
           You sign in and approve FreeHand; there's no key to copy. You add credit on OpenRouter's site.
         </p>
         <button type="button" id="llm-openrouter-btn">Sign in with OpenRouter</button>
+
+        <div id="llm-chatgpt" hidden>
+          <h3 class="stack-top">If you pay for ChatGPT</h3>
+          <p class="hint">FreeHand can use your ChatGPT Plus or Pro plan for your own chats, with the models here as
+            backups. Set it up under <a href="#connections">Connections, Use your ChatGPT plan</a>. FreeHand's memory,
+            and anyone else on this FreeHand, still use the models here.</p>
+        </div>
 
         <h3 id="llm-key-heading" class="stack-top">Or use a key from a service</h3>
         <div class="form-group">
@@ -2284,6 +2337,106 @@
         });
       }
 
+      // ---- Using your ChatGPT plan (core/chatgpt_plan.py) ----
+      // Each person signs in with their own ChatGPT; it's used only for them.
+      function chatgptPost(url, body) {
+        return apiFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+          .then(function(r) {
+            return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'That did not work.'); return d; },
+                                 function() { if (!r.ok) throw new Error('That did not work.'); return {}; });
+          });
+      }
+      function chatgptSay(text) { var s = document.getElementById('chatgpt-state'); if (s) s.textContent = text; }
+      function showChatGPT(s) {
+        var box = document.getElementById('chatgpt-plan');
+        if (!s || !box) return s;
+        box.hidden = !s.available;
+        var pointer = document.getElementById('llm-chatgpt');
+        if (pointer) pointer.hidden = !s.available;
+        document.getElementById('chatgpt-in-use').hidden = !s.signed_in;
+        document.getElementById('chatgpt-signed-in').hidden = !s.signed_in;
+        document.getElementById('chatgpt-continue').hidden = !!s.signed_in;
+        if (s.signed_in) {
+          document.getElementById('chatgpt-paste').hidden = true;
+          chatgptSay('FreeHand is using your ChatGPT plan' + (s.email ? ' (' + s.email + ')' : '') + ' for your chats.');
+          var pick = document.getElementById('chatgpt-model');
+          pick.textContent = '';
+          (s.models || []).forEach(function(m) {
+            var o = document.createElement('option');
+            o.value = m.slug; o.textContent = m.name; o.selected = m.slug === s.model;
+            pick.appendChild(o);
+          });
+          if (!s.welcomed) {
+            var dlg = document.getElementById('chatgpt-welcome');
+            if (dlg && dlg.showModal && !dlg.open) {
+              dlg.showModal();
+              document.getElementById('chatgpt-welcome-ok').focus();
+            }
+          }
+        } else {
+          chatgptSay(s.problem || '');
+        }
+        return s;
+      }
+      function loadChatGPT() {
+        return apiFetch('/api/chatgpt').then(function(r) { return r.ok ? r.json() : null; })
+          .then(showChatGPT).catch(function() { return null; });
+      }
+      function startChatGPT(say, done) {
+        say('Opening ChatGPT...');
+        chatgptPost('/api/chatgpt/start').then(function(d) {
+          var win = window.open(d.url, '_blank', 'width=600,height=750');
+          if (!win) { say('Your browser blocked the window. Allow pop-ups for FreeHand, then try again.'); return; }
+          if (!d.comes_back) {
+            document.getElementById('chatgpt-paste').hidden = false;
+            say('Sign in to ChatGPT in the new window and approve FreeHand. Then copy the address the window ends on, ' +
+                'and paste it in the box under Use your ChatGPT plan, on the Connections page.');
+            return;
+          }
+          say('Sign in to ChatGPT in the new window and approve FreeHand. When the window closes, FreeHand carries on.');
+          var timer = setInterval(function() {
+            if (!win.closed) return;
+            clearInterval(timer);
+            loadChatGPT().then(function(s) {
+              if (s && s.signed_in) { say('Done. FreeHand now uses your ChatGPT plan for your chats.'); if (done) done(s); }
+              else say((s && s.problem) || "The sign-in didn't finish. Try again, or choose another way.");
+            });
+          }, 1000);
+        }).catch(function(e) { say(e.message); });
+      }
+      (function() {
+        var go = document.getElementById('chatgpt-continue');
+        if (!go) return;
+        go.addEventListener('click', function() { startChatGPT(chatgptSay); });
+        document.getElementById('chatgpt-address-btn').addEventListener('click', function() {
+          var input = document.getElementById('chatgpt-address');
+          if (!input.value.trim()) { chatgptSay('Paste the address first.'); input.focus(); return; }
+          chatgptSay('Finishing the sign-in...');
+          chatgptPost('/api/chatgpt/finish', { address: input.value.trim() }).then(function(s) {
+            input.value = '';
+            showChatGPT(s);
+          }).catch(function(e) { chatgptSay(e.message); });
+        });
+        document.getElementById('chatgpt-model').addEventListener('change', function(e) {
+          chatgptPost('/api/chatgpt/model', { model: e.target.value }).then(function() {
+            chatgptSay('FreeHand will use ' + e.target.options[e.target.selectedIndex].textContent + ' from now on.');
+          }).catch(function(err) { chatgptSay(err.message); });
+        });
+        document.getElementById('chatgpt-sign-out').addEventListener('click', function() {
+          chatgptPost('/api/chatgpt/sign-out').then(function(d) {
+            showChatGPT(d.status);
+            chatgptSay(d.revoked ? 'FreeHand has stopped using your ChatGPT plan.'
+              : "FreeHand has stopped using your ChatGPT plan, but ChatGPT didn't confirm it. " +
+                "You can also disconnect FreeHand in ChatGPT's settings.");
+            go.focus();
+          }).catch(function(e) { chatgptSay(e.message); });
+        });
+        document.getElementById('chatgpt-welcome-ok').addEventListener('click', function() {
+          chatgptPost('/api/chatgpt/welcomed').catch(function() {});
+          document.getElementById('chatgpt-welcome').close();
+        });
+      })();
+
       // ---- The first-run setup (core/first_run.py) ----
       // Shown while FreeHand has no AI model. One step at a time; each new
       // step's heading gets the focus, so a screen reader reads it.
@@ -2315,6 +2468,7 @@
           var w = way();
           el('welcome-way-signin').hidden = !(w === 'free' || w === 'paid');
           el('welcome-way-ollama').hidden = w !== 'ollama';
+          el('welcome-way-chatgpt').hidden = w !== 'chatgpt';
           el('welcome-way-key').hidden = w !== 'key';
           say('welcome-model-result', '');
         });
@@ -2345,6 +2499,11 @@
               });
             }, 1000);
           }).catch(function(err) { say('welcome-model-result', err.message); });
+        };
+        el('welcome-chatgpt').onclick = function() {
+          startChatGPT(function(text) { say('welcome-model-result', text); }, function() {
+            modelReady('Done. FreeHand now thinks with your ChatGPT plan.');
+          });
         };
         el('welcome-ollama').onclick = function() {
           say('welcome-model-result', 'Checking Ollama...');
@@ -2387,6 +2546,9 @@
           if (s.name) el('welcome-name').value = s.name;
           box.hidden = false;
           show('name');
+          apiFetch('/api/chatgpt').then(function(r) { return r.ok ? r.json() : null; }).then(function(c) {
+            if (c && c.available) el('welcome-chatgpt-choice').hidden = false;
+          }).catch(function() {});
         }).catch(function() {});
       })();
 
@@ -6431,6 +6593,7 @@
         loadFacts();
         loadVoiceStatus();
         loadConnections();  // a member sees their own and the shared accounts
+        loadChatGPT();  // each person's own ChatGPT plan
         if (me.owner) {
           loadPeople();
           loadGatewayStatus();
