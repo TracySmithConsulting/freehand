@@ -5,6 +5,18 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.25] — 2026-11-20
+
+### Added
+
+- **The FreeHand app for Windows lets FreeHand read Hermes and
+  OpenClaw.** When they're on the computer, the Ready to install screen
+  has a ticked box for it, and an existing FreeHand can do it from the
+  menu by the clock ("Let FreeHand read ..."), which asks first. FreeHand
+  reads them and never changes them.
+- **The released `compose.yml`** shows FreeHand the same read-only
+  folders as the developer one, so `install.sh` installs can use them too.
+
 ## [0.1.24] — 2026-11-20
 
 ### Added
