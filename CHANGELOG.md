@@ -5,6 +5,24 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.26] — 2026-11-20
+
+### Added
+
+- **Families: the parents' choices.** For each child, on the People page:
+  - **An AI allowance a day** (small, medium or large). Over it, FreeHand
+    rests until tomorrow.
+  - **What parents see:** their chats, a weekly summary (never their
+    words), or only alerts. FreeHand suggests full view under 13 and a
+    summary for teenagers, and the child is told which.
+  - **Approving from your phone:** what a child asks FreeHand to do also
+    goes to each parent's own Telegram or WhatsApp, to answer with
+    /approve or /deny.
+  - **When FreeHand is worried** about a child, it tells their parents,
+    unless the child says a parent is the one hurting them: then only
+    Childline (116). It depends on the AI noticing, so it can miss things.
+- **A "Your children" page** for parents, with what they chose to see.
+
 ## [0.1.25] — 2026-11-20
 
 ### Added
