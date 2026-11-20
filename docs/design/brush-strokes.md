@@ -1,7 +1,7 @@
 # Brush strokes: sharing ways to make FreeHand your own
 
-Status: **design, for Tracy to decide** (20 November 2026). Nothing here is
-built yet. The questions for her are at the end.
+Status: **decided** (20 November 2026): Tracy chose the suggestion on all
+four questions at the end. Step 1 is being built.
 
 ## The idea
 
@@ -212,6 +212,11 @@ That's a later step, and every download would be asked first.
 4. **Looks,** with the contrast check.
 
 ## Questions for Tracy
+
+**Decided (20 November 2026): the suggestion on all four.** The gallery is
+checked before anything is listed; members may add brush strokes for
+themselves unless the owner switches it off; team members and skills
+come first, then voices, then looks; and the name stays **brush strokes**.
 
 1. **The gallery:** should it be checked by you (or people you trust)
    before anything is listed? Or open to anyone, with the "nobody has
