@@ -5,6 +5,27 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.24] — 2026-11-20
+
+### Added
+
+- **FreeHand can reach Hermes, OpenClaw and your notes again.** In
+  Docker it couldn't see them. Now they're shared read-only (set in
+  `.env`), and **Check for new memories** on the Agents page, or just
+  asking in chat, brings in only what's new or changed. Your notes
+  (wikis, Obsidian vaults) come in keeping their folders.
+- **FreeHand reads Markdown and text files,** and can list a folder.
+- **Better email:** FreeHand reads a whole email, not just its preview,
+  replies inside the conversation (it still asks first), and can save a
+  reply to your Drafts for you to finish yourself.
+
+### Fixed
+
+- FreeHand counted imported files once per import, so it said "3,556
+  Hermes files" when there were 91 files in all.
+- FreeHand no longer leaves placeholders such as "[phone number]" in what
+  it writes, and says plainly when it can't reach something, and why.
+
 ## [0.1.23] — 2026-11-20
 
 ### Changed
