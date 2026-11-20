@@ -276,6 +276,8 @@ async def remove(person_id: str, keep_files: bool = True, keep_jobs: bool = True
     from core import ai_use, children
     ai_use.forget(person_id)
     children.forget(person_id)
+    from core import brush_strokes
+    brush_strokes.forget(person_id)
 
     folder = _handle_files(person_id, name, keep_files)
     if folder:
