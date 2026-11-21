@@ -12,10 +12,10 @@ literal never transits the shell, and execs uvicorn in the same process.
 
   python scripts/serve_local_dev.py
 
-The dev runtime token ("runttest123") is the one documented for the local OC
-dev instance in .hermes/plans/2026-09-28_0930-open-connector-fallback-broker.md
-(docker dev block) and already used in tests/test_execute_action.py. It is a
-dev-only token, not a production credential.
+The dev runtime token ("runttest123") is the one used for the local OC dev
+instance (it was in the Round 7 planning notes, since removed) and already
+in tests/test_execute_action.py. It is a dev-only token, not a production
+credential.
 
 LOCAL-ONLY helper: keep this untracked/uncommitted (it hardcodes the dev
 OC endpoint). The normal production path is vault-persisted tokens.

@@ -5,6 +5,32 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.30] — 2026-11-21
+
+### Changed
+
+- **The README is in plain words.** What FreeHand does for you, what it
+  can do, how to install it, and safety and privacy. The commands,
+  connection setup and API moved to docs/developers.md.
+- **Plainer words in FreeHand:** Memory's "Look for new notes", and the
+  Settings page no longer shows a command line.
+
+### Fixed
+
+- **Voice control finds every button:** "Look at it" and "Sign out
+  everywhere" are now called that when spoken, with whose they are after.
+- **Bigger tick boxes and round buttons:** 24 pixels.
+- **The docs read well with a screen reader:** no line drawings or emoji.
+- **FreeHand's first start on Windows** no longer fails when its output
+  goes to a file and holds a character such as an arrow or "ë".
+
+### Removed
+
+- **The Chrome extension.** It never worked, and its local helper would
+  have taken commands from any website. The FreeHand Helper for Windows is
+  the way to use your real Chrome.
+- **Leftover files:** unused npm files and old planning notes.
+
 ## [0.1.29] — 2026-11-21
 
 ### Security
