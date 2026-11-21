@@ -5,6 +5,20 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.28] — 2026-11-21
+
+### Added
+
+- **The brush strokes gallery, in FreeHand.** The Brush strokes page lists
+  the gallery: choose one, look at it, and add it. Ones you added are
+  marked.
+- **Voice packs:** how FreeHand sounds for you: its name, a greeting, its
+  way of talking, and the reading-aloud voice and speed it prefers (the
+  closest voice your computer has). It never changes what FreeHand may
+  do, and a voice you chose yourself stays chosen.
+- **Looks:** FreeHand's colours and text size, for you. Every colour is
+  checked to be easy to read, or the look isn't added.
+
 ## [0.1.27] — 2026-11-20
 
 ### Added
