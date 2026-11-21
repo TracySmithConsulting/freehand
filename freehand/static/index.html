@@ -2650,8 +2650,22 @@
       document.addEventListener('click', function(e) {
         var a = e.target.closest && e.target.closest('a[href^="#"]');
         if (!a || a.getAttribute('href').length < 2) return;
-        // The same address again doesn't change the hash: move focus here.
-        revealSection(a.getAttribute('href').slice(1), a.getAttribute('href') === currentHash());
+        var id = a.getAttribute('href').slice(1);
+        var where = document.getElementById(id);
+        if (!where || !pageOf(where)) {
+          revealSection(id, a.getAttribute('href') === currentHash());
+          return;
+        }
+        // A page or a part of one: FreeHand moves the focus there itself.
+        // Following the link too would undo that: the browser clears the
+        // focus when it jumps to a part that can't take it (a section),
+        // and the focus was left on the page body. So the address goes in
+        // the history here instead, and Back still works (hashchange).
+        e.preventDefault();
+        if (currentHash() !== '#' + id) {
+          try { history.pushState(null, '', '#' + id); } catch (err) {}
+        }
+        revealSection(id, true);
       }, true);
       window.addEventListener('hashchange', function() { revealSection(currentHash().slice(1), true); });
       // After the everyday view or a member's screens hide pages: show the
@@ -4576,11 +4590,19 @@
                       (scopes ? '<div class="connection-meta">' + escapeHtml(scopes) + '</div>' : '') +
                     '</div>' + (!mineToManage ? '' :                      '<div class="connection-actions">' +
                       (isExpired
-                        ? '<button class="secondary" onclick="reconnectConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Reconnect ' + who + '">Reconnect</button> '
+                        ? '<button class="secondary" data-act="reconnect" aria-label="Reconnect ' + who + '">Reconnect</button> '
                         : '') +
-                      '<button class="secondary" onclick="testConnection(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Test ' + who + '">Test</button>' +
-                      '<button class="danger" onclick="disconnectService(\'' + escapeHtml(svc) + '\', \'' + escapeHtml(conn.label) + '\')" aria-label="Disconnect ' + who + '">Disconnect</button>' +
+                      '<button class="secondary" data-act="test" aria-label="Test ' + who + '">Test</button>' +
+                      '<button class="danger" data-act="disconnect" aria-label="Disconnect ' + who + '">Disconnect</button>' +
                     '</div>');
+                  // Attached here, not written into onclick="...": the browser
+                  // turns &#39; back into a quote before running onclick, so
+                  // escaping can't keep a label out of the code there.
+                  [['reconnect', 'reconnectConnection'], ['test', 'testConnection'], ['disconnect', 'disconnectService']]
+                    .forEach(function(pair) {
+                      var button = card.querySelector('[data-act="' + pair[0] + '"]');
+                      if (button) button.addEventListener('click', function() { window[pair[1]](svc, conn.label); });
+                    });
                   if (conn.account && choices.length) {
                     var info2 = card.querySelector('.connection-info');
                     (info2 || card).appendChild(whoseControl(conn, info.name));
@@ -4942,11 +4964,12 @@
         return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
       }
 
+      // Safe in text and inside quoted attributes: quote marks too, or a
+      // name with a " in it could add its own attributes to a button.
       function escapeHtml(str) {
         if (!str) return '';
-        var div = document.createElement('div');
-        div.appendChild(document.createTextNode(str));
-        return div.innerHTML;
+        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       }
 
       function isValidUrl(str) {

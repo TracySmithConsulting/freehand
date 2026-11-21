@@ -45,6 +45,64 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.security import intercept_action, PROJECT_ROOT
 
+# ── Which pages the browser may open ─────────────────────────────────────────
+# Reading a page runs without an approval, so it must never reach what the
+# read-folder limit (core/tools/office.py) protects: files on this computer
+# (file://), this computer's own services (FreeHand, memory, connections)
+# or the local network. Only http and https pages on the internet. Checked
+# before opening, after any redirect, and for everything the page loads,
+# so a page can't pull this computer's services into its own frames.
+
+import ipaddress
+import socket
+from urllib.parse import urlsplit
+
+
+class PageNotAllowed(Exception):
+    """The address isn't a page on the internet."""
+
+
+NOT_A_WEB_PAGE = ("FreeHand only opens web pages, with addresses starting http:// or https://. "
+                  "Not files on the computer or other kinds of address.")
+NOT_ON_THE_INTERNET = ("FreeHand doesn't open pages on this computer or your local network, "
+                       "only pages on the internet.")
+
+
+def _blocked_ip(ip: str) -> bool:
+    """True for anything that isn't a public internet address: this computer,
+    private and local networks (Docker's too), link-local, and the rest."""
+    try:
+        addr = ipaddress.ip_address(str(ip).split("%", 1)[0])
+    except ValueError:
+        return True
+    if isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped:
+        addr = addr.ipv4_mapped
+    return not addr.is_global or addr.is_multicast
+
+
+def _host_refusal(host: str, port: int) -> Optional[str]:
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except (OSError, UnicodeError, ValueError):
+        return f"FreeHand couldn't find {host} on the internet."
+    if not infos or any(_blocked_ip(info[4][0]) for info in infos):
+        return NOT_ON_THE_INTERNET
+    return None
+
+
+def page_refusal(url: str) -> Optional[str]:
+    """Why the browser may not open this address, or None if it may."""
+    try:
+        parts = urlsplit(str(url or "").strip())
+        scheme = parts.scheme.lower()
+        host = parts.hostname
+        port = parts.port or (443 if scheme == "https" else 80)
+    except ValueError:
+        return NOT_A_WEB_PAGE
+    if scheme not in ("http", "https") or not host:
+        return NOT_A_WEB_PAGE
+    return _host_refusal(host, port)
+
 # ── Screenshot size cap (R9 fix) ──────────────────────────────────────────────
 
 DEFAULT_SCREENSHOT_SIZE_CAP_MB = 20
@@ -469,11 +527,35 @@ async def _get_page(url: str, mode: str = "headless", timeout: int = 30000):
     """
     global _CAPTURE_ACTIVE
 
+    refusal = await asyncio.to_thread(page_refusal, url)
+    if refusal:
+        raise PageNotAllowed(refusal)
+
     headless = mode == "headless" or not _can_show_windows()
     browser, strategy = await _launch_browser(headless=headless)
 
     # Attach network capture handlers if active
     context = await browser.new_context()
+
+    # Everything the page loads (frames, scripts, pictures) must be on the
+    # internet too, or a page could show this computer's services in a frame.
+    allowed_hosts: dict = {}
+
+    async def _guard(route):
+        request_url = route.request.url
+        parts = urlsplit(request_url)
+        if parts.scheme in ("data", "blob", "about"):
+            await route.continue_()
+            return
+        key = (parts.scheme, parts.hostname, parts.port)
+        if key not in allowed_hosts:
+            allowed_hosts[key] = (await asyncio.to_thread(page_refusal, request_url)) is None
+        if allowed_hosts[key]:
+            await route.continue_()
+        else:
+            await route.abort()
+
+    await context.route("**/*", _guard)
     if _CAPTURE_ACTIVE:
 
         async def _on_request(request):
@@ -492,6 +574,14 @@ async def _get_page(url: str, mode: str = "headless", timeout: int = 30000):
         await page.wait_for_timeout(1000)
     except Exception:
         pass
+
+    # A redirect isn't routed, so check where the page ended up.
+    landed = page.url or ""
+    if landed not in ("", "about:blank", url):
+        refusal = await asyncio.to_thread(page_refusal, landed)
+        if refusal:
+            await browser.close()
+            raise PageNotAllowed(refusal)
 
     return page, strategy, browser, context
 
