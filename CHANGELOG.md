@@ -5,6 +5,25 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.29] — 2026-11-21
+
+### Security
+
+- **Reading web pages only reaches the internet.** FreeHand's page tools
+  used to open any address without asking, including files on the computer
+  (such as FreeHand's own key) and services on this computer or the local
+  network. Now they open only web pages on the internet, checked before
+  opening, after a redirect, and for everything the page loads.
+- **Names with quote marks stay names.** The console now escapes quote
+  marks too, and the Connections buttons no longer build code out of
+  account labels.
+
+### Fixed
+
+- **Choosing a page in the menu moves the focus to it.** The focus used to
+  be left behind on the page body, so a screen reader user had to find
+  their way to the new page. Back still works.
+
 ## [0.1.28] — 2026-11-21
 
 ### Added
