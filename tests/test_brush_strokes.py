@@ -64,7 +64,7 @@ def test_a_good_team_member_gets_a_plain_card(office):
 
 
 @pytest.mark.parametrize("bundle, words", [
-    (with_(GOOD, kind="plugin"), "team members and skills"),
+    (with_(GOOD, kind="plugin"), "voice packs and looks"),
     ({**GOOD, "files": {**GOOD["files"], "run.py": "print(1)"}}, "only words and settings"),
     (with_(GOOD, tools=["facebook", "shell"]), "doesn't offer team members: shell"),
     (with_words(GOOD, "x" * 3001), "too long"),

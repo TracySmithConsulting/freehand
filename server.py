@@ -230,6 +230,7 @@ MEMBER_ROUTES = frozenset({
     # (core/brush_strokes.py checks who may add what).
     ("GET", "/api/brush-strokes"), ("POST", "/api/brush-strokes/look"), ("POST", "/api/brush-strokes/add"),
     ("DELETE", "/api/brush-strokes/{added_id}"), ("GET", "/api/team/{member_id}/brush-stroke"),
+    ("GET", "/api/brush-strokes/gallery"), ("GET", "/api/brush-strokes/active"),
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
@@ -527,6 +528,25 @@ async def brush_strokes_list(request: Request):
     return {"added": brush_strokes.list_added(pid), "owner": pid == people.OWNER_ID,
             "may_add": brush_strokes.refusal("team_member", pid) is None,
             "why_not": brush_strokes.refusal("team_member", pid) or ""}
+
+
+@app.get("/api/brush-strokes/gallery", dependencies=[Depends(require_api_key)])
+async def brush_strokes_gallery(request: Request):
+    """The gallery's brush strokes, each marked if this person added it."""
+    from core import brush_strokes
+    try:
+        items = await asyncio.to_thread(brush_strokes.gallery)
+    except brush_strokes.BrushStrokeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    mine = {a["source"] for a in brush_strokes.list_added(_request_person(request))}
+    return {"brush_strokes": [{**i, "added": i["link"] in mine} for i in items]}
+
+
+@app.get("/api/brush-strokes/active", dependencies=[Depends(require_api_key)])
+async def brush_strokes_active(request: Request):
+    """The person's voice pack and look, for the page."""
+    from core import brush_strokes
+    return brush_strokes.active_for_page(_request_person(request))
 
 
 @app.post("/api/brush-strokes/look", dependencies=[Depends(require_api_key)])

@@ -1220,6 +1220,7 @@
         Command Box
         <span class="hotkey-hint" aria-hidden="true">Alt+C</span>
       </h2>
+      <p id="voice-pack-greeting" hidden></p>
       <form id="command-form" novalidate>
         <div class="form-group">
           <label for="command-input">What would you like FreeHand to do?</label>
@@ -1545,10 +1546,24 @@
     <!-- Brush strokes: ways to make FreeHand your own, shared (core/brush_strokes.py). -->
     <section id="brush-strokes" data-page aria-labelledby="bs-heading">
       <h2 id="bs-heading">Brush strokes</h2>
-      <p class="hint">Ways to make FreeHand your own, that other people made and shared: for now, team members and skills.
-        A brush stroke is only words and settings, never a program. FreeHand checks it and shows you what it is before
-        you add it, and you can remove it again at any time.</p>
+      <p class="hint">Ways to make FreeHand your own, that other people made and shared: team members, skills, voice packs
+        (how FreeHand sounds) and looks (its colours and text size). A brush stroke is only words and settings, never a
+        program. FreeHand checks it and shows you what it is before you add it, and you can remove it again at any time.</p>
       <p class="hint" id="bs-not-allowed" hidden></p>
+      <h3>From the FreeHand gallery</h3>
+      <p class="hint">Every brush stroke in the gallery was checked before it was listed.</p>
+      <div class="form-group">
+        <label for="bs-gallery-kind">Show</label>
+        <select id="bs-gallery-kind">
+          <option value="">Everything</option>
+          <option value="team_member">Team members</option>
+          <option value="skill">Skills</option>
+          <option value="voice">Voice packs</option>
+          <option value="look">Looks</option>
+        </select>
+      </div>
+      <div id="bs-gallery" aria-live="polite"><p class="empty-state">Loading the gallery...</p></div>
+      <h3 class="stack-top">Or add one from somewhere else</h3>
       <form id="bs-link-form" novalidate>
         <div class="form-group">
           <label for="bs-link">Link to a brush stroke on GitHub</label>
@@ -3130,17 +3145,38 @@
       function saveVoiceSetting(name, value) {
         try { localStorage.setItem('freehand_' + name, value); } catch (e) {}
       }
+      // A voice pack (core/brush_strokes.py) says which voices it prefers;
+      // the closest one this computer has is used. A voice the person chose
+      // here always wins.
+      function packVoice() {
+        var pack = window.fhVoicePack;
+        if (!pack || !window.speechSynthesis) return null;
+        var voices = window.speechSynthesis.getVoices();
+        var found = null;
+        (pack.voices || []).some(function(hint) {
+          var h = String(hint).toLowerCase();
+          found = voices.filter(function(v) { return v.name.toLowerCase().indexOf(h) !== -1; })[0] || null;
+          return !!found;
+        });
+        if (!found && pack.language) {
+          var lang = String(pack.language).toLowerCase();
+          found = voices.filter(function(v) { return String(v.lang).toLowerCase() === lang; })[0] ||
+                  voices.filter(function(v) { return String(v.lang).toLowerCase().split('-')[0] === lang.split('-')[0]; })[0] || null;
+        }
+        return found;
+      }
       function chosenVoice() {
         if (!window.speechSynthesis) return null;
         var want = voiceSetting('voice_name', '');
-        if (!want) return null;
-        return window.speechSynthesis.getVoices().filter(function(v) { return v.voiceURI === want || v.name === want; })[0] || null;
+        if (!want) return packVoice();
+        return window.speechSynthesis.getVoices().filter(function(v) { return v.voiceURI === want || v.name === want; })[0] || packVoice();
       }
       function voiceUtterance(text) {
         var u = new SpeechSynthesisUtterance(text);
         var v = chosenVoice();
         if (v) { u.voice = v; u.lang = v.lang; }
-        var rate = parseFloat(voiceSetting('voice_rate', '1'));
+        var own = voiceSetting('voice_rate', '');
+        var rate = parseFloat(own || (window.fhVoicePack && window.fhVoicePack.speed) || '1');
         if (rate > 0) u.rate = rate;
         return u;
       }
@@ -6103,10 +6139,84 @@
           var e = document.createElement(tag);
           if (text !== undefined) e.textContent = text;
           if (cls) e.className = cls;
-          parent.appendChild(e);
+          if (parent && parent.appendChild) parent.appendChild(e);
           return e;
         }
         function hideCard() { el('bs-card').hidden = true; ticket = null; }
+        function lookAt(url) {
+          hideCard();
+          showStatus('Checking the brush stroke...', '');
+          return send('POST', '/api/brush-strokes/look', { url: url }).then(showCard);
+        }
+        var galleryItems = null;
+        function renderGallery() {
+          var box = el('bs-gallery');
+          box.textContent = '';
+          if (galleryItems === null) return;
+          var kind = el('bs-gallery-kind').value;
+          var shown = galleryItems.filter(function(g) { return !kind || g.kind === kind; });
+          if (!shown.length) { add(box, 'p', 'Nothing of that kind in the gallery yet.', 'empty-state'); return; }
+          shown.forEach(function(g) {
+            var row = add(box, 'div', undefined, 'task-item');
+            var info = add(row, 'div', undefined, 'task-info');
+            add(info, 'span', g.name, 'task-title');
+            add(info, 'div', g.kind_words.charAt(0).toUpperCase() + g.kind_words.slice(1) + '. ' + g.about, 'task-meta');
+            if (g.added) { add(info, 'div', 'You added this one.', 'task-meta'); return; }
+            var look = add(row, 'button', 'Look at it', 'secondary');
+            look.type = 'button';
+            look.setAttribute('aria-label', 'Look at ' + g.name);
+            look.onclick = function() { lookAt(g.link).catch(function(e) { showStatus(e.message, 'error'); }); };
+          });
+        }
+        function loadGallery() {
+          return apiFetch('/api/brush-strokes/gallery')
+            .then(function(r) { return r.json().then(function(d) { if (!r.ok) throw new Error(d.detail || 'The gallery could not be loaded.'); return d; }); })
+            .then(function(d) { galleryItems = d.brush_strokes || []; renderGallery(); })
+            .catch(function(e) { el('bs-gallery').textContent = ''; add(el('bs-gallery'), 'p', e.message, 'empty-state'); });
+        }
+        if (document.getElementById('bs-gallery-kind')) el('bs-gallery-kind').onchange = renderGallery;
+        // FreeHand's own colour set (its :root rule, or the night one), from the page's stylesheet.
+        function ownColours(night) {
+          var found = '';
+          [].some.call(document.styleSheets, function(sheet) {
+            var rules;
+            try { rules = sheet.cssRules; } catch (e) { return false; }
+            return [].some.call(rules || [], function(rule) {
+              if (sheet.ownerNode && sheet.ownerNode.id === 'look-style') return false;
+              var inner = night ? (rule.media && /prefers-color-scheme:\s*dark/.test(rule.media.mediaText) ? rule.cssRules : null)
+                                : [rule];
+              return [].some.call(inner || [], function(r) {
+                if (r.selectorText === ':root' && r.style && r.style.getPropertyValue('--paper')) { found = r.style.cssText; return true; }
+                return false;
+              });
+            });
+          });
+          return found;
+        }
+        function applyActive() {
+          return apiFetch('/api/brush-strokes/active').then(function(r) { return r.ok ? r.json() : null; })
+            .then(function(d) {
+              if (!d) return;
+              window.fhVoicePack = d.voice || null;
+              var greet = document.getElementById('voice-pack-greeting');
+              if (greet) {
+                greet.textContent = d.voice && d.voice.greeting ? d.voice.greeting : '';
+                greet.hidden = !(d.voice && d.voice.greeting);
+              }
+              var style = document.getElementById('look-style');
+              if (!style) {
+                style = document.createElement('style');
+                style.id = 'look-style';
+                document.head.appendChild(style);
+              }
+              // A look sets the main colours; the rest come from FreeHand's own night or day set,
+              // whichever goes with the look (core/brush_strokes.py, _look_bases).
+              var base = '';
+              if (d.look && d.look.night_base_by_day) base += '@media (prefers-color-scheme: light) { :root { ' + ownColours(true) + ' } }\n';
+              if (d.look && d.look.day_base_by_night) base += '@media (prefers-color-scheme: dark) { :root { ' + ownColours(false) + ' } }\n';
+              style.textContent = d.look ? base + d.look.css : '';  // made by FreeHand from checked colours only
+            }).catch(function() {});
+        }
         function showCard(c) {
           ticket = c.ticket || null;
           var warn = el('bs-card-warning');
@@ -6145,10 +6255,14 @@
             remove.type = 'button';
             remove.setAttribute('aria-label', 'Remove ' + b.name);
             remove.onclick = function() {
-              if (!confirm('Remove ' + b.name + '? ' + (b.kind === 'team_member' ? 'The team member and its scheduled jobs go.' : 'The skill goes.'))) return;
+              var goes = { team_member: 'The team member and its scheduled jobs go.', skill: 'The skill goes.',
+                           voice: 'FreeHand goes back to sounding like itself.', look: 'FreeHand goes back to its own colours.' };
+              if (!confirm('Remove ' + b.name + '? ' + (goes[b.kind] || ''))) return;
               send('DELETE', '/api/brush-strokes/' + b.id).then(function(r) {
                 showStatus(r.message, 'success');
                 load();
+                loadGallery();
+                if (r.kind === 'voice' || r.kind === 'look') applyActive();
                 if (window.loadTeam) window.loadTeam();
               }).catch(function(e) { showStatus(e.message, 'error'); });
             };
@@ -6185,12 +6299,14 @@
               el('bs-link').value = '';
               showStatus(r.message, 'success');
               load().then(function() { el('bs-added-heading').focus(); });
+              loadGallery();
+              if (r.kind === 'voice' || r.kind === 'look') applyActive();
               if (window.loadTeam) window.loadTeam();
             }).catch(function(e) { showStatus(e.message, 'error'); });
           };
           el('bs-dont').onclick = function() { hideCard(); showStatus('Nothing was added.', 'success'); el('bs-link').focus(); };
         }
-        return load;
+        return function() { load(); loadGallery(); applyActive(); };
       })();
 
       // ---- Your children (a parent's view, core/children.py) ----
@@ -6211,7 +6327,7 @@
           var e = document.createElement(tag);
           if (text !== undefined) e.textContent = text;
           if (cls) e.className = cls;
-          parent.appendChild(e);
+          if (parent && parent.appendChild) parent.appendChild(e);
           return e;
         }
         return apiFetch('/api/children').then(function(r) { return r.ok ? r.json() : { children: [] }; })
