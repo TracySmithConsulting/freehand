@@ -20,7 +20,7 @@ FreeHand connects to external services via OAuth 2.0. You need to register an ap
 8. Click **Create**
 9. Copy the **Client ID** and **Client Secret** into FreeHand settings
 
-**⚠️ Google Workspace:** If your org uses Google Workspace, the admin may need to authorize the app. If you see "admin_policy_enforced", contact your admin or use a personal Gmail account.
+**Watch out, Google Workspace:** If your org uses Google Workspace, the admin may need to authorize the app. If you see "admin_policy_enforced", contact your admin or use a personal Gmail account.
 
 ---
 
@@ -39,7 +39,7 @@ FreeHand connects to external services via OAuth 2.0. You need to register an ap
     - Add: `Mail.Read`, `Mail.Send`, `Calendars.Read`, `Calendars.ReadWrite`, `User.Read`, `offline_access`
 11. Paste Client ID, Client Secret, and Tenant (`common` for personal + work) into FreeHand settings
 
-**⚠️ Microsoft 365:** Some admins restrict third-party app consent. If you see "consent_required", your admin needs to grant org-wide consent.
+**Watch out, Microsoft 365:** Some admins restrict third-party app consent. If you see "consent_required", your admin needs to grant org-wide consent.
 
 ---
 

@@ -105,7 +105,6 @@ def chromium(monkeypatch):
         return type("P", (), {"chromium": fake})()
 
     monkeypatch.setattr(browser, "_playwright", fake_playwright)
-    monkeypatch.setattr(browser, "_chrome_extension_bridge_port", lambda: 9223)
     monkeypatch.setattr(browser, "_get_chrome_cdp_endpoint", lambda: "ws://x")
     return fake
 
@@ -121,7 +120,7 @@ def test_the_owners_browser_still_uses_their_chrome(chromium):
     from core.tools import browser
     with as_person("owner"):
         _, how = asyncio.run(browser._launch_browser())
-    assert how == "chrome_extension"
+    assert how == "existing_chrome"
 
 
 # ── A member's documents stay in their own folder ────────────────────

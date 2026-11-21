@@ -82,25 +82,25 @@ freehand serve
 
 ## Project Structure
 
-```
-freehand/
-├── core/
-│   ├── agents/       # Cross-agent detection and import
-│   ├── oauth/        # OAuth connectors and token management
-│   ├── tools/        # Agent tool wrappers
-│   ├── agent.py      # Main agent loop
-│   ├── agent_config.py  # LLM config and system prompt
-│   ├── database.py   # SQLite schema
-│   ├── gateway.py    # Telegram/Slack/WhatsApp
-│   ├── memory.py     # FTS5 memory search
-│   ├── scheduler.py  # Task scheduling
-│   └── security.py   # Permission tiers
-├── bridge/           # WhatsApp Node.js bridge
-├── static/           # Web UI
-├── docs/             # Documentation
-├── scripts/          # Install scripts
-└── tests/            # Test suite
-```
+- `core/`: FreeHand itself.
+  - `agents/`: finding and importing other agents.
+  - `oauth/`: connections and their keys.
+  - `tools/`: the agent's tools.
+  - `agent.py`: the main agent loop.
+  - `agent_config.py`: the AI model settings and FreeHand's instructions.
+  - `database.py`: the SQLite database.
+  - `gateway.py`: Telegram, Slack and WhatsApp.
+  - `memory.py`: searching notes (SQLite full-text search).
+  - `scheduler.py`: scheduled jobs.
+  - `security.py`: permission levels and approvals.
+- `freehand/`: what's shipped with the package.
+  - `bridge/`: the WhatsApp bridge (Node.js).
+  - `static/`: the web page.
+- `helper/windows/`: the FreeHand app and Helper for Windows.
+- `server.py` and `cli.py`: the web server and the `freehand` command.
+- `docs/`: documentation.
+- `scripts/`: install and maintenance scripts.
+- `tests/`: the tests.
 
 ## Adding a New OAuth Connector
 

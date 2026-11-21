@@ -1,9 +1,9 @@
 """Tests for Browser v2 features:
-  Feature 1 — CDP auto-connect: _get_chrome_cdp_endpoint(), _chrome_extension_bridge_port()
+  Feature 1 — CDP auto-connect: _get_chrome_cdp_endpoint()
   Feature 2 — get_validation_summary: _extract_validation_summary() DOM patterns
   Feature 3 — Request capture: module-level state machine (start/stop/reset)
   Feature 4 — Checkpoint save/restore: serialization roundtrip
-  Feature 5 — Chrome Extension: manifest.json structure
+  The Chrome Extension bridge is gone (removed Nov 2026)
 """
 
 import json
@@ -17,9 +17,6 @@ import pytest
 
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent.parent))
 
-# Chrome extension dir, derived portably from this file's location so the
-# manifest tests work on any OS / CI checkout (the files are git-tracked
-# under freehand/chrome_extension/). Replaces a hardcoded <project root> path.
 _EXTENSION_DIR = Path(__file__).resolve().parent.parent / "freehand" / "chrome_extension"
 
 
@@ -80,41 +77,6 @@ class TestCDPAutoConnect:
             "linux": Path("/tmp/none"),
         }):
             result = _get_chrome_cdp_endpoint()
-            assert result is None
-
-    def test_chrome_extension_bridge_port_connected(self):
-        """When localhost:9223 responds with 200, return 9223."""
-        from core.tools.browser import _chrome_extension_bridge_port
-
-        mock_response = MagicMock()
-        mock_response.status = 200
-        # MagicMock() as context manager returns a NEW mock from __enter__().
-        # We need __enter__ to return our mock_response so resp.status==200.
-        mock_response.__enter__ = MagicMock(return_value=mock_response)
-        mock_response.__exit__ = MagicMock(return_value=False)
-
-        with patch("urllib.request.urlopen", return_value=mock_response):
-            result = _chrome_extension_bridge_port()
-            assert result == 9223
-
-    def test_chrome_extension_bridge_port_not_running(self):
-        """When localhost:9223 is unreachable, return None."""
-        import urllib.error
-
-        from core.tools.browser import _chrome_extension_bridge_port
-
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")):
-            result = _chrome_extension_bridge_port()
-            assert result is None
-
-    def test_chrome_extension_bridge_port_timeout(self):
-        """When localhost:9223 times out, return None."""
-        import urllib.error
-
-        from core.tools.browser import _chrome_extension_bridge_port
-
-        with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("timeout")):
-            result = _chrome_extension_bridge_port()
             assert result is None
 
 
@@ -415,71 +377,43 @@ class TestCheckpointSerialization:
         assert result["error"] == "Permission denied"
 
 
-# ── Feature 5: Chrome Extension manifest ─────────────────────────────────────
+# ── The Chrome Extension bridge is gone ──────────────────────────────────────
+# It never worked, and its local port (9223) took commands from any website
+# (Access-Control-Allow-Origin: *). Removed in Nov 2026; these make sure it
+# stays gone and nothing tries to reach it.
 
-class TestChromeExtensionManifest:
-    """Unit tests for the Chrome Extension structure."""
+class TestNoExtensionBridge:
 
-    def test_manifest_is_valid_json(self):
-        """manifest.json is parseable JSON."""
-        ext_dir = _EXTENSION_DIR
-        manifest_path = ext_dir / "manifest.json"
+    def test_the_extension_is_gone(self):
+        assert not _EXTENSION_DIR.exists()
 
-        assert manifest_path.exists(), f"manifest.json not found at {manifest_path}"
-        text = manifest_path.read_text()
-        data = json.loads(text)
+    def test_the_browser_code_doesnt_look_for_it(self):
+        from core.tools import browser
+        assert not hasattr(browser, "_chrome_extension_bridge_port")
+        source = Path(browser.__file__).read_text(encoding="utf-8")
+        assert "9223" not in source
 
-        assert data["manifest_version"] == 3
-        assert data["name"] == "FreeHand Browser Bridge"
-        assert "background" in data
-        assert "content_scripts" in data
-        assert "action" in data
+    def test_opening_a_browser_never_calls_the_old_port(self, monkeypatch):
+        import asyncio
+        import urllib.request
+        from core.tools import browser
 
-    def test_manifest_requests_debugger_permission(self):
-        """manifest.json includes the debugger permission."""
-        ext_dir = _EXTENSION_DIR
-        manifest = json.loads((ext_dir / "manifest.json").read_text())
+        def no_network(*a, **k):
+            raise AssertionError("the browser code made a network call: " + str(a[:1]))
+        monkeypatch.setattr(urllib.request, "urlopen", no_network)
 
-        assert "debugger" in manifest["permissions"]
+        class Chromium:
+            async def connect_over_cdp(self, *a, **k):
+                raise RuntimeError("no Chrome")
 
-    def test_manifest_content_script_runs_on_all_urls(self):
-        """Content script is injected into all URLs."""
-        ext_dir = _EXTENSION_DIR
-        manifest = json.loads((ext_dir / "manifest.json").read_text())
+            async def launch(self, headless=True):
+                return "clean browser"
 
-        cs = manifest["content_scripts"][0]
-        assert cs["matches"] == ["<all_urls>"]
-
-    def test_background_script_is_service_worker(self):
-        """Background is declared as a service worker (v3)."""
-        ext_dir = _EXTENSION_DIR
-        manifest = json.loads((ext_dir / "manifest.json").read_text())
-
-        assert manifest["background"]["type"] == "module"
-        assert "service_worker" in manifest["background"]
-
-    def test_all_extension_files_exist(self):
-        """All documented extension files are present."""
-        ext_dir = _EXTENSION_DIR
-        expected = [
-            "manifest.json",
-            "background.js",
-            "content_script.js",
-            "popup/popup.html",
-            "popup/popup.js",
-            "freehand-nph.py",
-            "README.md",
-        ]
-        for rel_path in expected:
-            full_path = ext_dir / rel_path
-            assert full_path.exists(), f"Missing: {rel_path}"
-
-    def test_nph_script_is_valid_python(self):
-        """The native messaging host Python script has no syntax errors."""
-        import py_compile
-
-        nph_path = _EXTENSION_DIR / "freehand-nph.py"
-        py_compile.compile(str(nph_path), doraise=True)
+        async def fake_playwright():
+            return type("P", (), {"chromium": Chromium()})()
+        monkeypatch.setattr(browser, "_playwright", fake_playwright)
+        monkeypatch.setattr(browser, "_get_chrome_cdp_endpoint", lambda: None)
+        assert asyncio.run(browser._launch_browser()) == ("clean browser", "sandboxed")
 
 
 # ── Integration: Tool registration ───────────────────────────────────────────

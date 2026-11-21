@@ -3,7 +3,17 @@ import secrets as _secrets
 import sqlite3
 import re
 import asyncio
+import sys
 from pathlib import Path
+
+# On Windows, output sent to a file or a service log is often not UTF-8, so
+# printing a name like "Zoë" (or an arrow) failed the request doing it. The
+# first start failed that way. Never let a character stop FreeHand.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):
+        pass
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, Depends, WebSocket, WebSocketDisconnect
@@ -191,7 +201,7 @@ def get_or_create_api_key() -> str:
         settings["api_key"] = key
         _save_settings_for_auth(settings)
         print(
-            "[FreeHand] Generated new api_key (settings.json → api_key).\n"
+            "[FreeHand] Generated new api_key (in vault/settings.json, under api_key).\n"
             "           Pass it as `X-API-Key: <key>` header on all /api/* requests.\n"
             "           Read it: cat vault/settings.json | jq -r .api_key"
         )
@@ -1252,7 +1262,7 @@ async def startup_event():
     all_conns = list_connections()
     for conn in all_conns:
         if is_token_expired(conn["service"], conn["label"]):
-            print(f"[FreeHand] Token expired for {conn['service']} ({conn['label']}) — user should reconnect")
+            print(f"[FreeHand] Token expired for {conn['service']} ({conn['label']}): reconnect it in Connections")
 
 
 PAGE_VERSION_MARK = "__FREEHAND_PAGE_VERSION__"

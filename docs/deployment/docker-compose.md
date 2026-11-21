@@ -55,28 +55,17 @@ freehand-hindsight        Up (healthy)              127.0.0.1:8888->8888/tcp, 12
 
 ## Service map
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│  Docker host                                                     │
-│                                                                  │
-│  ┌──────────────────────────────┐    ┌──────────────────────┐   │
-│  │ open-connector (Node)        │    │ freehand (Python)     │   │
-│  │ :3001 → :3001                │◀──▶│ :8000 → :8000         │   │
-│  │                              │    │                       │   │
-│  │ Healthcheck: wget /health    │    │ Healthcheck: GET /    │   │
-│  └────────────┬─────────────────┘    └──────────┬────────────┘   │
-│               │                                  │               │
-│               ▼                                  ▼               │
-│  ┌────────────────────────┐     ┌────────────────────────────┐  │
-│  │ oc-data (named volume) │     │ ./vault  (bind mount)     │  │
-│  │ OC's SQLite store      │     │ encryption.key             │  │
-│  │                        │     │ connections.db             │  │
-│  │                        │     │ broker_config.json         │  │
-│  └────────────────────────┘     └────────────────────────────┘  │
-│                                                                  │
-│  Round 10 PR 1: agent.db is INSIDE ./vault (no separate mount).  │
-└──────────────────────────────────────────────────────────────────┘
-```
+On the Docker host:
+
+- **open-connector** (Node): port 3001 on this computer, to 3001 inside.
+  Its health check is `wget /health`. It keeps its data (its SQLite store)
+  in the named volume `oc-data`.
+- **freehand** (Python): port 8000 on this computer, to 8000 inside. Its
+  health check is `GET /`. It keeps everything in `./vault` (a folder on
+  this computer, mounted into the container): `encryption.key`,
+  `connections.db`, `broker_config.json` and `agent.db`. There's no
+  separate mount for `agent.db` (Round 10 PR 1).
+- The two talk to each other in both directions.
 
 ## Volume mounts
 

@@ -9,7 +9,7 @@ Too much also makes replies slower, and confuses small models.
 
 | Part | How it's kept small |
 |---|---|
-| FreeHand's instructions | About 1,700 tokens. Imported files are a one-line count per app, not a list. |
+| FreeHand's instructions | About 1,100 tokens with nothing set up (650 in lean mode), more as people, team members and skills are added. Imported files are a one-line count per app, not a list. |
 | Tools | FreeHand's own tools (about 3,000 tokens) always. Add-on tools, such as Composio's 71 Facebook and Instagram tools (about 26,000 tokens), only when the message or the one before it mentions that service. `load_tools` lets the model fetch a group the keywords missed. |
 | Memories | The 15 that matter most for this message (5 in lean mode), not the whole memory. |
 | Chat history | The last 6 exchanges, reset after 3 hours of quiet (the last 2 in lean mode). |
@@ -35,7 +35,8 @@ for now" used 3,574; "What did I get in my inbox today?" went from 33,702
 tokens in 6 calls to 17,833 in 3.
 
 `tests/test_everyday_economy.py` fails if the always-sent tools grow past
-about 1,300 tokens again.
+about 1,300 tokens again, or FreeHand's own instructions (with nothing set
+up) grow past 1,300 tokens, or 800 in lean mode.
 
 ## Lean mode
 

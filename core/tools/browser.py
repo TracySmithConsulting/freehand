@@ -25,8 +25,9 @@ Feature 4 — Checkpoint / restore: save_checkpoint() serialises the page DOM
   restore_checkpoint() restores it without a full page reload, enabling
   iterative form-testing without re-entering data.
 
-Feature 5 — Chrome Extension detection: detects if the FreeHand Chrome Extension
-  is installed and uses its local CDP bridge instead of the remote-debugging port.
+(The FreeHand Chrome Extension bridge was removed in Nov 2026: it never
+worked, and its local port took commands from any website. The Helper
+for Windows is the way to use your real Chrome.)
 """
 
 import asyncio
@@ -156,28 +157,6 @@ def _get_chrome_cdp_endpoint() -> Optional[str]:
     return None
 
 
-def _chrome_extension_bridge_port() -> Optional[int]:
-    """Return the port where the FreeHand Chrome Extension HTTP bridge listens.
-
-    Returns None if the extension is not installed/active (no health-check ping).
-    The extension runs a local HTTP bridge on port 9223 by default.
-    """
-    try:
-        import urllib.request
-
-        req = urllib.request.Request(
-            "http://localhost:9223/health",
-            headers={"User-Agent": "FreeHand/1.0"},
-            method="GET",
-        )
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            if resp.status == 200:
-                return 9223
-    except Exception:
-        pass
-    return None
-
-
 _PLAYWRIGHT: dict = {}
 
 
@@ -208,13 +187,12 @@ async def _launch_browser(headless: bool = True, cdp_overrides: bool = True):
     """Launch a Playwright Chromium browser.
 
     Strategy:
-      1. If cdp_overrides=True, first try Chrome Extension bridge (port 9223).
-         The extension speaks CDP natively — no consent prompt needed.
-      2. Then try existing Chrome via DevToolsActivePort (CDP over WebSocket).
-         Works when Chrome has --remote-debugging-port or --autoConnect.
-         Chrome shows a ONE-TIME consent dialog; after clicking Allow, the
-         DevToolsActivePort file is written and subsequent connects succeed.
-      3. Fall back to launching a fresh Chromium with a clean profile.
+      1. If cdp_overrides=True, try existing Chrome via DevToolsActivePort
+         (CDP over WebSocket). Works when Chrome has --remote-debugging-port
+         or --autoConnect. Chrome shows a ONE-TIME consent dialog; after
+         clicking Allow, the DevToolsActivePort file is written and
+         subsequent connects succeed.
+      2. Fall back to launching a fresh Chromium with a clean profile.
          No access to the user's existing sessions, cookies, or logins.
 
     Returns (browser, strategy_used: str).
@@ -225,18 +203,8 @@ async def _launch_browser(headless: bool = True, cdp_overrides: bool = True):
     from core import member_limits
     if member_limits.is_member():
         cdp_overrides = False
-    # Strategy 1: Chrome Extension bridge
-    if cdp_overrides:
-        ext_port = _chrome_extension_bridge_port()
-        if ext_port:
-            try:
-                ws_url = f"ws://localhost:{ext_port}/devtools/browser/freehand"
-                browser = await p.chromium.connect_over_cdp(ws_url, timeout=5000)
-                return browser, "chrome_extension"
-            except Exception:
-                pass  # Fall through to next strategy
 
-    # Strategy 2: Existing Chrome via DevToolsActivePort
+    # Strategy 1: Existing Chrome via DevToolsActivePort
     if cdp_overrides:
         ws_url = _get_chrome_cdp_endpoint()
         if ws_url:
@@ -246,7 +214,7 @@ async def _launch_browser(headless: bool = True, cdp_overrides: bool = True):
             except Exception:
                 pass  # Fall through to fallback
 
-    # Strategy 3: Fresh sandboxed Chromium
+    # Strategy 2: Fresh sandboxed Chromium
     browser = await p.chromium.launch(headless=headless)
     return browser, "sandboxed"
 
@@ -595,7 +563,7 @@ async def get_axtree(url: str, mode: str = "headless", timeout: int = 30000) -> 
     of the page's accessibility tree, optimised for AI.
 
     Feature 1 (CDP auto-connect) is applied automatically: if Chrome is running
-    with --remote-debugging-port or the FreeHand Chrome Extension is installed,
+    with --remote-debugging-port,
     the existing browser session is used (preserving cookies and logins).
     Otherwise falls back to a fresh sandboxed Chromium.
 
@@ -609,7 +577,7 @@ async def get_axtree(url: str, mode: str = "headless", timeout: int = 30000) -> 
         title (str): Page title
         snapshot (str): Raw aria snapshot string
         elements (list[dict]): Structured element data with refs
-        cdp_strategy (str): "chrome_extension", "existing_chrome", or "sandboxed"
+        cdp_strategy (str): "existing_chrome" or "sandboxed"
         error (str, optional): Error message if any
     """
     try:
@@ -918,7 +886,7 @@ async def get_validation_summary(url: str, mode: str = "headless") -> dict:
         page_title (str): document title
         unknown (bool): True if no structured signal was found
         recommendation (str): guidance for the next action
-        cdp_strategy (str): "chrome_extension", "existing_chrome", or "sandboxed"
+        cdp_strategy (str): "existing_chrome" or "sandboxed"
     """
     result = intercept_action(
         action_type="browser_action",
