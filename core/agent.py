@@ -624,6 +624,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     # A child: guidance for their age, for them only (core/children.py).
     from core import children as _children
     system_prompt += _children.guidance()
+    # Their voice pack: how FreeHand sounds, inside its rules (core/brush_strokes.py).
+    if not member:
+        from core import brush_strokes as _brush_strokes
+        system_prompt += _brush_strokes.voice_prompt()
 
     # Memory (Nov 2026). Long-term: the few facts that matter for this
     # message, from Hindsight. Short-term: the last few exchanges in this

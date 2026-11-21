@@ -1,7 +1,7 @@
 # Brush strokes: sharing ways to make FreeHand your own
 
 Status: **decided** (20 November 2026): Tracy chose the suggestion on all
-four questions at the end. Step 1 is being built.
+four questions at the end. **All four steps are built** (21 November 2026).
 
 ## The idea
 
@@ -219,8 +219,40 @@ That's a later step, and every download would be asked first.
      strokes for themselves".
 2. **The gallery:** the GitHub repository, its review guide, and the
    Brush strokes page listing it.
+   **Built (21 November 2026):** the repository is
+   [TracySmithConsulting/freehand-brush-strokes](https://github.com/TracySmithConsulting/freehand-brush-strokes).
+   The page lists its `index.json`, with a "Show" choice by kind, and marks
+   the ones the person added. The list is kept for ten minutes; if GitHub
+   can't be reached, the last list is shown.
 3. **Voice packs.**
+   **Built (21 November 2026).** A voice pack has a `brush-stroke.json`
+   with a `voice` part (FreeHand's name, a greeting, preferred voices, a
+   language and a speed from 0.5 to 2) and a `style.md` of how it talks
+   (at most 1,500 characters).
+   - **One at a time, for the person who added it.** A new one replaces
+     the old, and the card says so.
+   - **The AI's instructions** get the name and style, inside FreeHand's
+     rules, with a line saying they never change what it may do. Team
+     members aren't affected.
+   - **Reading aloud** uses the closest voice the computer has: a name
+     from the pack, then its language. A voice the person chose under
+     Voice always wins.
+   - **The greeting** shows under the Command Box heading.
 4. **Looks,** with the contrast check.
+   **Built (21 November 2026).** A look has no files: its
+   `brush-stroke.json` has a `look` part with eight colours for daytime
+   (page, cards, writing, hints, buttons, button writing, links, lines),
+   optionally eight for night, and a text size (normal, large or larger).
+   - **Every colour is checked:** it must be like `#1E6E62`. Writing,
+     hints and links on the page and cards need 4.5 to 1, button writing
+     4.5 to 1, and buttons 3 to 1. A look that fails is refused, saying
+     which colours and by how much.
+   - **FreeHand writes the CSS itself,** from the checked colours only.
+   - **The rest of the colours** (highlights, tints, warnings) come from
+     FreeHand's own night set when a look is dark, and its day set when
+     it's light, so they always go with it.
+   - **A look with only daytime colours** leaves FreeHand's own night
+     colours at night.
 
 ## Questions for Tracy
 
