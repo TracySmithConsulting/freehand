@@ -260,9 +260,22 @@ def describe_action(tool: str, args: dict) -> str:
     return f"Use {tool}" + (f" ({shown})" if shown else "")
 
 
+# Browser tools that open a page: only pages on the internet, never files
+# on this computer or its own services (core/tools/browser.py page_refusal).
+PAGE_TOOLS = frozenset({
+    "get_axtree", "extract_text", "take_screenshot", "navigate", "click", "fill",
+    "get_validation_summary", "save_checkpoint", "restore_checkpoint",
+})
+
+
 async def execute_tool(name: str, args: dict) -> dict:
     """Execute a tool by name with the given arguments."""
     try:
+        if name in PAGE_TOOLS and (args.get("url") or name != "restore_checkpoint"):
+            from core.tools.browser import page_refusal
+            refused = await asyncio.to_thread(page_refusal, args.get("url", ""))
+            if refused:
+                return {"content": json.dumps({"error": "not_allowed", "tell_the_person": refused})}
         if name in ("read_docx", "read_xlsx", "read_pptx"):
             from core.tools.office import check_read_allowed
             denied = check_read_allowed(args.get("path", ""))
