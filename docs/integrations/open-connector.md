@@ -207,4 +207,4 @@ Resolution: wait 30s, or restart FreeHand (the cache is per-process and reset on
 
 ## Provenance
 
-Round 7 (28 Sep 2026). Plan at `.hermes/plans/2026-09-28_0930-open-connector-fallback-broker.md`. Commits: `24de6cc`, `a4e8baf`, `28e7ba1`, `93cd3e5`. Tracy raised this after a discussion about Azure subscription requirements — Round 7 makes the 1,500+ non-Azure providers reachable without an Azure subscription.
+Round 7 (28 Sep 2026). Commits: `24de6cc`, `a4e8baf`, `28e7ba1`, `93cd3e5`. Tracy raised this after a discussion about Azure subscription requirements — Round 7 makes the 1,500+ non-Azure providers reachable without an Azure subscription.
