@@ -155,13 +155,13 @@ OC-discovered tools (oc_slack_*, oc_github_*, etc.).
 ## CLI reference
 
 ```bash
-# ── Credentials ────────────────────────────────────────────────
+# Credentials
 freehand credential add <service> --token <key> [--label <name>]
 freehand credential list
 freehand credential remove <service> [--label <name>]
 freehand credential rename <service> --from <old> --to <new>
 
-# ── Tools ──────────────────────────────────────────────────────
+# Tools
 freehand tools refresh
 freehand tools list [service]
 freehand tools enable-writes <service> [--label <name>]

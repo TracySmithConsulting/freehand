@@ -53,6 +53,16 @@ def test_always_sent_tools_stay_small():
     assert len(json.dumps(sent)) // 4 < 1300, "the tools sent with every message have grown again"
 
 
+def test_freehands_instructions_stay_small():
+    """FreeHand's own instructions go with every message too. With nothing
+    set up they were about 1,060 tokens (650 in lean mode) in Nov 2026;
+    nothing stopped them growing. Lines that are only sometimes useful
+    belong in a tool, or loaded by topic (docs/design/economy.md)."""
+    from core.agent_config import build_system_prompt
+    assert len(build_system_prompt(query="Thanks, that's great")) // 4 < 1300,         "FreeHand's instructions have grown: does every message need the new lines?"
+    assert len(build_system_prompt(lean=True, query="Thanks, that's great")) // 4 < 800,         "FreeHand's lean instructions have grown"
+
+
 @pytest.fixture
 def seen(monkeypatch):
     calls = []

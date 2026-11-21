@@ -1,28 +1,36 @@
 # FreeHand
 
-**Your local AI agent, on your devices, in your channels.**
+**An AI helper that works for you, on your own computer, and asks before it acts.**
 
-FreeHand is a local-first AI agent system with OAuth integrations, cross-agent memory import, and Tailscale network access. Built for the South African market — free, open source, no vendor lock-in.
+FreeHand is a free, open source AI agent. You ask it things in plain words,
+by typing or speaking, in its own window or from WhatsApp, Telegram or
+Slack. It can read and write your email, keep your calendar, remember what
+matters to you, do jobs on a schedule, and help on your computer. Before it
+sends, posts or changes anything, it asks you first.
 
-```
-pip install freehand-agent
-freehand start
-# Open http://localhost:8000
-```
+It's made to be easy for everyone: it works with a screen reader and a
+keyboard, and you don't need to have used an AI agent before. It was built
+in South Africa, and it's yours: no subscription, and no company in the
+middle.
 
-## Features
+## What it can do
 
-- **🔌 7 OAuth connectors** — Gmail, Outlook, Zoom, Facebook, Instagram, GitHub, custom email (IMAP/SMTP)
-- **🔗 Cross-agent memory import** — automatically detects and imports memories from Hermes Agent and OpenClaw
-- **🛠 24 agent tools** — 6 write (file writes, OAuth-protected posts/PRs/issues/meetings) + 18 read (email, calendar, sheets, GitHub, Zoom, browser automation, document processing, memory search)
-- **🔒 Permission tiers** — Autonomous, Semi-Autonomous, Full Access with approval workflows
-- **💬 Remote gateways** — Telegram, Slack, WhatsApp
-- **🧠 FTS5 memory search** — full-text search across all vault notes
-- **📅 Task scheduler** — cron-based task execution via scribble sweep
-- **🔐 Encrypted token storage** — Fernet encryption for all OAuth tokens
-- **🌐 Tailscale support** — accessible from anywhere on your tailnet
-- **🔀 Pluggable connector backends** — OpenConnector for the broad catalog, with an optional Composio adapter for Meta OAuth
-- **🖥 Help on your own computer** — the FreeHand Helper for Windows (below)
+- **Talk:** type or speak, and have replies read aloud. From its own
+  window, or from WhatsApp, Telegram and Slack.
+- **Your accounts:** email (Gmail, Outlook, or your own domain), calendar,
+  and more, connected with their own sign-in pages.
+- **Remember:** what you tell it, and what it learns about you. You can see
+  and forget anything on the Memory page.
+- **Scheduled jobs:** reminders, a daily email summary, checking a page.
+- **A team:** helpers with one job each, such as a marketing helper, that
+  can only use what you give them.
+- **Skills and brush strokes:** ways of doing things you can save, share
+  and add from others.
+- **People:** your family or office can each have their own FreeHand
+  space, with children's settings for parents.
+- **Your computer:** the FreeHand Helper for Windows (below).
+- **Any AI model:** a model service you choose, or a model on your own
+  computer with Ollama.
 
 ## FreeHand Helper for Windows
 
@@ -99,147 +107,23 @@ pip install -e ".[all]"
 freehand start
 ```
 
-## Quick Start
+## Safety and privacy
 
-```bash
-# 1. Install and start
-pip install freehand-agent
-freehand start
+- **It asks first.** Sending, posting, paying and deleting wait for your
+  yes. Requests from chat apps ask even at the highest permission level, and
+  deleting always asks.
+- **Your keys stay locked.** Saved sign-ins are encrypted (Fernet:
+  AES-128-CBC with HMAC-SHA256), with a key FreeHand makes on its first run
+  (`vault/encryption.key`). On Linux and Mac, and inside Docker, only your
+  user account can read that file. On Windows without Docker, that setting
+  isn't available, so it relies on the folder's normal Windows permissions.
+- **Chat apps are closed** until you add who may use them.
+- **Nothing is sent to us.** No telemetry and no data collection.
 
-# 2. Open in browser (the command normally does this for you)
-# http://localhost:8000
+## For developers
 
-# 3. Connect your accounts (Settings → OAuth Credentials)
-# See docs/OAUTH_SETUP.md for step-by-step
-```
-
-### Optional Meta authentication through Composio
-
-FreeHand can use Composio's hosted Connect Links for Facebook and Instagram.
-This keeps Meta OAuth credentials and user access tokens outside the local
-FreeHand installation. Set these variables before running `freehand start`:
-
-```text
-COMPOSIO_API_KEY=your-project-key
-COMPOSIO_AUTH_CONFIG_FACEBOOK=your-facebook-auth-config-id
-COMPOSIO_AUTH_CONFIG_INSTAGRAM=your-instagram-auth-config-id
-```
-
-When these are present, the Facebook and Instagram Connect buttons use
-Composio. Other services continue to use FreeHand or OpenConnector as before.
-If they are absent, the existing first-party Meta connector remains available.
-See [docs/integrations/composio.md](docs/integrations/composio.md) for the
-complete setup and hosted-deployment notes.
-
-## CLI Commands
-
-```bash
-freehand start                    # Initialize, start, and open the local UI
-freehand serve                    # Start the web server
-freehand init                     # Initialize database and vault
-freehand sweep                    # Process pending scribble entries
-
-# Connections
-freehand connect <service>        # Start OAuth flow (google, microsoft, zoom, etc.)
-freehand connections              # List all connections
-freehand disconnect <service>     # Remove a connection
-freehand test <service>           # Test if connection is valid
-
-# Agents (cross-agent import)
-freehand agents list              # Detect installed AI agents
-freehand agents import hermes     # Import from Hermes Agent
-freehand agents import openclaw   # Import from OpenClaw
-freehand agents status            # Show import history
-freehand agents remove <agent>    # Remove imported data
-
-# Tools
-freehand office read-docx <path>
-freehand browser axtree <url>
-freehand browser screenshot <url>
-
-# Gateway
-freehand gateway status
-freehand gateway pair <phone>
-```
-
-## OAuth Setup
-
-See [docs/OAUTH_SETUP.md](docs/OAUTH_SETUP.md) for detailed instructions on registering apps with:
-- Google Cloud Console (Gmail, Calendar, Sheets, Meet)
-- Microsoft Entra ID (Outlook, Teams, Calendar)
-- Zoom Marketplace (Meetings, recordings)
-- Meta for Developers (Facebook, Instagram)
-- GitHub (PAT-based, no app registration needed)
-
-## Cross-Agent Memory Import
-
-FreeHand can detect and import memories from other AI agents installed on your system:
-
-| Agent | What gets imported |
-|-------|-------------------|
-| **Hermes Agent** | SOUL.md, AGENTS.md, MEMORY.md, USER.md, config, 20+ skills, state.db (selective) |
-| **OpenClaw** | SOUL.md, IDENTITY.md, MEMORY.md, USER.md, AGENTS.md, journal entries |
-
-Run `freehand agents list` to detect, then `freehand agents import hermes --state` to import.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│  Web UI  (static/index.html)                │
-│  http://localhost:8000                      │
-└──────────────────┬──────────────────────────┘
-                   │ FastAPI
-┌──────────────────▼──────────────────────────┐
-│  server.py     core/                        │
-│  ┌─────────────┴─────────────────────────┐  │
-│  │  /api/agent/command    ← LLM agent    │  │
-│  │  /api/integrations/*   ← OAuth flows  │  │
-│  │  /api/agents/*         ← import mgmt  │  │
-│  │  /api/tools/*          ← tool API     │  │
-│  └───────────────────────────────────────┘  │
-│                                             │
-│  core/agents/     ← detection & import      │
-│  core/oauth/      ← token management        │
-│  core/tools/      ← office, browser, integrations│
-│  core/memory/     ← FTS5 search           │
-│  core/security/   ← permission tiers        │
-│  core/gateway/    ← Telegram/Slack/WhatsApp │
-│  core/scheduler/  ← cron-based sweep      │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  vault/              ← user data            │
-│  agent.db            ← SQLite (FTS5)       │
-│  connections.json    ← encrypted tokens    │
-│  imports/hermes/     ← imported memories   │
-│  imports/openclaw/   ← imported memories   │
-└─────────────────────────────────────────────┘
-```
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/api/v1/status` | Service status |
-| `POST` | `/api/agent/command` | Run agent command |
-| `GET` | `/api/integrations` | List integrations |
-| `GET` | `/api/integrations/{service}/authorize` | Get OAuth URL |
-| `GET` | `/api/integrations/{service}/callback` | OAuth callback (the only one without the key) |
-| `POST` | `/api/integrations/{service}/disconnect` | Remove connection |
-| `GET` | `/api/agents` | Detect installed agents |
-| `POST` | `/api/agents/import` | Import from agent |
-| `GET` | `/api/agents/imported` | Import history |
-
-Full API reference: [API Documentation](https://github.com/TracySmithConsulting/freehand/wiki/API)
-
-## Security
-
-- All OAuth tokens are **encrypted at rest** using Fernet (AES-128-CBC + HMAC-SHA256)
-- Encryption key is auto-generated on first run at `vault/encryption.key` (mode 0o600)
-- Permission tiers enforce approval workflows for write operations
-- Nango removed — all OAuth is handled in-process
-- No telemetry or data collection
+The commands, the connection setup, importing from other agents, how it
+fits together and the API are in [FreeHand for developers](docs/developers.md).
 
 ## Code signing policy
 

@@ -1031,12 +1031,13 @@
 
     /* 7. Easy to tap: bigger ticks and choices, roomier rows. */
     input[type="checkbox"], input[type="radio"] {
-      width: 1.25rem;
-      height: 1.25rem;
+      width: 1.5rem;
+      height: 1.5rem;
       accent-color: var(--plum);
       vertical-align: middle;
       flex: none;
     }
+    input[type="file"] { min-height: 1.5rem; }
     label:has(> input[type="checkbox"]), label:has(> input[type="radio"]) {
       display: flex;
       width: fit-content;
@@ -1853,7 +1854,7 @@
           <p class="error" id="memory-error" role="alert"></p>
         </div>
         <button type="submit">Search</button>
-        <button type="button" id="memory-sync-btn">Re-sync Vault Files</button>
+        <button type="button" id="memory-sync-btn">Look for new notes</button>
       </form>
       <div id="memory-results" aria-live="polite" style="margin-top: 1rem;">
         <p class="empty-state">No search yet.</p>
@@ -2012,10 +2013,10 @@
           <button type="submit">Save</button>
           <div class="form-group" id="key-storage-group">
             <p class="hint" id="api-key-hint">
-              Where to get the key: <code>cat vault/settings.json | jq -r .api_key</code>
-              (auto-generated on first run). Remembering it stores it in this
-              browser only (localStorage), so the Command box, Tier and
-              Approvals panels authenticate automatically.
+              On this computer, FreeHand fills in its key by itself. Somewhere
+              else, the key is in FreeHand's settings file (vault/settings.json),
+              under api_key. Remembering it keeps it in this browser only, so
+              you don't need to type it again.
             </p>
             <button type="button" id="remember-key-btn" class="secondary">
               Remember key in this browser
@@ -5492,7 +5493,7 @@
           var importedAgents = status.agents || [];
 
           if (!agents.length) {
-            el.innerHTML = '<p class="empty-state">No other AI agents detected. FreeHand works standalone.</p>';
+            el.innerHTML = '<p class="empty-state">No other AI helpers found on this computer. You don’t need one.</p>';
             return;
           }
 
@@ -5654,7 +5655,7 @@
         .then(function(res) { return res.json(); })
         .then(function(files) {
           if (!files.length) {
-            el.innerHTML = '<p class="empty-state">No files indexed yet. Try Re-sync Vault Files.</p>';
+            el.innerHTML = '<p class="empty-state">No notes found yet. Choose Look for new notes.</p>';
             return;
           }
           el.innerHTML = '<h3>Indexed vault files (' + files.length + ')</h3>';
@@ -6187,7 +6188,7 @@
             if (g.added) { add(info, 'div', 'You added this one.', 'task-meta'); return; }
             var look = add(row, 'button', 'Look at it', 'secondary');
             look.type = 'button';
-            look.setAttribute('aria-label', 'Look at ' + g.name);
+            look.setAttribute('aria-label', 'Look at it: ' + g.name);
             look.onclick = function() { lookAt(g.link).catch(function(e) { showStatus(e.message, 'error'); }); };
           });
         }
@@ -6642,7 +6643,7 @@
                   .then(function(r) { showLink(p.name, r.link); })
                   .catch(function(e) { showStatus(e.message, 'error'); });
               }],
-             ['Sign out everywhere', 'Sign ' + p.name + ' out everywhere', 'secondary', function() {
+             ['Sign out everywhere', 'Sign out everywhere: ' + p.name, 'secondary', function() {
                 send('POST', '/api/people/' + encodeURIComponent(p.id) + '/sign-out')
                   .then(function(r) { showStatus(p.name + ' is signed out on ' + r.signed_out + ' device(s).', 'success'); })
                   .catch(function(e) { showStatus(e.message, 'error'); });

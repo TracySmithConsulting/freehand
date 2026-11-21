@@ -36,9 +36,10 @@ look and act. That's the Helper.
   the browser was never installed in the image, and a bug closed Playwright
   as soon as it opened a browser. This browser has none of your logins, so
   it's for public websites.
-- **The Chrome extension** (freehand/chrome_extension): meant to drive your
-  real Chrome, but unfinished (Chrome won't load it, and its message
-  passing can't work). The Helper replaces it; see "Your real Chrome".
+- **The Chrome extension:** removed in November 2026. It was meant to drive
+  your real Chrome, but it never worked, and its local port would have
+  taken commands from any website. The Helper replaces it; see "Your real
+  Chrome".
 - **Computer use:** nothing.
 
 ## How it works

@@ -320,3 +320,42 @@ def test_choosing_a_page_in_the_menu_moves_the_focus_there():
     assert "e.preventDefault();" in body
     assert "history.pushState(null, '', '#' + id)" in body
     assert "revealSection(id, true);" in body
+
+
+# ── The rest of the audit (Nov 2026) ─────────────────────────────────────
+
+def test_spoken_names_start_with_the_visible_words():
+    """WCAG 2.5.3: voice control users say what they see."""
+    assert "look.setAttribute('aria-label', 'Look at it: ' + g.name);" in PAGE
+    assert "['Sign out everywhere', 'Sign out everywhere: ' + p.name," in PAGE
+
+
+def test_tick_boxes_are_24_pixels():
+    """WCAG 2.5.8: at least 24 by 24 pixels."""
+    rule = re.search(r'input\[type="checkbox"\], input\[type="radio"\] \{(.*?)\}', PAGE, re.S).group(1)
+    assert "width: 1.5rem;" in rule and "height: 1.5rem;" in rule
+    assert 'input[type="file"] { min-height: 1.5rem; }' in PAGE
+
+
+def test_no_command_line_or_jargon_in_the_everyday_words():
+    for old in ("jq -r .api_key", "Re-sync Vault Files", "No files indexed yet", "works standalone"):
+        assert old not in PAGE, old
+
+
+def test_a_name_that_cant_be_printed_doesnt_stop_freehand():
+    """Windows output to a file or log is often cp1252: printing an arrow or
+    a name like "Zoë" used to fail the request doing it."""
+    import io
+    import server  # noqa: F401  (sets up its output streams on import)
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    stream.reconfigure(errors="backslashreplace")
+    print("Zoë → done", file=stream)
+    stream.flush()
+    assert b"Zo\xeb \u2192 done" in stream.buffer.getvalue()
+    source = (PROJECT_ROOT / "server.py").read_text(encoding="utf-8")
+    assert '_stream.reconfigure(errors="backslashreplace")' in source
+
+
+def test_the_stray_npm_files_and_the_chrome_extension_are_gone():
+    for gone in ("package.json", "package-lock.json", "freehand/chrome_extension"):
+        assert not (PROJECT_ROOT / gone).exists(), gone
