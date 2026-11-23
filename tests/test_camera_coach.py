@@ -137,7 +137,7 @@ def test_the_page_keeps_it_on_this_computer_and_quiet():
     page = (ROOT / "freehand" / "static" / "index.html").read_text(encoding="utf-8")
     script = page[page.index("// ---- The camera coach"):page.index("// ---- Help on my computer")]
     # Only FreeHand's own server is asked, never an outside address.
-    assert re.findall(r"apiFetch\('([^']+)'", script) == ["/api/camera/look", "/api/camera/status"]
+    assert re.findall(r"apiFetch\('([^']+)'", script) == ["/api/camera/look", "/api/camera/status", "/api/camera/ask"]
     assert "http" not in re.sub(r"//[^\n]*", "", script)
     # Said only when it changes, or again after a while.
     assert "r.d.say !== coach.last || Date.now() - coach.lastAt > REPEAT_AFTER" in script
@@ -177,3 +177,119 @@ def test_it_needs_signing_in():
     from fastapi.testclient import TestClient
     from server import app
     assert TestClient(app).post("/api/camera/look", content=jpeg()).status_code == 401
+
+
+# ── Asking the AI about the picture ─────────────────────────────────────
+
+@pytest.fixture
+def model(monkeypatch):
+    """A pretend AI model that can see pictures: keeps what it was sent."""
+    from core import agent
+    sent = []
+
+    async def fake_call_llm(messages, tools=None, config=None):
+        sent.append(messages)
+        return {"content": "Your top has a crease on your left shoulder.",
+                "_usage": {"prompt_tokens": 900, "completion_tokens": 12}}
+    monkeypatch.setattr(agent, "call_llm", fake_call_llm)
+    return sent
+
+
+def big_jpeg():
+    b = io.BytesIO()
+    Image.new("RGB", (1920, 1080), (120, 100, 90)).save(b, "JPEG")
+    return b.getvalue()
+
+
+def run(coro):
+    import asyncio
+    return asyncio.run(coro)
+
+
+def test_ask_sends_one_small_picture_and_the_question(model):
+    import base64
+    said = run(cc.ask(big_jpeg(), "  Is my top   creased? "))
+    assert said["answer"] == "Your top has a crease on your left shoulder."
+    (messages,) = model
+    assert "their own point of view" in messages[0]["content"]
+    text, picture = messages[1]["content"]
+    assert text == {"type": "text", "text": "Is my top creased?"}
+    url = picture["image_url"]["url"]
+    assert url.startswith("data:image/jpeg;base64,")
+    sent = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1])))
+    assert max(sent.size) == cc.ASK_SIDE  # shrunk, to use fewer tokens
+
+
+def test_no_question_asks_how_they_look(model):
+    run(cc.ask(jpeg(), ""))
+    assert model[0][1]["content"][0]["text"] == cc.DEFAULT_QUESTION
+
+
+def test_it_counts_like_a_message(model):
+    from core import ai_use
+    before = ai_use.used()["runs"]
+    run(cc.ask(jpeg(), "What's behind me?"))
+    assert ai_use.used()["runs"] == before + 1
+
+
+def test_over_the_monthly_limit_nothing_is_sent(model, monkeypatch):
+    from core import ai_use
+    monkeypatch.setattr(ai_use, "refusal", lambda *a, **k: "You've used FreeHand's AI 10 times this month.")
+    said = run(cc.ask(jpeg(), "What's behind me?"))
+    assert said == {"answer": "You've used FreeHand's AI 10 times this month.", "over_limit": True}
+    assert model == []
+
+
+def test_a_model_that_cant_see_pictures_is_explained(monkeypatch):
+    from core import agent
+
+    async def blind_model(messages, tools=None, config=None):
+        return {"error": "LLM API error 400: this model does not support image input"}
+    monkeypatch.setattr(agent, "call_llm", blind_model)
+    assert run(cc.ask(jpeg(), "How do I look?")) == {"error": cc.NO_PICTURES}
+
+
+def test_a_service_that_doesnt_answer_says_so(monkeypatch):
+    from core import agent
+
+    async def down(messages, tools=None, config=None):
+        return {"error": "LLM request timed out (120s)"}
+    monkeypatch.setattr(agent, "call_llm", down)
+    assert "didn't answer" in run(cc.ask(jpeg(), "How do I look?"))["error"]
+
+
+def test_bad_pictures_are_refused_before_any_ai(model):
+    assert "error" in run(cc.ask(b"", "x"))
+    assert "error" in run(cc.ask(b"not a picture", "x"))
+    assert model == []
+
+
+def test_the_ask_endpoint(owner, model):
+    import base64
+    still = base64.b64encode(jpeg()).decode()
+    r = owner.post("/api/camera/ask", json={"image": still, "question": "Is my top creased?"})
+    assert r.status_code == 200
+    assert r.json() == {"answer": "Your top has a crease on your left shoulder.", "over_limit": False}
+    bad = owner.post("/api/camera/ask", json={"image": "!!not base64!!"})
+    assert bad.status_code == 400 and bad.json()["detail"] == "That picture couldn't be read."
+
+
+def test_the_page_only_asks_on_a_button_press():
+    page = (ROOT / "freehand" / "static" / "index.html").read_text(encoding="utf-8")
+    script = page[page.index("// ---- Asking the AI about the picture"):page.index("// ---- Help on my computer")]
+    # askAbout is only called from the buttons and the form, never the coach's loop.
+    calls = re.findall(r"askAbout\(", script)
+    assert len(calls) == 3  # its definition, the buttons, the form
+    assert "your AI service" in page[page.index('id="camera-ask-heading"'):page.index('id="camera-answer"')]
+
+
+def test_a_model_that_says_it_cant_see_isnt_passed_off_as_an_answer(monkeypatch):
+    # Some services drop the picture without an error: the model is told to
+    # say NO PICTURE instead of guessing, and FreeHand explains.
+    from core import agent
+
+    async def no_picture(messages, tools=None, config=None):
+        assert "NO PICTURE" in messages[0]["content"]
+        return {"content": "NO PICTURE.", "_usage": {}}
+    monkeypatch.setattr(agent, "call_llm", no_picture)
+    assert run(cc.ask(jpeg(), "How do I look?")) == {"error": cc.NO_PICTURES}

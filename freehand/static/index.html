@@ -536,6 +536,7 @@
     }
 
     .camera-say { font-size: 1.25rem; font-weight: 600; margin-top: 1rem; }
+    .camera-quick button { margin: 0 0.5rem 0.5rem 0; }
     .camera-video:not([hidden]) { display: block; max-width: 320px; width: 100%; margin-top: 1rem; border-radius: var(--r-sketch-sm); }
 
     .agent-bubble {
@@ -1639,6 +1640,26 @@
       </details>
       <!-- A preview for anyone sighted helping. The coach doesn't need it. -->
       <video id="camera-video" class="camera-video" muted playsinline aria-hidden="true" hidden></video>
+      <h3 id="camera-ask-heading" class="stack-top">Ask about the picture</h3>
+      <p>For things the coach can't tell you, like creases, your hair or what's behind you.</p>
+      <p class="hint">This sends one picture from the camera, with your question, to your AI service, and uses
+        your AI the way a message does. It only happens when you press one of these buttons. FreeHand doesn't
+        keep the picture. AI can be wrong, so for anything important, check with someone you trust.</p>
+      <div class="camera-quick" role="group" aria-labelledby="camera-ask-heading">
+        <button type="button" class="secondary" data-camera-ask="What's behind me? Is there anything there I'd want to tidy or hide?">What's behind me?</button>
+        <button type="button" class="secondary" data-camera-ask="Is my top creased, or is anything wrong with my clothes?">Is my top creased?</button>
+        <button type="button" class="secondary" data-camera-ask="How's my hair? Is anything out of place?">How's my hair?</button>
+        <button type="button" class="secondary" data-camera-ask="">How do I look overall?</button>
+      </div>
+      <form id="camera-ask-form" class="stack-top" novalidate>
+        <div class="form-group">
+          <label for="camera-question">Or ask your own question</label>
+          <input type="text" id="camera-question" maxlength="300" autocomplete="off"
+                 placeholder="For example: is there a glare on my glasses?">
+        </div>
+        <button type="submit">Ask</button>
+      </form>
+      <div id="camera-answer" class="stack-top" aria-live="polite"></div>
       <h3 class="stack-top">Tips</h3>
       <ul>
         <li>A good picture shows your head and shoulders, with your eyes about a third of the way down.</li>
@@ -2891,7 +2912,7 @@
         var choice = document.getElementById('camera-choice');
         var choiceGroup = document.getElementById('camera-choice-group');
         var EVERY = 1500, REPEAT_AFTER = 8000;
-        var coach = { stream: null, timer: null, busy: false, last: '', lastAt: 0, canvas: document.createElement('canvas') };
+        var coach = { stream: null, timer: null, busy: false, last: '', lastAt: 0, quietUntil: 0, canvas: document.createElement('canvas') };
         try { speakBox.checked = localStorage.getItem('freehand_camera_speak') === '1'; } catch (e) {}
         speakBox.addEventListener('change', function() {
           try { localStorage.setItem('freehand_camera_speak', speakBox.checked ? '1' : '0'); } catch (e) {}
@@ -2943,7 +2964,7 @@
 
         function look() {
           if (section.classList.contains('page-off')) { stop('The camera coach has stopped, because you left its page.'); return; }
-          if (coach.busy || !video.videoWidth) return;
+          if (coach.busy || !video.videoWidth || Date.now() < coach.quietUntil) return;
           coach.busy = true;
           var c = coach.canvas, scale = Math.min(1, 640 / video.videoWidth);
           c.width = Math.round(video.videoWidth * scale); c.height = Math.round(video.videoHeight * scale);
@@ -2995,17 +3016,112 @@
               coach.timer = setInterval(look, EVERY);
             }).catch(function(err) {
               clearTimeout(asking);
-              var name = err && err.name;
-              tell(name === 'NotAllowedError' ? 'FreeHand isn\'t allowed to use the camera. Allow it in the browser\'s site settings, then try again.'
-                 : name === 'NotFoundError' ? 'No camera was found. Check it\'s plugged in, then try again.'
-                 : name === 'NotReadableError' ? 'Another program is using the camera. Close it, then try again.'
-                 : 'The camera couldn\'t start. Check it\'s plugged in and not in use, then try again.');
+              tell(cameraTrouble(err));
             });
           }).catch(function() { tell('FreeHand didn\'t answer. Is it running?'); });
         }
 
         btn.addEventListener('click', function() {
           if (coach.stream) stop('The camera coach has stopped.'); else start();
+        });
+
+        // ---- Asking the AI about the picture (only on a button press) ----
+        var answerEl = document.getElementById('camera-answer');
+        var askForm = document.getElementById('camera-ask-form');
+        var asking = false;
+
+        function cameraTrouble(err) {
+          var name = err && err.name;
+          return name === 'NotAllowedError' ? 'FreeHand isn\'t allowed to use the camera. Allow it in the browser\'s site settings, then try again.'
+            : name === 'NotFoundError' ? 'No camera was found. Check it\'s plugged in, then try again.'
+            : name === 'NotReadableError' ? 'Another program is using the camera. Close it, then try again.'
+            : 'The camera couldn\'t start. Check it\'s plugged in and not in use, then try again.';
+        }
+
+        function drawFrame(maxSide) {
+          var c = document.createElement('canvas');
+          var scale = Math.min(1, maxSide / Math.max(video.videoWidth, video.videoHeight));
+          c.width = Math.round(video.videoWidth * scale); c.height = Math.round(video.videoHeight * scale);
+          c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+          return c.toDataURL('image/jpeg', 0.85).split(',')[1];
+        }
+
+        // A still from the camera: from the coach if it's on, otherwise the
+        // camera is turned on just long enough to take one, then off again.
+        function grabPicture() {
+          if (coach.stream && video.videoWidth) return Promise.resolve(drawFrame(1280));
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            return Promise.reject(new Error('This browser can\'t use a camera. Try Chrome or Edge.'));
+          }
+          var wanted = choice.value ? { deviceId: { exact: choice.value } } : {};
+          wanted.width = { ideal: 1280 }; wanted.height = { ideal: 720 };
+          return navigator.mediaDevices.getUserMedia({ video: wanted, audio: false }).then(function(stream) {
+            video.srcObject = stream;
+            return video.play().catch(function() {}).then(function() {
+              // A moment for the camera to adjust to the light.
+              return new Promise(function(done) { setTimeout(done, 1200); });
+            }).then(function() {
+              var still = video.videoWidth ? drawFrame(1280) : '';
+              stream.getTracks().forEach(function(t) { t.stop(); });
+              video.srcObject = null;
+              if (!still) throw new Error('The camera didn\'t send a picture. Try again.');
+              return still;
+            });
+          }, function(err) { throw new Error(cameraTrouble(err)); });
+        }
+
+        function showAnswer(text, isError) {
+          answerEl.innerHTML = '';
+          var div = document.createElement('div');
+          div.className = isError ? 'js-error-text' : 'agent-bubble';
+          div.textContent = text;
+          if (speakBox.checked && window.speechSynthesis && !isError) {
+            answerEl.setAttribute('aria-live', 'off');
+            answerEl.appendChild(div);
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(voiceUtterance(text));
+          } else {
+            answerEl.setAttribute('aria-live', 'polite');
+            answerEl.appendChild(div);
+          }
+          // Let the answer be heard before the coach speaks again.
+          coach.quietUntil = Date.now() + Math.max(8000, text.length * 80);
+        }
+
+        function askAbout(question) {
+          if (asking) { showAnswer('Still looking at the last picture. One moment.'); return; }
+          asking = true;
+          coach.quietUntil = Date.now() + 120000;  // the coach stays quiet while FreeHand looks
+          if (window.speechSynthesis) window.speechSynthesis.cancel();
+          answerEl.setAttribute('aria-live', 'polite');
+          answerEl.textContent = 'Taking a picture and looking. This takes a few seconds.';
+          grabPicture().then(function(still) {
+            return apiFetch('/api/camera/ask', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ image: still, question: question })
+            }).then(function(res) {
+              return res.json().catch(function() { return {}; }).then(function(d) {
+                if (!res.ok) throw new Error(d.detail || 'FreeHand couldn\'t look at the picture. Try again.');
+                return d;
+              });
+            });
+          }).then(function(d) {
+            asking = false;
+            showAnswer(d.answer || 'FreeHand didn\'t say anything about the picture. Try asking another way.');
+          }).catch(function(err) {
+            asking = false;
+            showAnswer((err && err.message) || 'FreeHand couldn\'t look at the picture. Try again.', true);
+          });
+        }
+
+        section.querySelectorAll('[data-camera-ask]').forEach(function(b) {
+          b.addEventListener('click', function() { askAbout(b.getAttribute('data-camera-ask')); });
+        });
+        askForm.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var q = document.getElementById('camera-question').value.trim();
+          askAbout(q);
         });
       })();
 
