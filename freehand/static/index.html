@@ -2950,7 +2950,10 @@
             tell('This browser can\'t use a camera. Try Chrome or Edge.');
             return;
           }
-          apiFetch('/api/camera/status').then(function(r) { return r.json(); }).then(function(s) {
+          apiFetch('/api/camera/status').then(function(r) {
+            if (!r.ok) throw new Error('refused');
+            return r.json();
+          }).then(function(s) {
             if (!s.available) { tell('The camera coach isn\'t set up in this FreeHand yet. Updating FreeHand should fix it.'); return; }
             tell('Getting the camera ready. If the browser asks to use your camera, choose Allow.');
             var asking = setTimeout(function() {
