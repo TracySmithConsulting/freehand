@@ -5,6 +5,32 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.32] — 2026-11-23
+
+### Added
+
+- **A camera coach**, on its own page in the menu. It helps you get into
+  the picture for a video, a recording or a video call, without needing
+  to see the screen. Start it, and FreeHand tells you how to move: left
+  or right, closer or further back, camera up or down, head straight,
+  facing the camera, and whether the light is good. Directions are from
+  your own point of view, and they're only said when they change. It all
+  happens on your computer, with no AI and no cost, and the picture isn't
+  sent anywhere or kept.
+- **Ask about the picture,** on the camera coach page: "What's behind
+  me?", "Is my top creased?", "How's my hair?", "How do I look
+  overall?", or your own question. Only when you press a button, one
+  picture and your question go to your AI model, counted like a message.
+  FreeHand doesn't keep the picture. A model that can't see pictures
+  says so, rather than guessing.
+
+### Changed
+
+- **FreeHand's reply now comes straight after the command box,** under
+  its own heading, "FreeHand's reply", with what you asked just above it.
+  It used to come after the voice controls, with no heading. Alt+R takes
+  you back to the reply from anywhere on the page.
+
 ## [0.1.31] — 2026-11-23
 
 ### Changed
