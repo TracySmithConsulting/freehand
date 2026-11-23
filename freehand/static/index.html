@@ -1245,6 +1245,22 @@
         </div>
         <button type="submit">Send</button>
       </form>
+      <!-- The reply comes straight after the box, under its own heading, so
+           it's one keystroke away (H, or Alt+R from anywhere) instead of
+           after all the voice controls. -->
+      <div id="reply-area" class="stack-top">
+        <h3 id="reply-heading" tabindex="-1" aria-keyshortcuts="Alt+R">
+          FreeHand's reply
+          <span class="hotkey-hint" aria-hidden="true">Alt+R</span>
+        </h3>
+        <div id="command-response" aria-live="polite" class="hint"></div>
+        <div id="agent-response" aria-live="polite"><p class="empty-state" id="reply-empty">No reply yet. Replies appear here, and Alt+R brings you back to them.</p></div>
+      </div>
+      <div id="notices-area" class="stack-top" hidden>
+        <h3 id="notices-heading">Messages from FreeHand</h3>
+        <p class="hint">Reminders, and the results of your scheduled tasks.</p>
+        <div id="notices-list" aria-live="polite" aria-labelledby="notices-heading"></div>
+      </div>
       <div class="voice-controls stack-top" role="group" aria-labelledby="voice-heading">
         <h3 id="voice-heading">Voice <span class="hotkey-hint" aria-hidden="true">Alt+V</span></h3>
         <button type="button" id="voice-speak-btn" aria-keyshortcuts="Alt+V">Speak</button>
@@ -1287,13 +1303,6 @@
           If you use a screen reader with speakers, try not to move around the page while it's listening:
           the microphone can hear your screen reader. Headphones stop that completely.
         </p>
-      </div>
-      <div id="command-response" aria-live="polite" class="hint" style="margin-top: 0.5rem;"></div>
-      <div id="agent-response" aria-live="polite" style="margin-top:0.5rem;"></div>
-      <div id="notices-area" class="stack-top" hidden>
-        <h3 id="notices-heading">Messages from FreeHand</h3>
-        <p class="hint">Reminders, and the results of your scheduled tasks.</p>
-        <div id="notices-list" aria-live="polite" aria-labelledby="notices-heading"></div>
       </div>
     </section>
 
@@ -2709,6 +2718,11 @@
             e.preventDefault();
             revealSection('command');
             document.getElementById('command-input').focus();
+          } else if (key === 'r') {
+            // Back to the last reply, to read it again.
+            e.preventDefault();
+            revealSection('command');
+            document.getElementById('reply-heading').focus();
           } else if (key === 's') {
             e.preventDefault();
             revealSection('scribble');
@@ -2747,6 +2761,7 @@
         }
 
         var responseEl = document.getElementById('command-response');
+        responseEl.setAttribute('aria-live', 'polite');
         responseEl.textContent = 'Sending: ' + value;
 
         apiFetch('/api/agent/command', {
@@ -2764,6 +2779,13 @@
         })
         .then(function(data) {
           var responseEl = document.getElementById('agent-response');
+          var emptyNote = document.getElementById('reply-empty');
+          if (emptyNote) emptyNote.remove();
+          // What was asked stays above the reply, so the two read together.
+          // Not announced: the reply itself is what the person is waiting for.
+          var askedEl = document.getElementById('command-response');
+          askedEl.setAttribute('aria-live', 'off');
+          askedEl.textContent = 'You asked: ' + value;
           // When FreeHand reads the reply aloud itself, the screen reader
           // stays quiet, so the two voices don't talk over each other (and
           // the microphone doesn't hear the screen reader in conversation).
