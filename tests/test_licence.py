@@ -32,11 +32,12 @@ def test_container_images_say_agpl():
 
 
 def test_docs_no_longer_call_freehand_mit():
-    # MIT may only appear when saying which old versions were under it.
+    # MIT may only appear when saying which old versions were under it,
+    # or naming the camera coach's model (YuNet), which keeps its own.
     for name in ("README.md", "TRADEMARKS.md", "docs/LICENSING.md"):
         for line in read(name).splitlines():
             if re.search(r"\bMIT\b", line):
-                assert "0.1.30" in line, (name, line)
+                assert "0.1.30" in line or "YuNet" in line, (name, line)
 
 
 def test_page_links_to_the_code():

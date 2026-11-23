@@ -76,7 +76,7 @@ include = ["core*", "freehand*"]
 py-modules = ["cli", "server"]
 
 [tool.setuptools.package-data]
-freehand = ["static/*", "static/*/*", "bridge/*", "bridge/*/*"]
+freehand = ["static/*", "static/*/*", "bridge/*", "bridge/*/*", "models/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

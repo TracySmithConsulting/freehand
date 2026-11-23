@@ -243,6 +243,7 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/brush-strokes/gallery"), ("GET", "/api/brush-strokes/active"),
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
+    ("GET", "/api/camera/status"), ("POST", "/api/camera/look"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
     # A parent's own children: what they chose to see (core/children.py).
     ("GET", "/api/children"),
@@ -754,6 +755,26 @@ async def voice_transcribe(request: Request):
     suffix = {"audio/webm": ".webm", "audio/ogg": ".ogg", "audio/mp4": ".mp4",
               "audio/mpeg": ".mp3", "audio/wav": ".wav", "audio/x-wav": ".wav"}.get(ctype, ".webm")
     result = await asyncio.to_thread(voice.transcribe, data, suffix)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+# ── The camera coach (core/camera_coach.py): on this computer ─────────
+
+@app.get("/api/camera/status", dependencies=[Depends(require_api_key)])
+async def camera_status():
+    from core import camera_coach
+    return {"available": camera_coach.available()}
+
+
+@app.post("/api/camera/look", dependencies=[Depends(require_api_key)])
+async def camera_look(request: Request):
+    """The console's camera coach sends a still from the webcam here (raw
+    JPEG body) and gets back one short direction. Nothing is kept."""
+    from core import camera_coach
+    data = await request.body()
+    result = await asyncio.to_thread(camera_coach.look, data)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
