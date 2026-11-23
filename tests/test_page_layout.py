@@ -96,3 +96,20 @@ def test_plain_words():
         assert gone not in PAGE, gone
     assert "shown === 'default' ? 'Main account'" in PAGE
     assert "niceDate(conn.connected_at)" in PAGE
+
+
+def test_the_reply_comes_straight_after_the_command_box():
+    # It used to come after all the voice controls, with no heading, so a
+    # screen reader user had to hunt for it (Nov 2026).
+    o = outline()
+    assert o.elements["reply-heading"]["tag"] == "h3"
+    assert "reply-area" in o.elements["agent-response"]["inside"]
+    assert "reply-area" in o.elements["command-response"]["inside"]
+    form, reply, voice = (PAGE.index(s) for s in ('id="command-form"', 'id="reply-area"', 'class="voice-controls'))
+    assert form < reply < voice
+
+
+def test_alt_r_goes_back_to_the_reply():
+    heading = outline().elements["reply-heading"]["attrs"]
+    assert heading.get("tabindex") == "-1" and heading.get("aria-keyshortcuts") == "Alt+R"
+    assert re.search(r"key === 'r'\) \{[^}]*getElementById\('reply-heading'\)\.focus\(\)", PAGE)

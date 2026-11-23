@@ -46,6 +46,7 @@ async function main() {
   <main>
     <section id="command">
       <form id="command-form"><input id="command-input"><p class="error" id="command-error" role="alert"></p></form>
+      <h3 id="reply-heading" tabindex="-1">FreeHand's reply</h3>
       <div id="command-response" aria-live="polite" class="hint"></div>
       <div id="agent-response" aria-live="polite"></div>
     </section>
