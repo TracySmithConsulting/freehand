@@ -251,3 +251,94 @@ def look(image: bytes) -> dict:
     ok = face is not None and not tips
     say = "You're well placed: centred, a good distance away, and the light is good." if ok else tips[0]
     return {"say": say, "ok": ok, "tips": tips, "faces": len(faces)}
+
+
+# ── Asking the AI about the picture ─────────────────────────────────────
+# Only when the person asks: one picture and their question go to their
+# AI model, like a message does (and counted like one). FreeHand doesn't
+# keep the picture, and it isn't added to the chat history.
+
+ASK_SIDE = 768          # longest side sent: enough to see creases, fewer tokens
+MAX_QUESTION = 300
+DEFAULT_QUESTION = "How do I look on camera? Is there anything I should fix before recording?"
+ASK_PROMPT = (
+    "You help a blind person check how they look on camera, before they record a video or join a "
+    "video call. Answer their question about the picture plainly and kindly, in no more than four "
+    "short sentences. Be specific and honest about anything they'd want to fix: creases, stains, "
+    "hair, something in their teeth, clutter or anything embarrassing behind them, the light. Say "
+    "left and right from their own point of view, facing the camera (the picture isn't mirrored, so "
+    "the left of the picture is their right). Don't comment on their body, weight or looks unless "
+    "they ask, and don't try to say who anyone in the picture is. If there is no picture, or you "
+    "can't see it, reply with exactly: NO PICTURE"
+)
+NO_PICTURES = ("Your AI model couldn't look at the picture. Some models can't see pictures. Under AI model, "
+               "choose one that can, for example a recent GPT, Claude or Gemini model.")
+
+
+def _small_jpeg(image: bytes) -> Optional[bytes]:
+    from PIL import Image, UnidentifiedImageError
+    try:
+        picture = Image.open(io.BytesIO(image)).convert("RGB")
+    except (UnidentifiedImageError, OSError):
+        return None
+    picture.thumbnail((ASK_SIDE, ASK_SIDE))
+    out = io.BytesIO()
+    picture.save(out, "JPEG", quality=80)
+    return out.getvalue()
+
+
+def _cant_see(error: str) -> bool:
+    e = error.lower()
+    return any(w in e for w in ("image", "vision", "multimodal", "multi-modal", "image_url", "content type")) \
+        or e.startswith("llm api error 400")
+
+
+async def ask(image: bytes, question: str = "") -> dict:
+    """Ask the person's AI model about one still from the camera.
+
+    Returns {"answer"} (or {"answer", "over_limit"} when they've used their
+    AI for now), or {"error"} in plain words.
+    """
+    import base64
+    from core import agent, ai_use, children
+    if not image:
+        return {"error": "No picture came from the camera."}
+    if len(image) > MAX_IMAGE_BYTES:
+        return {"error": "The picture is too big."}
+    question = " ".join((question or "").split())[:MAX_QUESTION] or DEFAULT_QUESTION
+    small = _small_jpeg(image)
+    if small is None:
+        return {"error": "That picture couldn't be read."}
+
+    over = children.refusal() or ai_use.refusal()  # the same limits as a message
+    if over:
+        return {"answer": over, "over_limit": True}
+    children.count_message()
+
+    picture = "data:image/jpeg;base64," + base64.b64encode(small).decode("ascii")
+    messages = [
+        {"role": "system", "content": ASK_PROMPT + children.guidance()},
+        {"role": "user", "content": [
+            {"type": "text", "text": question},
+            {"type": "image_url", "image_url": {"url": picture}},
+        ]},
+    ]
+    reply = await agent.call_llm(messages)
+    if "error" in reply:
+        error = str(reply["error"])
+        return {"error": NO_PICTURES if _cant_see(error) else
+                "Your AI service didn't answer, so I couldn't look. Try again in a moment."}
+    u = reply.get("_usage") or {}
+    usage = {"calls": 1, "prompt_tokens": int(u.get("prompt_tokens") or 0),
+             "completion_tokens": int(u.get("completion_tokens") or 0)}
+    ai_use.count(usage)
+    children.count_ai(usage)
+    answer = agent.strip_reasoning(str(reply.get("content") or "")).strip()
+    if answer.upper().rstrip(".").startswith("NO PICTURE"):
+        # A model that can't see pictures, saying so instead of guessing.
+        return {"error": NO_PICTURES}
+    if not answer:
+        return {"error": "Your AI model didn't say anything about the picture. Try asking another way."}
+    result = {"answer": answer, "usage": usage}
+    children.record("Camera: " + question, {"text": answer, "usage": usage, "tools_used": []})
+    return result

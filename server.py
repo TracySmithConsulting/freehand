@@ -243,7 +243,7 @@ MEMBER_ROUTES = frozenset({
     ("GET", "/api/brush-strokes/gallery"), ("GET", "/api/brush-strokes/active"),
     ("GET", "/api/security/tier"),
     ("GET", "/api/voice/status"), ("POST", "/api/voice/transcribe"),
-    ("GET", "/api/camera/status"), ("POST", "/api/camera/look"),
+    ("GET", "/api/camera/status"), ("POST", "/api/camera/look"), ("POST", "/api/camera/ask"),
     ("GET", "/api/me"), ("POST", "/api/sign-out"),
     # A parent's own children: what they chose to see (core/children.py).
     ("GET", "/api/children"),
@@ -778,6 +778,25 @@ async def camera_look(request: Request):
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@app.post("/api/camera/ask", dependencies=[Depends(require_api_key)])
+async def camera_ask(request: Request):
+    """Ask the AI model about one still from the camera, only when the
+    person asks ("what's behind me?"). JSON: {"image": base64 JPEG,
+    "question": "..."}. The picture isn't kept."""
+    import base64
+    import binascii
+    from core import camera_coach
+    body = await request.json() or {}
+    try:
+        image = base64.b64decode(str(body.get("image") or ""), validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(status_code=400, detail="That picture couldn't be read.")
+    result = await camera_coach.ask(image, str(body.get("question") or ""))
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    return {"answer": result["answer"], "over_limit": bool(result.get("over_limit"))}
 
 
 # ── Easier AI model setup (core/llm_providers.py) ─────────────────────
