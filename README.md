@@ -146,9 +146,12 @@ The full policy: [Code signing policy](docs/code-signing-policy.md).
 
 ## License
 
-FreeHand is free and open source under the MIT licence. See [LICENSE](LICENSE)
-for the legal text and [Using, sharing and changing FreeHand](docs/LICENSING.md)
-for a plain-language guide.
+Copyright (c) 2026 Tracy Smith Consulting.
+
+FreeHand is free and open source under the GNU Affero General Public License,
+version 3 (AGPL-3.0). See [LICENSE](LICENSE) for the legal text and
+[Using, sharing and changing FreeHand](docs/LICENSING.md) for a plain-language
+guide. Versions 0.1.30 and earlier were released under the MIT licence.
 
 You're welcome to fork FreeHand. If you share your own version, please give it
 its own name. See [The FreeHand name](TRADEMARKS.md).

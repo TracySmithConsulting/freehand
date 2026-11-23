@@ -7,7 +7,7 @@ name = "freehand-agent"
 version = "0.1.30"
 description = "FreeHand — Local AI agent with Tailscale access, OAuth integrations, and cross-agent memory import"
 readme = "README.md"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-only" }
 authors = [
     { name = "Tracy Smith", email = "tracy@tracysmith.co.za" },
 ]
@@ -18,7 +18,7 @@ classifiers = [
     "Environment :: Web Environment",
     "Intended Audience :: End Users/Desktop",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",

@@ -263,7 +263,7 @@ Windows warns about unsigned programs. Free ways round that:
    whether a brand-new Store app still shows a warning (Microsoft's own pages
    disagree).
 2. **SignPath Foundation (for the download on GitHub).** Free signing for
-   open-source projects. FreeHand qualifies: MIT licence, public repository.
+   open-source projects. FreeHand qualifies: AGPL-3.0 licence (OSI-approved), public repository.
    Conditions: the app is built by GitHub from the public code (not on a
    PC), everyone involved uses two-step sign-in, the project credits
    SignPath, and the publisher shown is "SignPath Foundation", not Tracy
