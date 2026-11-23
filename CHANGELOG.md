@@ -5,6 +5,21 @@ All notable changes to FreeHand will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.31] — 2026-11-23
+
+### Changed
+
+- **FreeHand's licence is now the GNU AGPL-3.0.** Using FreeHand stays
+  free for everyone. Anyone who shares FreeHand, or runs a changed version
+  for other people over a network, shares its code too. Versions 0.1.30
+  and earlier stay under the MIT licence. docs/LICENSING.md explains it
+  in plain words.
+
+### Added
+
+- **A link to FreeHand's code** at the bottom of every page, as the AGPL
+  asks.
+
 ## [0.1.30] — 2026-11-21
 
 ### Changed
