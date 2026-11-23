@@ -535,6 +535,9 @@
       letter-spacing: 0.03em;
     }
 
+    .camera-say { font-size: 1.25rem; font-weight: 600; margin-top: 1rem; }
+    .camera-video:not([hidden]) { display: block; max-width: 320px; width: 100%; margin-top: 1rem; border-radius: var(--r-sketch-sm); }
+
     .agent-bubble {
       background: var(--surface-sunken);
       border: 1.5px dashed var(--line-strong);
@@ -1086,6 +1089,7 @@
           <li><a href="#tasks">Scheduled jobs</a></li>
           <li><a href="#team">Team</a></li>
           <li><a href="#brush-strokes">Brush strokes</a></li>
+          <li><a href="#camera-coach">Camera coach</a></li>
           <li id="nav-family" hidden><a href="#family">Your children</a></li>
           <li data-advanced data-owner-only><a href="#people">People</a></li>
           <li data-advanced><a href="#memory">Memory</a></li>
@@ -1608,6 +1612,42 @@
       </div>
       <h3 class="stack-top" id="bs-added-heading" tabindex="-1">Brush strokes you've added</h3>
       <div id="bs-list" aria-live="polite"><p class="empty-state">None yet.</p></div>
+    </section>
+
+    <!-- The camera coach (core/camera_coach.py): getting into the picture
+         without needing to see it. Everything stays on this computer. -->
+    <section id="camera-coach" data-page aria-labelledby="camera-heading">
+      <h2 id="camera-heading">Camera coach</h2>
+      <p>Help getting into the picture for a video, a recording or a video call, without needing to see the
+        screen. Start the coach, and FreeHand tells you how to move: left or right, closer or further back,
+        whether your head is straight, and whether the light is good.</p>
+      <p class="hint">Everything happens on this computer. The picture isn't sent anywhere and nothing is kept.
+        The coach doesn't use your AI model, so it costs nothing.</p>
+      <div class="form-group">
+        <label><input type="checkbox" id="camera-speak"> Say the directions aloud in FreeHand's voice</label>
+        <p class="hint">When this is off, your screen reader and braille display get the directions instead.</p>
+      </div>
+      <div class="form-group" id="camera-choice-group" hidden>
+        <label for="camera-choice">Camera</label>
+        <select id="camera-choice"></select>
+      </div>
+      <button type="button" id="camera-start-btn">Start the camera coach</button>
+      <p id="camera-say" class="camera-say" role="status" aria-live="polite"></p>
+      <details id="camera-more" class="stack-top" hidden>
+        <summary>Everything the coach noticed</summary>
+        <ul id="camera-tips"></ul>
+      </details>
+      <!-- A preview for anyone sighted helping. The coach doesn't need it. -->
+      <video id="camera-video" class="camera-video" muted playsinline aria-hidden="true" hidden></video>
+      <h3 class="stack-top">Tips</h3>
+      <ul>
+        <li>A good picture shows your head and shoulders, with your eyes about a third of the way down.</li>
+        <li>Light works best in front of you, a little above the camera. A window behind you makes your face dark.</li>
+        <li>The coach checks about every second and a half. It only tells you something when it changes, and
+          reminds you if it hasn't changed for a while.</li>
+        <li>If your recording program can't get the camera while the coach is on, stop the coach first.
+          You'll still be in the same spot.</li>
+      </ul>
     </section>
 
     <!-- Your children: what their parents chose to see (core/children.py). Shown only to parents. -->
@@ -2834,6 +2874,140 @@
           showStatus('Command failed: ' + err.message, 'error');
         });
       });
+
+      // ---- The camera coach (core/camera_coach.py) ----
+      // A still from the webcam goes to FreeHand on this computer about every
+      // 1.5 seconds; the answer is one short direction. It's only said when it
+      // changes (or again after a while), so the screen reader isn't flooded.
+      (function() {
+        var section = document.getElementById('camera-coach');
+        var btn = document.getElementById('camera-start-btn');
+        if (!section || !btn) return;
+        var video = document.getElementById('camera-video');
+        var sayEl = document.getElementById('camera-say');
+        var tipsEl = document.getElementById('camera-tips');
+        var moreEl = document.getElementById('camera-more');
+        var speakBox = document.getElementById('camera-speak');
+        var choice = document.getElementById('camera-choice');
+        var choiceGroup = document.getElementById('camera-choice-group');
+        var EVERY = 1500, REPEAT_AFTER = 8000;
+        var coach = { stream: null, timer: null, busy: false, last: '', lastAt: 0, canvas: document.createElement('canvas') };
+        try { speakBox.checked = localStorage.getItem('freehand_camera_speak') === '1'; } catch (e) {}
+        speakBox.addEventListener('change', function() {
+          try { localStorage.setItem('freehand_camera_speak', speakBox.checked ? '1' : '0'); } catch (e) {}
+        });
+
+        function tell(text) {
+          coach.last = text; coach.lastAt = Date.now();
+          if (speakBox.checked && window.speechSynthesis) {
+            // FreeHand's voice says it, so the screen reader stays quiet.
+            sayEl.setAttribute('aria-live', 'off');
+            sayEl.textContent = text;
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.speak(voiceUtterance(text));
+          } else {
+            sayEl.setAttribute('aria-live', 'polite');
+            // Clear first, so the same words are read again when repeated.
+            sayEl.textContent = '';
+            setTimeout(function() { sayEl.textContent = text; }, 50);
+          }
+        }
+
+        function stop(message) {
+          clearInterval(coach.timer); coach.timer = null;
+          if (coach.stream) coach.stream.getTracks().forEach(function(t) { t.stop(); });
+          coach.stream = null; coach.busy = false; coach.last = '';
+          video.srcObject = null; video.hidden = true;
+          btn.textContent = 'Start the camera coach';
+          if (message) tell(message);
+        }
+
+        function fillCameras() {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+          navigator.mediaDevices.enumerateDevices().then(function(devices) {
+            var cams = devices.filter(function(d) { return d.kind === 'videoinput'; });
+            if (cams.length < 2) { choiceGroup.hidden = true; return; }
+            var current = coach.stream && coach.stream.getVideoTracks()[0];
+            var currentId = current && current.getSettings ? current.getSettings().deviceId : '';
+            choice.innerHTML = '';
+            cams.forEach(function(c, i) {
+              var o = document.createElement('option');
+              o.value = c.deviceId; o.textContent = c.label || ('Camera ' + (i + 1));
+              if (c.deviceId === currentId) o.selected = true;
+              choice.appendChild(o);
+            });
+            choiceGroup.hidden = false;
+          }).catch(function() {});
+        }
+        choice.addEventListener('change', function() { if (coach.stream) { stop(''); start(); } });
+
+        function look() {
+          if (section.classList.contains('page-off')) { stop('The camera coach has stopped, because you left its page.'); return; }
+          if (coach.busy || !video.videoWidth) return;
+          coach.busy = true;
+          var c = coach.canvas, scale = Math.min(1, 640 / video.videoWidth);
+          c.width = Math.round(video.videoWidth * scale); c.height = Math.round(video.videoHeight * scale);
+          c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+          c.toBlob(function(blob) {
+            if (!blob || !coach.stream) { coach.busy = false; return; }
+            apiFetch('/api/camera/look', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob })
+              .then(function(res) { return res.json().then(function(d) { return { ok: res.ok, d: d }; }); })
+              .then(function(r) {
+                coach.busy = false;
+                if (!coach.stream) return;
+                if (!r.ok) { stop((r.d && r.d.detail) || 'The camera coach hit a problem, so it has stopped.'); return; }
+                tipsEl.innerHTML = '';
+                (r.d.tips && r.d.tips.length ? r.d.tips : [r.d.say]).forEach(function(t) {
+                  var li = document.createElement('li'); li.textContent = t; tipsEl.appendChild(li);
+                });
+                moreEl.hidden = false;
+                if (r.d.say !== coach.last || Date.now() - coach.lastAt > REPEAT_AFTER) tell(r.d.say);
+              })
+              .catch(function() { coach.busy = false; });
+          }, 'image/jpeg', 0.8);
+        }
+
+        function start() {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            tell('This browser can\'t use a camera. Try Chrome or Edge.');
+            return;
+          }
+          apiFetch('/api/camera/status').then(function(r) {
+            if (!r.ok) throw new Error('refused');
+            return r.json();
+          }).then(function(s) {
+            if (!s.available) { tell('The camera coach isn\'t set up in this FreeHand yet. Updating FreeHand should fix it.'); return; }
+            tell('Getting the camera ready. If the browser asks to use your camera, choose Allow.');
+            var asking = setTimeout(function() {
+              tell('Still waiting for permission to use the camera. The browser\'s question is near the address bar. ' +
+                   'In Chrome, press Alt+Shift+A to reach it, then choose Allow.');
+            }, 6000);
+            var wanted = choice.value ? { deviceId: { exact: choice.value } } : {};
+            wanted.width = { ideal: 1280 }; wanted.height = { ideal: 720 };
+            navigator.mediaDevices.getUserMedia({ video: wanted, audio: false }).then(function(stream) {
+              clearTimeout(asking);
+              coach.stream = stream;
+              video.srcObject = stream; video.hidden = false;
+              video.play().catch(function() {});
+              btn.textContent = 'Stop the camera coach';
+              tell('The camera coach is on. Sit where you\'ll be recording, facing the camera.');
+              fillCameras();
+              coach.timer = setInterval(look, EVERY);
+            }).catch(function(err) {
+              clearTimeout(asking);
+              var name = err && err.name;
+              tell(name === 'NotAllowedError' ? 'FreeHand isn\'t allowed to use the camera. Allow it in the browser\'s site settings, then try again.'
+                 : name === 'NotFoundError' ? 'No camera was found. Check it\'s plugged in, then try again.'
+                 : name === 'NotReadableError' ? 'Another program is using the camera. Close it, then try again.'
+                 : 'The camera couldn\'t start. Check it\'s plugged in and not in use, then try again.');
+            });
+          }).catch(function() { tell('FreeHand didn\'t answer. Is it running?'); });
+        }
+
+        btn.addEventListener('click', function() {
+          if (coach.stream) stop('The camera coach has stopped.'); else start();
+        });
+      })();
 
       // ---- Help on my computer (the FreeHand Helper) ----
       (function() {

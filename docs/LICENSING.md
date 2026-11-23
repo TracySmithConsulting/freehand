@@ -85,7 +85,9 @@ who has those versions can keep using them under it. Every version after
 **What about the other software FreeHand uses?**
 FreeHand is built with other open-source projects, such as OpenConnector,
 Hindsight and faster-whisper. Each one keeps its own licence, which you'll
-find with that project.
+find with that project. The camera coach's face-finding model ships inside
+FreeHand, under its own licence (YuNet, MIT licence): see
+[freehand/models](../freehand/models/README.md).
 
 ## Questions?
 
