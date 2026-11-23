@@ -1,6 +1,6 @@
 # The FreeHand name
 
-The FreeHand **code** is free to use under the [MIT licence](LICENSE).
+The FreeHand **code** is free to use under the [GNU AGPL](LICENSE).
 The FreeHand **name** and logo are not covered by that licence. They belong to
 Tracy Smith Consulting, so that people always know which FreeHand is the
 original and who stands behind it.
@@ -44,7 +44,8 @@ ours.
 
 FreeHand took a lot of work to build. If your project uses or is based on
 it, please say so where people will see it. We ask this as a courtesy; the
-licence itself only requires you to keep the copyright notice in the code.
+licence itself asks you to keep the copyright notice and share your code,
+not to credit FreeHand where people will see it.
 
 - **Trying it out or using it privately:** no credit needed. Enjoy it.
 - **Sharing your own version, or building a product or service on it:**
