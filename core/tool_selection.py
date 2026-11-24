@@ -41,6 +41,7 @@ BUILTIN_GROUPS: dict[str, tuple[str, ...]] = {
     "instagram": ("list_instagram_accounts", "post_to_instagram"),
     "documents": ("read_docx", "write_docx", "read_xlsx", "read_pptx"),
     "files": ("read_text_file", "list_folder", "bring_in_new_memories"),
+    "walkthroughs": ("walkthrough_report",),
     "sheets": ("read_sheets", "read_sheet_range"),
     "browser": ("get_axtree", "take_screenshot", "navigate", "click", "fill",
                 "get_validation_summary", "save_checkpoint", "restore_checkpoint",
@@ -61,6 +62,7 @@ GROUP_SUMMARIES = {
     "documents": "Word, Excel and PowerPoint files",
     "files": "the person's notes and folders: read Markdown or text files, list a folder, bring in what's new from Hermes, OpenClaw or their notes",
     "sheets": "Google Sheets",
+    "walkthroughs": "screen reader walkthroughs: a draft report, transcript and captions from a recording",
     "browser": "work on web pages: click, fill in forms, screenshots",
 }
 
@@ -84,6 +86,8 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "documents": ("doc", "docx", "word", "document", "documents", "excel", "xlsx", "spreadsheet",
                   "powerpoint", "pptx", "slides", "presentation", "file", "files"),
     "sheets": ("sheet", "sheets", "spreadsheet"),
+    "walkthroughs": ("walkthrough", "walkthroughs", "walk-through", "recording", "recordings", "transcript",
+                     "transcribe", "captions", "subtitles", "report"),
     "files": ("folder", "folders", "vault", "vaults", "note", "notes", "markdown", "md", "txt", "text",
               "csv", "file", "files", "hermes", "openclaw", "wiki", "wikis", "obsidian", "import",
               "memories", "pull"),
