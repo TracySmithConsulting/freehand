@@ -87,6 +87,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
     && chmod -R a+rX /ms-playwright
 
+# LibreOffice without a screen, for documents (core/doc_render.py): saving
+# accessible (tagged) PDFs, and turning pages and slides into pictures for
+# the look check (with poppler's pdftoppm). Fonts that match Office's
+# (Carlito for Calibri, Caladea for Cambria, Liberation for Arial, Times
+# and Courier), so pages come out as they would in Word and PowerPoint.
+RUN apt-get update && apt-get install -y --no-install-recommends         libreoffice-writer-nogui libreoffice-impress-nogui poppler-utils         fonts-crosextra-carlito fonts-crosextra-caladea fonts-liberation2 fonts-dejavu-core     && rm -rf /var/lib/apt/lists/*
+
 # Copy the FreeHand source. The vault/ directory is intentionally NOT
 # copied — it's mounted as a volume at runtime so encryption.key,
 # connections.db, broker_config.json, credential_store.json, AND

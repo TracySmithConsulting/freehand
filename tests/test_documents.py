@@ -158,8 +158,8 @@ def test_listing(work):
     (work / "notes.md").write_text("# Hi")
     (work / "~$a.docx").write_text("lock file")
     (work / "photo.jpg").write_bytes(b"x")
-    names = [f["name"] for f in d.list_files()["files"]]
-    assert names == ["a.docx", "notes.md"]
+    listed = [(f["name"], f["kind"]) for f in d.list_files()["files"]]
+    assert listed == [("a.docx", "Word"), ("notes.md", "Markdown"), ("photo.jpg", "picture")]
 
 
 # ── Reading and checking ────────────────────────────────────────────────
