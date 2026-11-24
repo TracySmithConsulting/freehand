@@ -270,7 +270,8 @@ PAGE_TOOLS = frozenset({
 # The work folder's tools (core/documents.py).
 WORK_TOOLS = frozenset({
     "work_files", "document_outline", "document_check", "document_edit", "document_clean",
-    "document_combine", "document_create", "document_fix_accessibility",
+    "document_combine", "document_create", "document_fix_accessibility", "document_look",
+    "document_save_pdf", "document_picture",
 })
 
 
@@ -361,6 +362,20 @@ async def execute_tool(name: str, args: dict) -> dict:
                     result = await asyncio.to_thread(
                         documents.create, str(args.get("output") or ""), str(args.get("markdown") or ""),
                         str(args.get("kind") or "word"), str(args.get("title") or ""))
+                elif name == "document_look":
+                    from core import doc_render
+                    result = await doc_render.look(str(args.get("file") or ""), args.get("pages"),
+                                                   str(args.get("question") or ""))
+                elif name == "document_save_pdf":
+                    from core import doc_render
+                    result = await asyncio.to_thread(doc_render.save_pdf, str(args.get("file") or ""),
+                                                     str(args.get("output") or ""))
+                elif name == "document_picture":
+                    from core import doc_images
+                    result = await doc_images.add_picture(
+                        str(args.get("prompt") or ""), str(args.get("picture") or ""), str(args.get("file") or ""),
+                        args.get("after_paragraph"), args.get("slide"), str(args.get("alt_text") or ""),
+                        str(args.get("aspect") or "16:9"), str(args.get("output") or ""))
                 else:
                     result = await documents.fix(str(args.get("file") or ""), str(args.get("title") or ""),
                                                  alt_text=args.get("alt_text", True) is not False,

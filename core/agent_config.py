@@ -255,6 +255,9 @@ TOOL_REGISTRY: Dict[str, str] = {
     "document_combine": "read",
     "document_create": "read",
     "document_fix_accessibility": "read",
+    "document_look": "read",
+    "document_save_pdf": "read",
+    "document_picture": "read",
     "list_calendar_events": "read",
     "create_calendar_event": "write",
     "read_sheets":        "read",
@@ -609,9 +612,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "output": {"type": "string", "description": "What to call the new file (optional)"}}, "required": ["file"]},
     },
     "document_combine": {
-        "description": ("Combine files from the work folder into one new Word document, in the order given. Word "
-                        "files keep their formatting and pictures; PDF, Markdown, text and Excel come in as text, "
-                        "headings and tables."),
+        "description": ("Combine files from the work folder into one new document, in the order given. Into Word: "
+                        "Word files keep their formatting and pictures; PDF, Markdown, text and Excel come in as "
+                        "text, headings and tables. Into PowerPoint (all PowerPoints, or an output ending .pptx): "
+                        "slides keep their text, pictures and speaker notes, and Markdown notes become slides."),
         "parameters": {"type": "object", "properties": {
             "files": {"type": "array", "items": {"type": "string"}, "description": "The files, in order"},
             "output": {"type": "string", "description": "What to call the combined document"},
@@ -641,6 +645,41 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "title": {"type": "string", "description": "The title to set, if it has none (optional)"},
             "alt_text": {"type": "boolean", "description": "Write alt text for pictures (default true)"},
             "output": {"type": "string", "description": "What to call the new file (optional)"}}, "required": ["file"]},
+    },
+    "document_look": {
+        "description": ("See how a Word document, PowerPoint or PDF in the work folder looks: pictures of up to six "
+                        "pages or slides go to the AI model, which says what looks wrong (text cut off or "
+                        "overlapping, hard to read, pictures stretched or out of place, near-empty pages). Uses AI."),
+        "parameters": {"type": "object", "properties": {
+            "file": {"type": "string", "description": "The file's name in the work folder"},
+            "pages": {"type": "string", "description": "Which pages or slides, e.g. \"1-3, 7\" (default: the first few)"},
+            "question": {"type": "string", "description": "Anything in particular to look at (optional)"}},
+            "required": ["file"]},
+    },
+    "document_save_pdf": {
+        "description": ("Save a Word document or PowerPoint from the work folder as an accessible (tagged) PDF beside "
+                        "it, and say whether it has a title and language."),
+        "parameters": {"type": "object", "properties": {
+            "file": {"type": "string", "description": "The file's name in the work folder"},
+            "output": {"type": "string", "description": "What to call the PDF (optional)"}},
+            "required": ["file"]},
+    },
+    "document_picture": {
+        "description": ("Make a picture from a description (with the person's image service: Agnes, MiniMax or "
+                        "OpenRouter), or use a picture already in the work folder (e.g. their photo), and save it "
+                        "there. Name a Word document or PowerPoint to put it in a new copy of that file, after a "
+                        "paragraph or on a slide (or a new slide). Alt text is written by the AI looking at the "
+                        "actual picture, unless given. Making a picture costs a little, like an AI message."),
+        "parameters": {"type": "object", "properties": {
+            "prompt": {"type": "string", "description": "What the picture should show (to make one)"},
+            "picture": {"type": "string", "description": "A picture in the work folder to use instead (optional)"},
+            "file": {"type": "string", "description": "A Word document or PowerPoint to put it in (optional)"},
+            "after_paragraph": {"type": "integer", "description": "Word: put it after this paragraph number"},
+            "slide": {"type": "integer", "description": "PowerPoint: put it on this slide (default: a new slide)"},
+            "alt_text": {"type": "string", "description": "The alt text (optional: otherwise the AI writes it)"},
+            "aspect": {"type": "string", "enum": ["16:9", "1:1", "4:3", "3:4", "9:16"]},
+            "output": {"type": "string", "description": "What to call the new document copy (optional)"}},
+            "required": []},
     },
     "walkthrough_report": {
         "description": ("Make a draft screen reader walkthrough report from a recording in the person's "
@@ -1046,7 +1085,7 @@ You have access to the following tool categories:
 - read_text_file(path) — Read Markdown, text and CSV files
 - list_folder(path) — See what's in a folder FreeHand may read
 - walkthrough_report(recording, product, client, tasks) — Draft a screen reader walkthrough report from a recording
-- work_files, document_outline, document_check, document_edit, document_clean, document_combine, document_create, document_fix_accessibility — Work on documents in the person's work folder (results are always new files)
+- work_files, document_outline, document_check, document_edit, document_clean, document_combine, document_create, document_fix_accessibility, document_look, document_save_pdf, document_picture — Work on documents in the person's work folder (results are always new files)
 - bring_in_new_memories(source) — Bring in what's new from Hermes, OpenClaw or the person's notes
 
 ### Browser Tools

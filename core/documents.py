@@ -40,6 +40,8 @@ log = logging.getLogger("freehand.documents")
 IN_DOCKER = Path("/host/work")
 KINDS = {".docx": "Word", ".pptx": "PowerPoint", ".pdf": "PDF", ".xlsx": "Excel",
          ".md": "Markdown", ".markdown": "Markdown", ".txt": "text", ".csv": "CSV"}
+PICTURES = {".png": "picture", ".jpg": "picture", ".jpeg": "picture", ".gif": "picture", ".bmp": "picture",
+            ".webp": "picture"}
 MAX_TEXT = 60_000
 MAX_PARAGRAPHS = 400
 MAX_ALT_PICTURES = 20
@@ -159,8 +161,9 @@ def list_files() -> dict:
         raise Refused(NO_FOLDER)
     files = []
     for p in sorted(place.rglob("*")):
-        if p.is_file() and p.suffix.lower() in KINDS and not p.name.startswith("~$"):
-            files.append({"name": _rel(p), "kind": KINDS[p.suffix.lower()],
+        kinds = {**KINDS, **PICTURES}
+        if p.is_file() and p.suffix.lower() in kinds and not p.name.startswith("~$"):
+            files.append({"name": _rel(p), "kind": kinds[p.suffix.lower()],
                           "size_kb": round(p.stat().st_size / 1024)})
     return {"folder": "your work folder", "files": files[:300],
             "note": "FreeHand saves every result as a new file here, and never changes these."}
@@ -891,6 +894,8 @@ def combine(names: List[str], output: str, title: str = "", headings: bool = Fal
     paths = [resolve(n) for n in names]
     if not output:
         raise Refused("Say what to call the combined document.")
+    if output.lower().endswith(".pptx") or all(p.suffix.lower() == ".pptx" for p in paths):
+        return _combine_pptx(paths, output, title)
     first_word = next((p for p in paths if p.suffix.lower() == ".docx"), None)
     doc = Document(str(first_word)) if first_word is paths[0] else Document()
     if first_word is not paths[0]:
@@ -1236,3 +1241,77 @@ async def _alt_for_docx(doc, docprs) -> int:
         docpr.set("descr", said or "Decorative")
         written += 1
     return written
+
+
+# ── Combining PowerPoints ──────────────────────────────────────────────
+
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+
+
+def _copy_slide(source_slide, target_prs) -> List[str]:
+    """Copy one slide's shapes, pictures and speaker notes into a new slide
+    at the end of target_prs. Returns what couldn't come across."""
+    lost = []
+    name = source_slide.slide_layout.name
+    layout = next((l for l in target_prs.slide_layouts if l.name == name), None) or         next((l for l in target_prs.slide_layouts if l.name.lower() == "blank"), target_prs.slide_layouts[-1])
+    new = target_prs.slides.add_slide(layout)
+    for placeholder in list(new.placeholders):
+        placeholder._element.getparent().remove(placeholder._element)
+    tree = new.shapes._spTree
+    for shape in source_slide.shapes:
+        el = copy.deepcopy(shape._element)
+        if list(el.iter("{http://schemas.openxmlformats.org/drawingml/2006/chart}chart")):
+            lost.append("a chart")
+            continue
+        if list(el.iter(f"{{{P_NS}}}oleObj")) or list(el.iter(f"{{{A}}}videoFile")) or list(el.iter(f"{{{A}}}audioFile")):
+            lost.append("a video, sound or embedded object")
+            continue
+        for blip in el.iter(f"{{{A}}}blip"):
+            rid = blip.get(f"{{{R}}}embed")
+            if rid and rid in source_slide.part.rels:
+                _, new_rid = new.part.get_or_add_image_part(io.BytesIO(source_slide.part.rels[rid].target_part.blob))
+                blip.set(f"{{{R}}}embed", new_rid)
+        for link in list(el.iter(f"{{{A}}}hlinkClick")):
+            link.attrib.pop(f"{{{R}}}id", None)  # the link's text stays; its address can't come across safely
+        tree.append(el)
+        if shape.is_placeholder and None not in (shape.left, shape.top, shape.width, shape.height):
+            # Placeholders take their place from the layout: keep where it was.
+            copied = new.shapes[-1]
+            copied.left, copied.top, copied.width, copied.height = shape.left, shape.top, shape.width, shape.height
+    if source_slide.has_notes_slide:
+        notes = source_slide.notes_slide.notes_text_frame.text
+        if notes.strip():
+            new.notes_slide.notes_text_frame.text = notes
+    return lost
+
+
+def _combine_pptx(paths: List[Path], output: str, title: str = "") -> dict:
+    from pptx import Presentation
+    first = paths[0]
+    if first.suffix.lower() == ".pptx":
+        prs, rest = Presentation(str(first)), paths[1:]
+    else:
+        from pptx.util import Inches
+        prs, rest = Presentation(), paths
+        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    lost = []
+    for p in rest:
+        kind = p.suffix.lower()
+        if kind == ".pptx":
+            source = Presentation(str(p))
+        elif kind in (".md", ".markdown", ".txt"):
+            source = _slides_from_markdown(p.read_text(encoding="utf-8", errors="replace"))
+        else:
+            raise Refused("PowerPoints can be combined with other PowerPoints and with Markdown or text notes.")
+        if source.slide_width != prs.slide_width or source.slide_height != prs.slide_height:
+            lost.append(f"\"{p.name}\" is a different shape (e.g. 4:3 and 16:9), so its slides may need adjusting")
+        for slide in source.slides:
+            lost += [f"{what} on a slide from \"{p.name}\"" for what in _copy_slide(slide, prs)]
+    if title:
+        prs.core_properties.title = title
+    out = output_for(paths[0], "combined", ".pptx", name=output)
+    prs.save(str(out))
+    return {"saved_as": _rel(out), "from": [_rel(p) for p in paths], "slides": len(prs.slides),
+            **({"not_carried_over": sorted(set(lost))} if lost else {}),
+            "note": "Slides keep their text, pictures and speaker notes. Fonts and colours from another "
+                    "presentation's design may change. Use document_look to check. The originals are unchanged."}
