@@ -53,11 +53,11 @@ class TestListAvailableTools:
         github_activity, read only, for team members (35 -> 36), then
         web_search (36 -> 37), then send_email (37 -> 38), then
         create_calendar_event (38 -> 39), the email, notes and folder tools
-        (39 -> 45), and walkthrough_report (Nov 2026: 46)."""
+        (39 -> 45), walkthrough_report (46) and the work folder's 8 (Nov 2026: 54)."""
         tools = agent_config.list_available_tools()
         names = {t["function"]["name"] for t in tools}
         assert names == set(agent_config.TOOL_REGISTRY.keys())
-        assert len(tools) == 46
+        assert len(tools) == 54
 
     def test_write_tools_visible(self):
         """The previously-dead write tools (post_to_facebook etc.) are now visible."""

@@ -245,6 +245,16 @@ TOOL_REGISTRY: Dict[str, str] = {
     # files (a transcript, captions, a draft report) into the Walkthroughs
     # folder, beside the recording; never changes or deletes anything there.
     "walkthrough_report": "read",
+    # The work folder (core/documents.py): reading, and saving results only as
+    # NEW files beside the originals; nothing there is ever changed or deleted.
+    "work_files": "read",
+    "document_outline": "read",
+    "document_check": "read",
+    "document_edit": "read",
+    "document_clean": "read",
+    "document_combine": "read",
+    "document_create": "read",
+    "document_fix_accessibility": "read",
     "list_calendar_events": "read",
     "create_calendar_event": "write",
     "read_sheets":        "read",
@@ -554,6 +564,83 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "properties": {"path": {"type": "string", "description": "The file's full path"}},
             "required": ["path"],
         },
+    },
+    "work_files": {
+        "description": ("List the documents in the person's work folder (Word, PowerPoint, PDF, Excel, Markdown, "
+                        "text). FreeHand saves every result there as a new file and never changes the originals."),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+    "document_outline": {
+        "description": ("Read a file in the work folder: a Word document's numbered paragraphs (with headings), "
+                        "tables, pictures, comments and tracked changes; a PowerPoint's slides (titles, text, "
+                        "pictures, speaker notes); a PDF's text; an Excel file's sheets; Markdown or text. Use the "
+                        "paragraph and slide numbers with document_edit."),
+        "parameters": {"type": "object", "properties": {"file": {"type": "string", "description": "The file's name in the work folder"}}, "required": ["file"]},
+    },
+    "document_check": {
+        "description": ("Check a Word, PowerPoint or PDF file in the work folder for accessibility problems "
+                        "(alt text, headings, slide titles, table headers, title, language, link text, tags), "
+                        "each with why it matters and how to fix it."),
+        "parameters": {"type": "object", "properties": {"file": {"type": "string", "description": "The file's name in the work folder"}}, "required": ["file"]},
+    },
+    "document_edit": {
+        "description": ("Edit a Word or PowerPoint file, keeping its formatting, saved as a new copy. Word "
+                        "changes: {find, replace}; {paragraph, text}; {paragraph, style} (e.g. \"Heading 2\"); "
+                        "{paragraph, insert_after, style?}; {paragraph, delete: true}. PowerPoint changes: "
+                        "{find, replace}; {slide, title}; {slide, notes}; {slide, picture, alt_text}. Numbers "
+                        "come from document_outline."),
+        "parameters": {"type": "object", "properties": {
+            "file": {"type": "string", "description": "The file's name in the work folder"},
+            "changes": {"type": "array", "items": {"type": "object"}, "description": "The changes, in order"},
+            "output": {"type": "string", "description": "What to call the new file (optional)"}}, "required": ["file", "changes"]},
+    },
+    "document_clean": {
+        "description": ("Make a clean copy of a Word or PowerPoint file: comments removed, tracked changes "
+                        "accepted, and editor's notes in square brackets taken out ([Editor: ...], [TK], "
+                        "[check this], [TODO], [?]). Lists every note it removed, to check."),
+        "parameters": {"type": "object", "properties": {
+            "file": {"type": "string", "description": "The file's name in the work folder"},
+            "comments": {"type": "boolean", "description": "Remove comments (default true)"},
+            "tracked_changes": {"type": "boolean", "description": "Accept tracked changes (default true)"},
+            "bracket_notes": {"type": "boolean", "description": "Remove editor's notes in brackets (default true)"},
+            "also_remove": {"type": "array", "items": {"type": "string"},
+                            "description": "Exact phrases to remove as well (optional)"},
+            "speaker_notes": {"type": "boolean", "description": "PowerPoint: clear the speaker notes too (default false)"},
+            "output": {"type": "string", "description": "What to call the new file (optional)"}}, "required": ["file"]},
+    },
+    "document_combine": {
+        "description": ("Combine files from the work folder into one new Word document, in the order given. Word "
+                        "files keep their formatting and pictures; PDF, Markdown, text and Excel come in as text, "
+                        "headings and tables."),
+        "parameters": {"type": "object", "properties": {
+            "files": {"type": "array", "items": {"type": "string"}, "description": "The files, in order"},
+            "output": {"type": "string", "description": "What to call the combined document"},
+            "title": {"type": "string", "description": "The document's title (optional)"},
+            "headings": {"type": "boolean", "description": "Start each part with its file name as a heading (default false)"},
+            "page_breaks": {"type": "boolean", "description": "Start each part on a new page (default true)"}},
+            "required": ["files", "output"]},
+    },
+    "document_create": {
+        "description": ("Create a new Word document or PowerPoint in the work folder from Markdown. Word: # "
+                        "headings, - lists, 1. lists, **bold**, *italic*, | tables |. PowerPoint: each # heading "
+                        "starts a slide with that title, - lines are bullets, and lines after \"Notes:\" are "
+                        "speaker notes. Real headings and slide titles, so it's accessible from the start."),
+        "parameters": {"type": "object", "properties": {
+            "output": {"type": "string", "description": "What to call it"},
+            "markdown": {"type": "string", "description": "The content, in Markdown"},
+            "kind": {"type": "string", "enum": ["word", "powerpoint"]},
+            "title": {"type": "string", "description": "The document's title (optional)"}},
+            "required": ["output", "markdown"]},
+    },
+    "document_fix_accessibility": {
+        "description": ("Make an accessible copy of a Word or PowerPoint file: sets its title and language, gives "
+                        "tables a header row, and writes alt text for pictures that have none (the AI model looks "
+                        "at each one, so it uses AI). Says what's still to do."),
+        "parameters": {"type": "object", "properties": {
+            "file": {"type": "string", "description": "The file's name in the work folder"},
+            "title": {"type": "string", "description": "The title to set, if it has none (optional)"},
+            "alt_text": {"type": "boolean", "description": "Write alt text for pictures (default true)"},
+            "output": {"type": "string", "description": "What to call the new file (optional)"}}, "required": ["file"]},
     },
     "walkthrough_report": {
         "description": ("Make a draft screen reader walkthrough report from a recording in the person's "
@@ -959,6 +1046,7 @@ You have access to the following tool categories:
 - read_text_file(path) — Read Markdown, text and CSV files
 - list_folder(path) — See what's in a folder FreeHand may read
 - walkthrough_report(recording, product, client, tasks) — Draft a screen reader walkthrough report from a recording
+- work_files, document_outline, document_check, document_edit, document_clean, document_combine, document_create, document_fix_accessibility — Work on documents in the person's work folder (results are always new files)
 - bring_in_new_memories(source) — Bring in what's new from Hermes, OpenClaw or the person's notes
 
 ### Browser Tools

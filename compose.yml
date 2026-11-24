@@ -189,6 +189,7 @@ services:
       - FREEHAND_VOICE_MODEL_DIR=/models
       # Whether a Walkthroughs folder was shared (see volumes below).
       - FREEHAND_WALKTHROUGHS_FROM=${FREEHAND_WALKTHROUGHS_DIR:-}
+      - FREEHAND_WORK_FROM=${FREEHAND_WORK_DIR:-}
       # Shared with hindsight: lets it use FreeHand's AI model.
       - FREEHAND_LLM_PROXY_TOKEN=${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set - run python scripts/setup_env.py}
     extra_hosts:
@@ -217,6 +218,10 @@ services:
       # only adds new files beside them (a transcript, captions, a draft
       # report). Set FREEHAND_WALKTHROUGHS_DIR in .env to use it.
       - ${FREEHAND_WALKTHROUGHS_DIR:-./host-folders/no-walkthroughs}:/host/walkthroughs
+      # The work folder for documents (core/documents.py): FreeHand reads the
+      # documents there and saves results only as new files beside them.
+      # Set FREEHAND_WORK_DIR in .env to use it.
+      - ${FREEHAND_WORK_DIR:-./host-folders/no-work}:/host/work
     healthcheck:
       # uvicorn returns the FreeHand HTML index at /. A 200 there
       # means the server bound and the lifespan startup_event ran
