@@ -82,13 +82,19 @@ def test_without_libreoffice_it_says_so(work, monkeypatch):
         doc_render.save_pdf("r.docx")
 
 
-@pytest.mark.skipif(not doc_render.available(), reason="LibreOffice isn't on this computer (it is in FreeHand's image)")
 def test_real_pdf_and_pages(work):
+    # With LibreOffice (as in FreeHand's image): a real tagged PDF and a
+    # picture of its page. Without it (e.g. the test machines): a plain
+    # "needs LibreOffice". Either way this test runs.
     doc = Document()
     doc.core_properties.title = "Real"
     doc.add_heading("Real heading", level=1)
     doc.add_paragraph("Some text.")
     doc.save(str(work / "real.docx"))
+    if not doc_render.available():
+        with pytest.raises(d.Refused, match="needs LibreOffice"):
+            doc_render.save_pdf("real.docx")
+        return
     out = doc_render.save_pdf("real.docx")
     assert out["saved_as"] == "real.pdf"
     assert out["accessibility"] == ["Tagged, with a title and language."]
