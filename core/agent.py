@@ -267,6 +267,12 @@ PAGE_TOOLS = frozenset({
     "get_validation_summary", "save_checkpoint", "restore_checkpoint",
 })
 
+# The work folder's tools (core/documents.py).
+WORK_TOOLS = frozenset({
+    "work_files", "document_outline", "document_check", "document_edit", "document_clean",
+    "document_combine", "document_create", "document_fix_accessibility",
+})
+
 
 async def execute_tool(name: str, args: dict) -> dict:
     """Execute a tool by name with the given arguments."""
@@ -329,6 +335,42 @@ async def execute_tool(name: str, args: dict) -> dict:
             result = await save_email_draft(service=args.get("service", "google"), label=args.get("label", "default"),
                                             to=args.get("to", ""), subject=args.get("subject", ""),
                                             body=args.get("body", ""), reply_to_id=str(args.get("reply_to_id", "")))
+            return {"content": json.dumps(result, default=str)}
+        elif name in WORK_TOOLS:
+            from core import documents
+            try:
+                if name == "work_files":
+                    result = documents.list_files()
+                elif name == "document_outline":
+                    result = await asyncio.to_thread(documents.outline, str(args.get("file") or ""))
+                elif name == "document_check":
+                    result = await asyncio.to_thread(documents.check, str(args.get("file") or ""))
+                elif name == "document_edit":
+                    result = await asyncio.to_thread(documents.edit, str(args.get("file") or ""),
+                                                     args.get("changes") or [], str(args.get("output") or ""))
+                elif name == "document_clean":
+                    result = await asyncio.to_thread(
+                        documents.clean, str(args.get("file") or ""), args.get("comments", True) is not False,
+                        args.get("tracked_changes", True) is not False, args.get("bracket_notes", True) is not False,
+                        args.get("also_remove") or [], bool(args.get("speaker_notes")), str(args.get("output") or ""))
+                elif name == "document_combine":
+                    result = await asyncio.to_thread(
+                        documents.combine, list(args.get("files") or []), str(args.get("output") or ""),
+                        str(args.get("title") or ""), bool(args.get("headings")), args.get("page_breaks", True) is not False)
+                elif name == "document_create":
+                    result = await asyncio.to_thread(
+                        documents.create, str(args.get("output") or ""), str(args.get("markdown") or ""),
+                        str(args.get("kind") or "word"), str(args.get("title") or ""))
+                else:
+                    result = await documents.fix(str(args.get("file") or ""), str(args.get("title") or ""),
+                                                 alt_text=args.get("alt_text", True) is not False,
+                                                 output=str(args.get("output") or ""))
+            except documents.Refused as e:
+                result = {"error": str(e)}
+            except Exception as e:  # a damaged or unusual file
+                import logging
+                logging.getLogger("freehand.documents").warning("%s failed: %s", name, e)
+                result = {"error": f"FreeHand couldn't do that with this file: {str(e)[:150]}"}
             return {"content": json.dumps(result, default=str)}
         elif name == "walkthrough_report":
             from core import walkthroughs

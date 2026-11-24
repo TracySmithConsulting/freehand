@@ -42,12 +42,19 @@ BUILTIN_GROUPS: dict[str, tuple[str, ...]] = {
     "documents": ("read_docx", "write_docx", "read_xlsx", "read_pptx"),
     "files": ("read_text_file", "list_folder", "bring_in_new_memories"),
     "walkthroughs": ("walkthrough_report",),
+    "work": ("work_files", "document_outline", "document_check", "document_edit", "document_clean",
+             "document_combine", "document_create", "document_fix_accessibility"),
     "sheets": ("read_sheets", "read_sheet_range"),
     "browser": ("get_axtree", "take_screenshot", "navigate", "click", "fill",
                 "get_validation_summary", "save_checkpoint", "restore_checkpoint",
                 "delete_checkpoint", "list_checkpoints", "start_request_capture",
                 "get_captured_requests", "stop_request_capture"),
 }
+
+# Big groups only some people use: sent only when the words call for them
+# (or the model asks with load_tools), even outside lean mode. Together
+# they're about 1,500 tokens, which every message would otherwise carry.
+TOPIC_ONLY = frozenset({"work", "walkthroughs"})
 
 GROUP_SUMMARIES = {
     "skill_care": "save a new skill, or say how a skill went",
@@ -63,6 +70,8 @@ GROUP_SUMMARIES = {
     "files": "the person's notes and folders: read Markdown or text files, list a folder, bring in what's new from Hermes, OpenClaw or their notes",
     "sheets": "Google Sheets",
     "walkthroughs": "screen reader walkthroughs: a draft report, transcript and captions from a recording",
+    "work": ("documents in the work folder: read, check and fix accessibility, edit, clean out comments and "
+             "editor's notes, combine, and create Word documents and PowerPoints"),
     "browser": "work on web pages: click, fill in forms, screenshots",
 }
 
@@ -86,6 +95,10 @@ KEYWORDS: dict[str, tuple[str, ...]] = {
     "documents": ("doc", "docx", "word", "document", "documents", "excel", "xlsx", "spreadsheet",
                   "powerpoint", "pptx", "slides", "presentation", "file", "files"),
     "sheets": ("sheet", "sheets", "spreadsheet"),
+    "work": ("doc", "docx", "docs", "word", "document", "documents", "powerpoint", "pptx", "slides", "slide",
+             "presentation", "deck", "pdf", "pdfs", "excel", "xlsx", "spreadsheet", "folder", "file", "files",
+             "edit", "combine", "merge", "accessible", "accessibility", "alt", "editor", "comments", "tracked",
+             "markdown", "draft", "chapter", "chapters", "manuscript", "report", "proofread"),
     "walkthroughs": ("walkthrough", "walkthroughs", "walk-through", "recording", "recordings", "transcript",
                      "transcribe", "captions", "subtitles", "report"),
     "files": ("folder", "folders", "vault", "vaults", "note", "notes", "markdown", "md", "txt", "text",
@@ -189,7 +202,7 @@ def select(all_tools: list[dict], texts: Iterable[str], lean: bool = False,
     loaded: set[str] = set()
     for group, tools in by_group.items():
         always = group == "core" or (not (lean or by_topic) and group not in add_on_groups
-                                     and group in BUILTIN_GROUPS)
+                                     and group in BUILTIN_GROUPS and group not in TOPIC_ONLY)
         if always or group in wanted:
             send.extend(tools)
             loaded.add(group)
