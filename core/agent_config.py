@@ -241,6 +241,10 @@ TOOL_REGISTRY: Dict[str, str] = {
     "read_text_file":     "read",
     "list_folder":        "read",
     "bring_in_new_memories": "read",
+    # Screen reader walkthroughs (core/walkthroughs.py): only ever writes new
+    # files (a transcript, captions, a draft report) into the Walkthroughs
+    # folder, beside the recording; never changes or deletes anything there.
+    "walkthrough_report": "read",
     "list_calendar_events": "read",
     "create_calendar_event": "write",
     "read_sheets":        "read",
@@ -549,6 +553,25 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "type": "object",
             "properties": {"path": {"type": "string", "description": "The file's full path"}},
             "required": ["path"],
+        },
+    },
+    "walkthrough_report": {
+        "description": ("Make a draft screen reader walkthrough report from a recording in the person's "
+                        "Walkthroughs folder: FreeHand turns its speech into text on this computer, finds where "
+                        "they said \"Problem:\" and the notes they sent while recording, drafts the five biggest "
+                        "problems, and saves a Word document, a transcript and captions beside the recording. "
+                        "It runs in the background and tells the person when it's ready. With no recording "
+                        "named, it uses the newest one."),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "recording": {"type": "string", "description": "Part of the recording's file name (optional)"},
+                "product": {"type": "string", "description": "The app or website tested (optional)"},
+                "client": {"type": "string", "description": "Who the report is for (optional)"},
+                "tasks": {"type": "array", "items": {"type": "string"},
+                          "description": "The tasks agreed with the client (optional)"},
+            },
+            "required": [],
         },
     },
     "list_folder": {
@@ -935,6 +958,7 @@ You have access to the following tool categories:
 - read_pptx(path) — Read PowerPoint presentations
 - read_text_file(path) — Read Markdown, text and CSV files
 - list_folder(path) — See what's in a folder FreeHand may read
+- walkthrough_report(recording, product, client, tasks) — Draft a screen reader walkthrough report from a recording
 - bring_in_new_memories(source) — Bring in what's new from Hermes, OpenClaw or the person's notes
 
 ### Browser Tools

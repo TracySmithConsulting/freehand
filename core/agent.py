@@ -330,6 +330,13 @@ async def execute_tool(name: str, args: dict) -> dict:
                                             to=args.get("to", ""), subject=args.get("subject", ""),
                                             body=args.get("body", ""), reply_to_id=str(args.get("reply_to_id", "")))
             return {"content": json.dumps(result, default=str)}
+        elif name == "walkthrough_report":
+            from core import walkthroughs
+            tasks = args.get("tasks") or []
+            result = walkthroughs.start_report(str(args.get("recording") or ""), str(args.get("product") or ""),
+                                               str(args.get("client") or ""), tasks,
+                                               target=walkthroughs.request_target())
+            return {"content": json.dumps(result, default=str)}
         elif name in ("read_text_file", "list_folder"):
             from core import folders
             result = (folders.read_text_file(args.get("path", "")) if name == "read_text_file"
@@ -565,9 +572,14 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
     CLI, tests). ``person`` says whose it is directly: a scheduled job is
     its maker's, and a chat message is its sender's (in a group, the chat
     isn't the person)."""
-    from core import people
+    from core import people, walkthroughs
     token = people.set_current(person or people.person_for(source, caller_id) or people.OWNER_ID)
+    asked_from = walkthroughs.set_request(source, caller_id)
     try:
+        # Walkthrough start, notes and stop: plain code, no AI (core/walkthroughs.py).
+        quick = walkthroughs.quick_command(command) if not job and member is None else None
+        if quick:
+            return {"text": quick, "tools_used": [], "error": None}
         # A member's monthly limit on AI (core/ai_use.py): over it, no AI call.
         from core import ai_use, children
         over = children.refusal() or ai_use.refusal()  # a child's quiet hours and daily limit too
@@ -587,6 +599,7 @@ async def run_agent(command: str, max_turns: int = 5, source: str = "", caller_i
         children.record(command, result)
         return result
     finally:
+        walkthroughs._request.reset(asked_from)
         people.reset(token)
 
 

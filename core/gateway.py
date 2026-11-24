@@ -116,8 +116,9 @@ async def _whatsapp_send_message(jid: str, text: str) -> bool:
     return True
 
 
-async def _telegram_send_message(chat_id: str, text: str) -> bool:
-    """Send a message via Telegram Bot API."""
+async def _telegram_send_message(chat_id: str, text: str, quiet: bool = False) -> bool:
+    """Send a message via Telegram Bot API. ``quiet``: no sound on the
+    person's phone (a walkthrough note, while they're recording)."""
     settings = _load_settings()
     bot_token = settings.get("telegram_bot_token", "").strip()
     if not bot_token:
@@ -132,7 +133,8 @@ async def _telegram_send_message(chat_id: str, text: str) -> bool:
             for extra in ({"parse_mode": "Markdown"}, {}):
                 async with session.post(
                     url,
-                    json={"chat_id": chat_id, "text": text, **extra},
+                    json={"chat_id": chat_id, "text": text, **extra,
+                          **({"disable_notification": True} if quiet else {})},
                     timeout=aiohttp.ClientTimeout(total=10)
                 ) as resp:
                     if resp.status == 200:
@@ -577,6 +579,19 @@ async def handle_telegram_update(update: dict, *, from_polling: bool = False) ->
     update_id = update.get("update_id")
     if update_id is not None and not _first_delivery(f"telegram:{update_id}"):
         return {"ok": True, "duplicate": True}
+
+    if text and not audio:
+        # Walkthrough start, notes and stop: answered at once, by plain code,
+        # without a sound on the phone, which may be next to a recording.
+        from core import walkthroughs
+        token = _as_sender("telegram", chat_id, sender)
+        try:
+            quick = walkthroughs.quick_command(text)
+        finally:
+            people.reset(token)
+        if quick:
+            _spawn(_telegram_send_message(chat_id, quick, quiet=True))
+            return {"ok": True, "walkthrough": True}
 
     if audio:
         _spawn(_reply_to_voice_in_background("telegram", chat_id, audio, _telegram_download,

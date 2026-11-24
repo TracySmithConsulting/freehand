@@ -84,6 +84,7 @@ services:
       - FREEHAND_HINDSIGHT_URL=http://hindsight:8888
       - FREEHAND_MEMORY_BANK=freehand
       - FREEHAND_VOICE_MODEL_DIR=/models
+      - FREEHAND_WALKTHROUGHS_FROM=${FREEHAND_WALKTHROUGHS_DIR:-}
       - FREEHAND_LLM_PROXY_TOKEN=${FREEHAND_LLM_PROXY_TOKEN:?FREEHAND_LLM_PROXY_TOKEN is not set (the installer makes it)}
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -98,6 +99,11 @@ services:
       - ${FREEHAND_HERMES_DIR:-./host-folders/none}:/host/hermes:ro
       - ${FREEHAND_OPENCLAW_DIR:-./host-folders/none}:/host/openclaw:ro
       - ${FREEHAND_NOTES_DIR:-./host-folders/none}:/host/notes:ro
+      # The one folder FreeHand may write to outside its vault: screen reader
+      # walkthroughs (core/walkthroughs.py). It reads the recordings there and
+      # only adds new files beside them (a transcript, captions, a draft
+      # report). Set FREEHAND_WALKTHROUGHS_DIR in .env to use it.
+      - ${FREEHAND_WALKTHROUGHS_DIR:-./host-folders/no-walkthroughs}:/host/walkthroughs
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/').read()"]
       interval: 10s
