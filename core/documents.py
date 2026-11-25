@@ -367,6 +367,12 @@ def _expand(changes, skipped: List[str]):
     headings take one change. Lists keep "paragraphs": they're one list."""
     out, many = [], False
     for c in changes or []:
+        if (isinstance(c, dict) and "paragraph" not in c and "text" in c
+                and str(c.get("insert_after", "")).strip().isdigit()):
+            # Models often write the paragraph number in insert_after and
+            # the words in text: the same change, so take it that way.
+            c = {**{k: v for k, v in c.items() if k not in ("insert_after", "text")},
+                 "paragraph": int(str(c["insert_after"]).strip()), "insert_after": c["text"]}
         if isinstance(c, dict) and "paragraphs" in c and "list" not in c:
             rest = {k: v for k, v in c.items() if k != "paragraphs"}
             if not rest or any(k not in MANY_OK for k in rest):
