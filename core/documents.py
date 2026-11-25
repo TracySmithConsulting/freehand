@@ -44,6 +44,8 @@ PICTURES = {".png": "picture", ".jpg": "picture", ".jpeg": "picture", ".gif": "p
             ".webp": "picture"}
 MAX_TEXT = 60_000
 MAX_PARAGRAPHS = 400
+PART_CHARS = 30_000   # one part of a long document per read: about 7,500 tokens
+MAX_LISTED = 300      # comments or tracked changes listed per read
 MAX_ALT_PICTURES = 20
 
 # Editor's notes in square brackets: [Editor: ...], [Note to self ...], [TK],
@@ -204,16 +206,28 @@ def _comment_count(doc) -> int:
     return len(list(doc.element.body.iter(_w("commentReference"))))
 
 
-def outline(name: str) -> dict:
-    """A file's structure, with numbers to refer to when editing."""
+def outline(name: str, from_paragraph: int = 0, show: str = "text") -> dict:
+    """A file's structure, with numbers to refer to when editing. Long
+    files come in parts: carry on from "next_from". For Word, show
+    "comments" or "changes" lists the editor's comments or tracked changes
+    instead of the text."""
     path = resolve(name)
     kind = path.suffix.lower()
+    try:
+        start = max(0, int(from_paragraph or 0))
+    except (TypeError, ValueError):
+        start = 0
+    show = str(show or "text").lower()
     if kind == ".docx":
-        return _docx_outline(path)
+        if show.startswith("comment"):
+            return _docx_comments_view(path)
+        if show.startswith("change") or show.startswith("track"):
+            return _docx_changes_view(path)
+        return _docx_outline(path, start)
     if kind == ".pptx":
         return _pptx_outline(path)
     if kind == ".pdf":
-        return _pdf_read(path)
+        return _pdf_read(path, start or 1)
     if kind == ".xlsx":
         return _xlsx_read(path)
     if kind in (".md", ".markdown", ".txt", ".csv"):
@@ -223,17 +237,21 @@ def outline(name: str) -> dict:
     raise Refused(f"FreeHand can't read {path.suffix} files.")
 
 
-def _docx_outline(path: Path) -> dict:
+def _docx_outline(path: Path, start: int = 0) -> dict:
     from docx import Document
     doc = Document(str(path))
-    paragraphs = []
-    for i, p in enumerate(doc.paragraphs):
-        if i >= MAX_PARAGRAPHS:
-            break
+    paragraphs, used, next_from = [], 0, None
+    all_paragraphs = doc.paragraphs
+    for i in range(start, len(all_paragraphs)):
+        p = all_paragraphs[i]
         text = p.text
         if not text.strip():
             continue
-        item = {"p": i, "text": text[:400]}
+        if used + len(text) > PART_CHARS and paragraphs:
+            next_from = i
+            break
+        used += len(text)
+        item = {"p": i, "text": text[:6000]}
         level = _heading_level(p.style.name if p.style is not None else "")
         if level is not None:
             item["heading"] = level
@@ -244,12 +262,147 @@ def _docx_outline(path: Path) -> dict:
                "header_row": _has_header_row(t),
                "first_row": [c.text[:60] for c in t.rows[0].cells] if t.rows else []}
               for i, t in enumerate(doc.tables)]
-    return {"file": _rel(path), "kind": "Word", "title": doc.core_properties.title or "",
-            "language": doc.core_properties.language or "", "paragraphs": paragraphs,
-            "paragraph_count": len(doc.paragraphs), "tables": tables,
-            "pictures": _docx_pictures(doc), "comments": _comment_count(doc),
-            "tracked_changes": _tracked(doc.element.body),
-            **({"cut_short": f"Only the first {MAX_PARAGRAPHS} paragraphs."} if len(doc.paragraphs) > MAX_PARAGRAPHS else {})}
+    out = {"file": _rel(path), "kind": "Word", "paragraphs": paragraphs,
+           "paragraph_count": len(all_paragraphs), "comments": _comment_count(doc),
+           "tracked_changes": _tracked(doc.element.body)}
+    if start == 0:
+        out.update({"title": doc.core_properties.title or "", "language": doc.core_properties.language or "",
+                    "tables": tables, "pictures": _docx_pictures(doc)})
+    if next_from is not None:
+        out["next_from"] = next_from
+        out["more"] = (f"This is part of the document (paragraphs {start} to {next_from - 1} of "
+                       f"{len(all_paragraphs)}). Read on with from_paragraph {next_from}.")
+    if out["comments"] or any(out["tracked_changes"].values()):
+        out["see_also"] = "Use show \"comments\" or show \"changes\" to read the editor's comments or tracked changes."
+    return out
+
+
+def _paragraph_index(doc) -> dict:
+    return {p._p: i for i, p in enumerate(doc.paragraphs)}
+
+
+def _where(el, index: dict):
+    """The body paragraph number an element is in (None in a table, header...)."""
+    node = el
+    while node is not None and node.tag != _w("p"):
+        node = node.getparent()
+    return index.get(node) if node is not None else None
+
+
+def _docx_comments(doc) -> List[dict]:
+    """Each comment: its number, author, text, the words it's on, and where."""
+    try:
+        notes = {str(c.comment_id): c for c in doc.comments}
+    except Exception:
+        notes = {}
+    if not notes:
+        return []
+    index = _paragraph_index(doc)
+    open_ids, on, at = set(), {}, {}
+    for el in doc.element.body.iter():
+        tag = el.tag
+        if tag == _w("commentRangeStart"):
+            cid = el.get(_w("id"))
+            open_ids.add(cid)
+            on.setdefault(cid, [])
+            at.setdefault(cid, _where(el, index))
+        elif tag == _w("commentRangeEnd"):
+            open_ids.discard(el.get(_w("id")))
+        elif tag == _w("commentReference"):
+            at.setdefault(el.get(_w("id")), _where(el, index))
+        elif tag in (_w("t"), _w("delText")) and open_ids and el.text:
+            for cid in open_ids:
+                on[cid].append(el.text)
+    out = []
+    for cid, c in notes.items():
+        out.append({"comment": cid, "author": c.author or "", "text": (c.text or "").strip()[:1500],
+                    "on": "".join(on.get(cid, [])).strip()[:500], "paragraph": at.get(cid)})
+    return sorted(out, key=lambda c: (c["paragraph"] is None, c["paragraph"] or 0, int(c["comment"]) if c["comment"].isdigit() else 0))
+
+
+def _docx_comments_view(path: Path) -> dict:
+    from docx import Document
+    comments = _docx_comments(Document(str(path)))
+    return {"file": _rel(path), "comments": comments[:MAX_LISTED], "count": len(comments),
+            **({"more": f"Only the first {MAX_LISTED} are listed."} if len(comments) > MAX_LISTED else {}),
+            "how": "After dealing with a comment, remove it with document_edit {\"remove_comment\": its number}."}
+
+
+CHANGE_TAGS = {"ins": "inserted", "del": "deleted", "moveTo": "moved here", "moveFrom": "moved from here"}
+
+
+def _docx_changes(doc) -> List[dict]:
+    index = _paragraph_index(doc)
+    out = []
+    for el in doc.element.body.iter(*[_w(t) for t in CHANGE_TAGS]):
+        if el.getparent() is not None and el.getparent().tag == _w("rPr"):
+            continue  # a paragraph mark: goes with the change around it
+        text = "".join(t.text or "" for t in el.iter(_w("t"), _w("delText")))
+        out.append({"change": el.get(_w("id")), "type": CHANGE_TAGS[el.tag.split("}")[1]],
+                    "text": text[:800], "author": el.get(_w("author"), ""), "paragraph": _where(el, index)})
+    return out
+
+
+def _docx_changes_view(path: Path) -> dict:
+    from docx import Document
+    changes = _docx_changes(Document(str(path)))
+    return {"file": _rel(path), "changes": changes[:MAX_LISTED], "count": len(changes),
+            **({"more": f"Only the first {MAX_LISTED} are listed."} if len(changes) > MAX_LISTED else {}),
+            "how": "Accept or reject them with document_edit {\"accept\": [numbers]} or {\"reject\": [numbers]}, "
+                   "or \"all\"."}
+
+
+def _settle_changes(body, ids, accept: bool) -> int:
+    """Accept or reject the tracked changes with these ids (or "all")."""
+    every = ids == "all" or ids == ["all"]
+    wanted = {str(i) for i in (ids if isinstance(ids, list) else [ids])}
+    n = 0
+    for el in list(body.iter(*[_w(t) for t in CHANGE_TAGS])):
+        if not every and el.get(_w("id")) not in wanted:
+            continue
+        parent = el.getparent()
+        if parent is None:
+            continue
+        added = el.tag in (_w("ins"), _w("moveTo"))
+        keep = added == accept  # accepted insertions and rejected deletions stay
+        if parent.tag == _w("rPr"):
+            parent.remove(el)  # a paragraph mark's change: just settle it
+            continue
+        if keep:
+            for t in list(el.iter(_w("delText"))):
+                t.tag = _w("t")
+            for t in list(el.iter(_w("delInstrText"))):
+                t.tag = _w("instrText")
+            i = parent.index(el)
+            for child in list(el):
+                parent.insert(i, child)
+                i += 1
+        parent.remove(el)
+        n += 1
+    return n
+
+
+def _remove_comment(doc, ids) -> int:
+    wanted = {str(i) for i in (ids if isinstance(ids, list) else [ids])}
+    body = doc.element.body
+    n = 0
+    for tag in ("commentRangeStart", "commentRangeEnd"):
+        for el in list(body.iter(_w(tag))):
+            if el.get(_w("id")) in wanted:
+                el.getparent().remove(el)
+    for ref in list(body.iter(_w("commentReference"))):
+        if ref.get(_w("id")) in wanted:
+            run = ref.getparent()
+            (run.getparent().remove(run) if run.tag == _w("r") and run.getparent() is not None else run.remove(ref))
+            n += 1
+    for rel in doc.part.rels.values():
+        if rel.reltype.endswith("/comments"):
+            part_el = getattr(rel.target_part, "element", None)
+            if part_el is not None:
+                for c in list(part_el.iter(_w("comment"))):
+                    if c.get(_w("id")) in wanted:
+                        part_el.remove(c)
+    return n
 
 
 def _has_header_row(table) -> bool:
@@ -294,21 +447,26 @@ def _pptx_outline(path: Path) -> dict:
             "language": props.language or "", "slides": slides}
 
 
-def _pdf_read(path: Path) -> dict:
+def _pdf_read(path: Path, from_page: int = 1) -> dict:
     try:
         from pypdf import PdfReader
     except ImportError:
         raise Refused("PDF reading isn't installed in this FreeHand yet. Updating FreeHand should fix it.")
     reader = PdfReader(str(path))
-    pages, total = [], 0
+    pages, total, used, next_page = [], 0, 0, None
     for i, page in enumerate(reader.pages, 1):
         try:
             text = page.extract_text() or ""
         except Exception:
             text = ""
-        if total < MAX_TEXT:
-            pages.append({"page": i, "text": text[: MAX_TEXT - total]})
         total += len(text)
+        if i < from_page or next_page:
+            continue
+        if used + len(text) > PART_CHARS and pages:
+            next_page = i
+            continue
+        pages.append({"page": i, "text": text[:PART_CHARS]})
+        used += len(text)
     meta = reader.metadata or {}
     tagged, language = False, ""
     try:
@@ -322,7 +480,8 @@ def _pdf_read(path: Path) -> dict:
     return {"file": _rel(path), "kind": "PDF", "pages": pages, "page_count": len(reader.pages),
             "title": str(meta.get("/Title") or ""), "language": language,
             "tagged": tagged, "has_text": total > 0,
-            **({"cut_short": True} if total > MAX_TEXT else {})}
+            **({"next_from": next_page, "more": f"Read on with from_paragraph {next_page} (the page to start at)."}
+               if next_page else {})}
 
 
 def _xlsx_read(path: Path) -> dict:
@@ -583,6 +742,19 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
     done, skipped, to_delete = [], [], []
     for c in changes or []:
         if not isinstance(c, dict):
+            continue
+        if "accept" in c or "reject" in c:
+            accept = "accept" in c
+            ids = c.get("accept" if accept else "reject")
+            n = _settle_changes(doc.element.body, ids, accept)
+            (done if n else skipped).append(
+                f"{n} tracked change(s) {'accepted' if accept else 'rejected'}" if n else
+                f"no tracked change {ids} was found")
+            continue
+        if "remove_comment" in c:
+            n = _remove_comment(doc, c["remove_comment"])
+            (done if n else skipped).append(f"comment {c['remove_comment']} removed" if n else
+                                            f"there's no comment {c['remove_comment']}")
             continue
         if "find" in c:
             n = sum(_replace_in_paragraph(p, str(c["find"]), str(c.get("replace", ""))) for p in _all_paragraphs(doc))

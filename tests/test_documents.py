@@ -411,3 +411,85 @@ def test_document_tools_only_go_when_the_words_call_for_them():
     assert "load_tools" in names(quiet)  # the model can still ask for them
     asked, _ = tool_selection.select(all_tools, ["please clean up this Word document"])
     assert set(agent.WORK_TOOLS) <= names(asked)
+
+
+# ── A book's worth: comments, tracked changes, parts, more steps ───────
+
+def test_editors_comments_can_be_read(work):
+    tracked_docx(work / "t.docx")
+    out = d.outline("t.docx", show="comments")
+    assert out["count"] == 1
+    assert out["comments"][0] == {"comment": "0", "author": "Ed", "text": "Is this right?",
+                                  "on": "A sentence with a comment.", "paragraph": 1}
+    assert "see_also" in d.outline("t.docx")
+
+
+def test_tracked_changes_are_listed_then_accepted_or_rejected_one_by_one(work):
+    tracked_docx(work / "t.docx")
+    listed = d.outline("t.docx", show="changes")["changes"]
+    assert [(c["change"], c["type"], c["text"], c["author"], c["paragraph"]) for c in listed] == [
+        ("1", "inserted", "Added text.", "Ed", 0), ("2", "deleted", "Removed text.", "Ed", 0)]
+    out = d.edit("t.docx", [{"accept": ["1"]}, {"reject": [2]}])
+    doc = Document(str(work / out["saved_as"]))
+    assert doc.paragraphs[0].text == "Keep this. Added text.Removed text."  # the deletion was turned down
+    body = doc.element.body
+    assert not list(body.iter(qn("w:ins"))) and not list(body.iter(qn("w:del")))
+    out2 = d.edit("t.docx", [{"reject": "all"}])
+    assert Document(str(work / out2["saved_as"])).paragraphs[0].text == "Keep this. Removed text."
+
+
+def test_one_comment_can_be_removed_when_dealt_with(work):
+    tracked_docx(work / "t.docx")
+    out = d.edit("t.docx", [{"remove_comment": "0"}])
+    doc = Document(str(work / out["saved_as"]))
+    assert not list(doc.element.body.iter(qn("w:commentReference")))
+    assert list(doc.comments) == []
+    assert doc.paragraphs[1].text == "A sentence with a comment."
+    assert d.edit("t.docx", [{"remove_comment": "9"}])["error"].startswith("Nothing was changed")
+
+
+def test_a_long_document_comes_in_parts(work, monkeypatch):
+    monkeypatch.setattr(d, "PART_CHARS", 1000)
+    doc = Document()
+    for i in range(30):
+        doc.add_paragraph(f"Paragraph {i}. " + "words " * 30)
+    doc.save(str(work / "book.docx"))
+    seen, start, reads = [], 0, 0
+    while True:
+        part = d.outline("book.docx", from_paragraph=start)
+        seen += [p["p"] for p in part["paragraphs"]]
+        reads += 1
+        if "next_from" not in part:
+            break
+        assert "Read on with from_paragraph" in part["more"]
+        start = part["next_from"]
+    assert seen == list(range(30)) and reads > 3
+
+
+def test_a_long_pdf_comes_in_parts(work, monkeypatch):
+    from pypdf import PdfReader, PdfWriter
+    one = tiny_pdf(work.parent / "one.pdf")
+    writer = PdfWriter()
+    for _ in range(3):
+        writer.append(PdfReader(str(one)))
+    with open(work / "long.pdf", "wb") as f:
+        writer.write(f)
+    monkeypatch.setattr(d, "PART_CHARS", 20)
+    first = d.outline("long.pdf")
+    assert [p["page"] for p in first["pages"]] == [1] and first["next_from"] == 2
+    assert [p["page"] for p in d.outline("long.pdf", from_paragraph=3)["pages"]] == [3]
+
+
+def test_document_work_gets_more_steps(work, monkeypatch):
+    calls = []
+
+    async def busy_model(messages, tools=None, config=None):
+        calls.append(1)
+        n = len(calls)
+        return {"content": "", "tool_calls": [{"id": f"c{n}", "type": "function", "function": {
+            "name": "document_outline", "arguments": json.dumps({"file": f"chapter {n}.docx"})}}],
+            "_usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+    monkeypatch.setattr(agent, "call_llm", busy_model)
+    asyncio.run(agent.run_agent("read the chapters in my work folder"))
+    # 15 steps (not 5: a long document takes many), then one call to report back.
+    assert len(calls) == 16

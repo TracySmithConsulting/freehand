@@ -71,6 +71,28 @@ FreeHand adds (2), (3) and so on. It never deletes anything.
   actual picture, unless you give it. Making a picture costs a little, like
   an AI message.
 
+## A big job, like a book
+
+- **Your editor's comments:** ask "What did my editor say in Chapter 3?".
+  FreeHand lists each comment with who wrote it, what it says, the words
+  it's on, and its paragraph. Once a comment is dealt with, FreeHand can
+  remove just that one.
+- **Tracked changes:** ask "Read me the tracked changes in Chapter 3".
+  FreeHand lists each insertion and deletion with its text, who made it
+  and where. Then you can accept or reject them one by one ("accept 1 to
+  4, reject 5"), or all at once.
+- **Long documents** are read in parts of about 30,000 characters, and
+  FreeHand reads on until it's done.
+- **More steps:** document work can take up to 15 steps per message
+  before FreeHand reports back. A long job may still need "carry on".
+
+**Work chapter by chapter, then combine.** Each step sends the
+conversation so far to your AI model, so smaller pieces cost less and are
+easier to check. A good order for each chapter: read the comments and
+tracked changes, decide, make one edited copy with all the changes, clean
+out the notes, check accessibility, then add pictures. When every chapter
+is done, combine them into the book.
+
 ## Pictures: which service
 
 FreeHand makes pictures with whichever of your AI services can, using the
