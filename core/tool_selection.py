@@ -71,8 +71,10 @@ GROUP_SUMMARIES = {
     "files": "the person's notes and folders: read Markdown or text files, list a folder, bring in what's new from Hermes, OpenClaw or their notes",
     "sheets": "Google Sheets",
     "walkthroughs": "screen reader walkthroughs: a draft report, transcript and captions from a recording",
-    "work": ("documents in the work folder: read, check and fix accessibility, edit, clean out comments and "
-             "editor's notes, combine, and create Word documents and PowerPoints"),
+    "work": ("documents in the work folder: read (with comments and tracked changes), check and fix "
+             "accessibility, edit keeping the formatting (including the font), clean out comments and editor's "
+             "notes, combine, create Word documents and PowerPoints, MAKE PICTURES and put them in, see how "
+             "pages look, and save PDFs"),
     "browser": "work on web pages: click, fill in forms, screenshots",
 }
 
@@ -117,7 +119,17 @@ def _words(texts: Iterable[str]) -> set[str]:
     out: set[str] = set()
     for text in texts:
         low = (text or "").lower()
-        out.update(_WORD.findall(low))
+        for word in _WORD.findall(low):
+            out.add(word)
+            # A word at the end of a sentence ("my email.", "an image.") keeps
+            # its full stop in the pattern (which is there for "file.docx"
+            # and "www"): count it without, too.
+            bare = word.rstrip(".-'")
+            if bare:
+                out.add(bare)
+            # And the parts of a file name: "report.docx" is about documents.
+            if "." in bare:
+                out.update(part for part in bare.split(".") if part)
         if "://" in low or "www." in low:
             out.add("url")
     return out

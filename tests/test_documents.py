@@ -493,3 +493,61 @@ def test_document_work_gets_more_steps(work, monkeypatch):
     asyncio.run(agent.run_agent("read the chapters in my work folder"))
     # 15 steps (not 5: a long document takes many), then one call to report back.
     assert len(calls) == 16
+
+
+# ── After the first chapter (Nov 2026) ─────────────────────────────────
+
+def test_the_whole_font_changes_without_rebuilding(work):
+    doc = Document()  # Word's template: body text in a theme font
+    doc.add_heading("Chapter", level=1)
+    p = doc.add_paragraph()
+    p.add_run("Body text.").font.name = "Times New Roman"
+    tick = p.add_run("\u2713")
+    tick.font.name = "Wingdings"
+    doc.save(str(work / "c.docx"))
+    out = d.edit("c.docx", [{"font": "Verdana", "size": 12}])
+    assert out["changes"] == ["font set to Verdana and body text set to 12 point"]
+    fixed = Document(str(work / out["saved_as"]))
+    normal = fixed.styles["Normal"].element.rPr.rFonts
+    assert normal.get(qn("w:ascii")) == "Verdana" and normal.get(qn("w:asciiTheme")) is None
+    for rfonts in fixed.styles.element.iter(qn("w:rFonts")):  # headings too: no theme font left to win
+        assert rfonts.get(qn("w:asciiTheme")) is None and rfonts.get(qn("w:ascii")) == "Verdana"
+    runs = fixed.paragraphs[1].runs
+    assert runs[0].font.name is None and runs[1].font.name == "Wingdings"  # the tick keeps its font
+    assert fixed.styles["Normal"].font.size.pt == 12
+    assert [p.text for p in fixed.paragraphs] == ["Chapter", "Body text.\u2713"]  # nothing else changed
+    assert "isn't a font size" in d.edit("c.docx", [{"size": "huge"}])["error"]
+
+
+def test_new_documents_go_in_the_folder_named(work):
+    (work / "DBSA Manual").mkdir()
+    out = d.create("DBSA Manual/Captions", "# Captions\n\n- one\n")
+    assert out["saved_as"].replace("\\", "/") == "DBSA Manual/Captions.docx"
+    assert d.create("../../outside", "# x")["saved_as"] == "outside.docx"  # never outside the folder
+    assert d.create("Nowhere/x", "# x")["saved_as"] == "x.docx"  # a folder that isn't there: the top
+
+
+def test_picture_tools_stay_within_reach_a_few_messages_later():
+    from core import tool_selection
+    all_tools = agent_config.list_available_tools()
+    names = lambda tools: {t.get("function", t).get("name") for t in tools}
+    # Tracy's three messages about Chapter 1: the last two have no document words.
+    said = ["Go ahead.", "Please implement all the changes.",
+            "There are prompts for generating an image. Please generate it and put it in the right place."]
+    sent, _ = tool_selection.select(all_tools, said)
+    assert "document_picture" in names(sent)
+    src = Path(agent.__file__).read_text(encoding="utf-8")
+    assert 'if m.get("role") == "user"][-3:]' in src
+    assert "MAKE PICTURES" in tool_selection.GROUP_SUMMARIES["work"]
+    assert "Never use it" in agent_config.TOOL_SCHEMAS["document_create"]["description"]
+
+
+def test_a_word_at_the_end_of_a_sentence_still_counts():
+    # "an image." used to be read as "image." and miss the picture tools; the
+    # same for "Check my email." and every other group.
+    from core import tool_selection
+    assert "work" in tool_selection.wanted_groups(["Please generate an image."])
+    assert "email" in tool_selection.wanted_groups(["Check my email."])
+    assert "calendar" in tool_selection.wanted_groups(["What's on tomorrow?", "Look at my calendar."])
+    assert "files" in tool_selection.wanted_groups(["open notes.md"])  # a file name's parts count
+    assert "work" in tool_selection.wanted_groups(["Fix Report.docx"])

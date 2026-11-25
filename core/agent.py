@@ -742,9 +742,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     ]
 
     # Economy (Nov 2026): only the tools this message needs, plus
-    # load_tools for the rest (core/tool_selection.py). The previous user
-    # message counts too, so "and post it there" still finds Facebook.
-    earlier = [m["content"] for m in history if m.get("role") == "user"][-1:]
+    # load_tools for the rest (core/tool_selection.py). The last few user
+    # messages count too, so "and post it there" still finds Facebook, and
+    # "Go ahead" two messages after asking for pictures still has them.
+    earlier = [m["content"] for m in history if m.get("role") == "user"][-3:]
     from core import ask_user, helper_hub, schedule_job
     from core.scheduler import DUE_PREFIX
     if member:

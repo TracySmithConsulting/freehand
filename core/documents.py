@@ -382,6 +382,60 @@ def _settle_changes(body, ids, accept: bool) -> int:
     return n
 
 
+THEME_FONT_ATTRS = ("asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme")
+SYMBOL_FONTS = {"symbol", "wingdings", "wingdings 2", "wingdings 3", "webdings", "marlett"}
+
+
+def _set_rfonts(rfonts, font: str) -> None:
+    for attr in THEME_FONT_ATTRS:
+        rfonts.attrib.pop(_w(attr), None)  # a theme font would win over the one named
+    for attr in ("ascii", "hAnsi", "cs", "eastAsia"):
+        rfonts.set(_w(attr), font)
+
+
+def _set_font(doc, font: str, size=None) -> str:
+    """The whole document in this font (headings keep their sizes), and
+    body text at this size. Run-level fonts are cleared so the text follows
+    the styles, except symbol fonts, which draw bullets and ticks."""
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from docx.shared import Pt
+    said = []
+    if font:
+        defaults = doc.styles.element.find(qn("w:docDefaults"))
+        if defaults is not None:
+            rpr = defaults.find(qn("w:rPrDefault") + "/" + qn("w:rPr"))
+            if rpr is not None:
+                rfonts = rpr.find(qn("w:rFonts"))
+                if rfonts is None:
+                    rfonts = OxmlElement("w:rFonts")
+                    rpr.insert(0, rfonts)
+                _set_rfonts(rfonts, font)
+        for rfonts in doc.styles.element.iter(qn("w:rFonts")):
+            _set_rfonts(rfonts, font)
+        doc.styles["Normal"].font.name = font
+        _set_rfonts(doc.styles["Normal"].element.get_or_add_rPr().get_or_add_rFonts(), font)
+        for rfonts in list(doc.element.body.iter(qn("w:rFonts"))):
+            named = (rfonts.get(qn("w:ascii")) or rfonts.get(qn("w:hAnsi")) or "").lower()
+            if named in SYMBOL_FONTS:
+                continue
+            rfonts.getparent().remove(rfonts)
+        said.append(f"font set to {font}")
+    if size not in (None, ""):
+        points = float(size)
+        if not 6 <= points <= 72:
+            raise ValueError(size)
+        doc.styles["Normal"].font.size = Pt(points)
+        for style_name in ("List Bullet", "List Number", "List Paragraph", "Body Text"):
+            try:
+                if doc.styles[style_name].font.size is not None:
+                    doc.styles[style_name].font.size = Pt(points)
+            except KeyError:
+                pass
+        said.append(f"body text set to {points:g} point")
+    return " and ".join(said) or "nothing to change in the font"
+
+
 def _remove_comment(doc, ids) -> int:
     wanted = {str(i) for i in (ids if isinstance(ids, list) else [ids])}
     body = doc.element.body
@@ -750,6 +804,14 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
             (done if n else skipped).append(
                 f"{n} tracked change(s) {'accepted' if accept else 'rejected'}" if n else
                 f"no tracked change {ids} was found")
+            continue
+        if "font" in c or ("size" in c and "paragraph" not in c):
+            try:
+                said = _set_font(doc, str(c.get("font") or ""), c.get("size"))
+            except (TypeError, ValueError):
+                skipped.append(f"\"{c.get('size')}\" isn't a font size")
+                continue
+            done.append(said)
             continue
         if "remove_comment" in c:
             n = _remove_comment(doc, c["remove_comment"])
@@ -1132,6 +1194,7 @@ def create(output: str, markdown: str, kind: str = "word", title: str = "", lang
         raise Refused(NO_FOLDER)
     if not (markdown or "").strip():
         raise Refused("There's nothing to put in the document.")
+    place = _subfolder(place, output)
     if kind.lower() in ("powerpoint", "pptx", "slides", "presentation"):
         out = output_for(place / "x.pptx", "", ".pptx", name=output or "presentation")
         prs = _slides_from_markdown(markdown, title)
@@ -1149,6 +1212,20 @@ def create(output: str, markdown: str, kind: str = "word", title: str = "", lang
     out = output_for(place / "x.docx", "", ".docx", name=output or "document")
     doc.save(str(out))
     return {"saved_as": _rel(out)}
+
+
+def _subfolder(place: Path, output: str) -> Path:
+    """The folder named in an output like "DBSA Manual/Chapter 1", if it's
+    inside the work folder and already there; else the work folder."""
+    parts = re.split(r"[\\/]", str(output or ""))[:-1]
+    if not parts:
+        return place
+    candidate = place.joinpath(*[p for p in parts if p not in ("", ".", "..")])
+    try:
+        candidate.resolve().relative_to(place.resolve())
+    except ValueError:
+        return place
+    return candidate if candidate.is_dir() else place
 
 
 def _first_heading(markdown: str) -> str:
