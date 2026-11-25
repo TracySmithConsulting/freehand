@@ -594,7 +594,8 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "document_edit": {
         "description": ("Edit a Word or PowerPoint file, keeping its formatting, saved as a new copy. Word "
                         "changes: {find, replace}; {paragraph, text}; {paragraph, style} (e.g. \"Heading 2\"); "
-                        "{paragraph, insert_after, style?}; {paragraph, delete: true}; {accept: [change numbers] or "
+                        "{paragraph, insert_after, style?}; {paragraph, delete: true}; {font: \"Verdana\", size: 12} "
+                        "(the whole document's font and body text size); {accept: [change numbers] or "
                         "\"all\"}; {reject: [...]}; {remove_comment: number}. Edit a copy once, with all the changes "
                         "for it, then keep working on that copy. PowerPoint changes: "
                         "{find, replace}; {slide, title}; {slide, notes}; {slide, picture, alt_text}. Numbers "
@@ -632,7 +633,9 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "required": ["files", "output"]},
     },
     "document_create": {
-        "description": ("Create a new Word document or PowerPoint in the work folder from Markdown. Word: # "
+        "description": ("Create a NEW Word document or PowerPoint in the work folder from Markdown. Never use it "
+                        "to redo an existing document: that loses its formatting. To change one, use document_edit "
+                        "on it (several changes in one go), which keeps everything else. Word: # "
                         "headings, - lists, 1. lists, **bold**, *italic*, | tables |. PowerPoint: each # heading "
                         "starts a slide with that title, - lines are bullets, and lines after \"Notes:\" are "
                         "speaker notes. Real headings and slide titles, so it's accessible from the start."),
