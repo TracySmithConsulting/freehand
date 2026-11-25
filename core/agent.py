@@ -757,8 +757,13 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             [s for s in _usable_tools() if s["function"]["name"] in allowed], [command], lean=False)
     else:
         allowed = None
+        # A document job under way ("Go ahead", "Make the changes") keeps
+        # the work tools, whatever words the message uses.
+        from core import work_notes
+        working = ("work",) if work_notes.under_way(history) else ()
         tools, tool_state = tool_selection.select(_usable_tools(), [command, *earlier], lean=lean,
-                                                  by_topic=tool_selection.tools_by_topic(get_llm_config()))
+                                                  by_topic=tool_selection.tools_by_topic(get_llm_config()),
+                                                  also=working)
     if not job and not delegated:
         tools = [*tools, ask_user.schema()]
     # A child: telling their parents when FreeHand is worried (core/children.py).
@@ -798,6 +803,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             usage["estimated"] = usage["estimated"] or bool(u.get("estimated"))
 
     final_response = {"text": "", "tools_used": [], "error": None}
+    work_log: List[str] = []  # what the document tools did, kept with the turn (core/work_notes.py)
     switched = None  # set when a backup model answered instead of the main one
 
     # ── Loop-safety: track recent tool calls to detect infinite retries ──
@@ -1152,15 +1158,23 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             "args": tool_args,
             "result": tool_result.get("content", "")[:200],
         })
+        if tool_name in WORK_TOOLS:
+            from core import work_notes
+            work_log.append(work_notes.line(tool_name, tool_args, tool_result.get("content", "")))
 
+    out_of_steps = False
     if not final_response["text"] and not final_response["error"] and final_response["tools_used"]:
+        out_of_steps = True
         # Every turn went on tool calls (for example several searches), so
         # there was no reply - people got an empty message. Ask once more,
         # without tools, for an answer from what was found.
         messages.append({
             "role": "user",
             "content": ("Please answer me now from what you've found and done so far, without using more "
-                        "tools. Don't mention tools or this message; if something isn't finished, say what's left."),
+                        "tools. Don't mention tools or this message; if something isn't finished, say what's left."
+                        + (" For document work that isn't finished, end with the exact changes still to make "
+                           "(paragraph numbers and the new wording or style), so they can be made straight away "
+                           "next time, without reading everything again." if work_log else "")),
         })
         last = await call_llm(messages, config=model_cfg)
         count(last)
@@ -1171,13 +1185,19 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         else:
             final_response["text"] = strip_reasoning(last.get("content", "") or "")
 
+    note = ""
+    if work_log:
+        from core import work_notes
+        note = work_notes.note(work_log, out_of_steps)
     if final_response["text"] and not final_response["error"] and not job and not delegated:
         if member:
             # Its own short chat only, not long-term memory.
             from core import people
-            conversation.add_turn(conv_key, command, final_response["text"], person=people.current())
+            conversation.add_turn(conv_key, command, final_response["text"], person=people.current(),
+                                  **({"work_note": note} if note else {}))
         else:
-            _remember_turn(conv_key, command, final_response["text"], source)
+            _remember_turn(conv_key, command, final_response["text"], source,
+                           **({"work_note": note} if note else {}))
     if usage["calls"]:
         final_response["usage"] = usage
 
@@ -1190,11 +1210,11 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     return final_response
 
 
-def _remember_turn(conv_key: str, command: str, reply: str, source: str) -> None:
+def _remember_turn(conv_key: str, command: str, reply: str, source: str, work_note: str = "") -> None:
     """Keep this exchange: in the conversation history now, and in long-term
     memory in the background (Hindsight extracts the facts worth keeping)."""
     from core import people
-    conversation.add_turn(conv_key, command, reply, person=people.current())
+    conversation.add_turn(conv_key, command, reply, person=people.current(), work_note=work_note)
     if long_memory.looks_secret(command) or long_memory.looks_secret(reply):
         return
     if source == "selftest":

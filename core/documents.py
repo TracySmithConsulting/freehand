@@ -358,6 +358,132 @@ def _make_list(doc, paragraphs, numbers: List[int], kind: str) -> str:
     return f"{span} now {word} (real Word list items)"
 
 
+MANY_OK = ("style", "case", "keep", "drop_full_stop", "delete", "remove_picture")
+
+
+def _expand(changes, skipped: List[str]):
+    """Changes with "paragraphs" (style, case, drop_full_stop, delete,
+    remove_picture) become one change per paragraph, so a whole chapter's
+    headings take one change. Lists keep "paragraphs": they're one list."""
+    out, many = [], False
+    for c in changes or []:
+        if isinstance(c, dict) and "paragraphs" in c and "list" not in c:
+            rest = {k: v for k, v in c.items() if k != "paragraphs"}
+            if not rest or any(k not in MANY_OK for k in rest):
+                skipped.append("\"paragraphs\" works with style, case, drop_full_stop, delete and "
+                               "remove_picture; text and insert_after take one paragraph")
+                continue
+            try:
+                numbers = _paragraph_numbers(c)
+            except (TypeError, ValueError):
+                skipped.append(f"\"{c.get('paragraphs')}\" isn't a list of paragraph numbers")
+                continue
+            out.extend({**rest, "paragraph": n} for n in numbers)
+            many = many or len(numbers) > 1
+        else:
+            out.append(c)
+    return out, many
+
+
+def _summarise(lines: List[str], many: bool) -> List[str]:
+    """Many paragraphs changed the same way: one line, not one each."""
+    if not many:
+        return lines
+    groups: dict = {}
+    order = []
+    for line in lines:
+        m = re.fullmatch(r"paragraph (\d+)(.*)", line)
+        key = m.group(2) if m else line
+        if key not in groups:
+            groups[key] = []
+            order.append(key)
+        if m:
+            groups[key].append(m.group(1))
+    out = []
+    for key in order:
+        numbers = groups[key]
+        if len(numbers) > 1:
+            out.append(f"paragraphs {', '.join(numbers)}"
+                       + key.replace(" is now", " are now").replace(" doesn't", " don't"))
+        elif numbers:
+            out.append(f"paragraph {numbers[0]}{key}")
+        else:
+            out.append(key)
+    return out
+
+
+SMALL_WORDS = {"a", "an", "and", "as", "at", "but", "by", "for", "from", "in", "into", "nor", "of", "on", "or",
+               "per", "the", "to", "via", "with"}
+NUMBER_PREFIX = re.compile(r"^(\s*(?:(?:chapter|section|part)\s+\d+[.:]?\s*[-\u2013\u2014:]?\s*|"
+                           r"\d+(?:\.\d+)*\.?\s+|[a-z]\.\s+|\([a-z0-9]+\)\s+)?)", re.I)
+
+
+def _recase(text: str, how: str, keep: List[str]) -> str:
+    """Sentence, title or upper case. Words the person names in keep stay
+    as they wrote them (names, "DeafBlind", "DBSA"), and so do words that
+    already had capitals inside (like "DeafBlind") when the text wasn't all
+    capitals."""
+    prefix = NUMBER_PREFIX.match(text).group(1)
+    body = text[len(prefix):]
+    if how == "upper":
+        return prefix.upper() + body.upper()
+    prefix = re.sub(r"(?i)\b(chapter|section|part)\b", lambda m: m.group(1).capitalize(), prefix)
+    shouting = body.upper() == body
+    parts = re.split(r"(\s+)", body)
+    out, first = [], True
+    for word in parts:
+        if not word or word.isspace():
+            out.append(word)
+            continue
+        inner_caps = not shouting and any(ch.isupper() for ch in word[1:])
+        lower = word if inner_caps else word.lower()
+        if how == "sentence":
+            new = (lower[:1].upper() + lower[1:]) if first else lower
+        else:
+            new = lower if (not first and lower.strip("(\"'\u201c") in SMALL_WORDS) else (
+                re.sub(r"^([(\"'\u201c]*)(\w)", lambda m: m.group(1) + m.group(2).upper(), lower))
+        if first and how == "sentence":
+            new = re.sub(r"^([(\"'\u201c]*)(\w)", lambda m: m.group(1) + m.group(2).upper(), new)
+        out.append(new)
+        first = False
+    result = prefix + "".join(out)
+    for k in sorted(keep, key=len, reverse=True):
+        if k.strip():
+            result = re.sub(r"(?<!\w)" + re.escape(k) + r"(?!\w)", lambda _m, k=k: k, result, flags=re.I)
+    return result
+
+
+def _set_case(p, how: str, keep: List[str]) -> None:
+    """Change a paragraph's case, keeping each run's formatting."""
+    runs = [r for r in p.runs if r.text]
+    whole = "".join(r.text for r in runs)
+    new = _recase(whole, how, keep)
+    if len(new) != len(whole):  # a rare letter whose case changes its length
+        if runs:
+            runs[0].text = new
+            for r in runs[1:]:
+                r.text = ""
+        return
+    at = 0
+    for r in runs:
+        r.text = new[at:at + len(r.text)]
+        at += len(r.text)
+
+
+def _drop_full_stop(p) -> bool:
+    """Take one full stop off the end of a paragraph (not "..."). True if
+    there was one."""
+    for r in reversed(p.runs):
+        if not r.text.strip():
+            continue
+        stripped = r.text.rstrip()
+        if stripped.endswith(".") and not stripped.endswith(".."):
+            r.text = stripped[:-1] + r.text[len(stripped):]
+            return True
+        return False
+    return False
+
+
 def _remove_pictures(p) -> int:
     """Take the pictures out of a paragraph; the number removed."""
     gone = 0
@@ -983,6 +1109,10 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
     {"paragraph": n, "delete": true}
     {"paragraphs": [n, ...] or "18-22", "list": "bullet" | "number" | "none"}
     {"paragraph": n, "remove_picture": true}
+    {"paragraph": n, "case": "sentence" | "title" | "upper", "keep": ["DeafBlind", ...]}
+    {"paragraph": n, "drop_full_stop": true}
+    "paragraphs" instead of "paragraph" does style, case, drop_full_stop,
+    delete or remove_picture to many paragraphs in one change.
     Paragraph numbers are the "p" numbers from document_outline."""
     from docx import Document
     path = resolve(name)
@@ -991,7 +1121,8 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
     doc = Document(str(path))
     paragraphs = list(doc.paragraphs)
     done, skipped, to_delete = [], [], []
-    for c in changes or []:
+    changes, many = _expand(changes, skipped)
+    for c in changes:
         if not isinstance(c, dict):
             continue
         if "accept" in c or "reject" in c:
@@ -1075,8 +1206,22 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
                 except KeyError:
                     skipped.append(f"there's no style called {c['style']}")
             done.append(f"a paragraph added after {n}")
+        if c.get("case"):
+            how = str(c["case"]).lower()
+            if how not in ("sentence", "title", "upper"):
+                skipped.append(f"case is \"sentence\", \"title\" or \"upper\", not \"{c['case']}\"")
+            else:
+                _set_case(p, how, [str(k) for k in (c.get("keep") or [])])
+                done.append(f"paragraph {n} in {how} case")
+        if c.get("drop_full_stop"):
+            if _drop_full_stop(p):
+                done.append(f"paragraph {n}: full stop removed")
+            else:
+                skipped.append(f"paragraph {n} doesn't end with a full stop")
     for p in to_delete:
         p._p.getparent().remove(p._p)
+    done = _summarise(done, many)
+    skipped = _summarise(skipped, many)
     if not done:
         return {"error": "Nothing was changed: " + "; ".join(skipped or ["no changes were given"])}
     out = output_for(path, "edited", name=output)

@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 MAX_TURNS = 6
 IDLE_HOURS = 3
 MAX_CHARS = 4000  # per stored message, so one long reply can't crowd out the rest
+MAX_NOTE = 1500   # a reply's work notes: what FreeHand read and saved (core/work_notes.py)
 
 
 def _conn() -> sqlite3.Connection:
@@ -37,6 +38,9 @@ def _conn() -> sqlite3.Connection:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_conv_turns ON conversation_turns(conversation, id)")
     from core import people
     people.ensure_person_column(conn, "conversation_turns")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(conversation_turns)")}
+    if "work_note" not in columns:
+        conn.execute("ALTER TABLE conversation_turns ADD COLUMN work_note TEXT NOT NULL DEFAULT ''")
     return conn
 
 
@@ -58,7 +62,7 @@ def history(key: str) -> list[dict]:
         conn = _conn()
         try:
             rows = conn.execute(
-                "SELECT user_text, reply_text, created_at FROM conversation_turns "
+                "SELECT user_text, reply_text, created_at, work_note FROM conversation_turns "
                 "WHERE conversation = ? AND person = ? ORDER BY id DESC LIMIT ?",
                 (key, people.current(), MAX_TURNS),
             ).fetchall()
@@ -75,22 +79,24 @@ def history(key: str) -> list[dict]:
     if _now() - last > timedelta(hours=IDLE_HOURS):
         return []
     messages: list[dict] = []
-    for user_text, reply_text, _ in reversed(rows):
+    from core import work_notes
+    for user_text, reply_text, _, note in reversed(rows):
         messages.append({"role": "user", "content": user_text})
-        messages.append({"role": "assistant", "content": reply_text})
+        messages.append({"role": "assistant", "content": reply_text + work_notes.as_history(note)})
     return messages
 
 
-def add_turn(key: str, user_text: str, reply_text: str, person: str = "owner") -> None:
+def add_turn(key: str, user_text: str, reply_text: str, person: str = "owner", work_note: str = "") -> None:
     if not (user_text or "").strip() or not (reply_text or "").strip():
         return
     try:
         conn = _conn()
         try:
             conn.execute(
-                "INSERT INTO conversation_turns (conversation, user_text, reply_text, created_at, person) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (key, user_text[:MAX_CHARS], reply_text[:MAX_CHARS], _now().isoformat(), person or "owner"),
+                "INSERT INTO conversation_turns (conversation, user_text, reply_text, created_at, person, work_note) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (key, user_text[:MAX_CHARS], reply_text[:MAX_CHARS], _now().isoformat(), person or "owner",
+                 (work_note or "")[:MAX_NOTE]),
             )
             # Keep the table small: only the newest turns per conversation matter.
             conn.execute(

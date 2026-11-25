@@ -597,10 +597,15 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                         "{paragraph, insert_after, style?}; {paragraph, delete: true}; {paragraphs: [18, 19] or "
                         "\"18-22\", list: \"bullet\" | \"number\" | \"none\"} (real Word bullets or numbers, typed "
                         "bullets removed: a list style alone shows no bullet); {paragraph, remove_picture: true}; "
+                        "{paragraph, case: \"sentence\" | \"title\" | \"upper\", keep: [\"DeafBlind\", ...]} (keep: "
+                        "words to leave as written, like names); {paragraph, drop_full_stop: true}; "
                         "{font: \"Verdana\", size: 12} "
                         "(the whole document's font and body text size); {accept: [change numbers] or "
-                        "\"all\"}; {reject: [...]}; {remove_comment: number}. Edit a copy once, with all the changes "
-                        "for it, then keep working on that copy. PowerPoint changes: "
+                        "\"all\"}; {reject: [...]}; {remove_comment: number}. \"paragraphs\": [25, 53] or \"25-30\" "
+                        "instead of \"paragraph\" does style, case, drop_full_stop, delete or remove_picture to many "
+                        "at once. Put ALL the changes for a document in ONE call, then keep working on that copy. "
+                        "When the person has agreed a plan, make the changes first: don't read everything again. "
+                        "PowerPoint changes: "
                         "{find, replace}; {slide, title}; {slide, notes}; {slide, picture, alt_text}. Numbers "
                         "come from document_outline."),
         "parameters": {"type": "object", "properties": {
