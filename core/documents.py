@@ -33,7 +33,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 log = logging.getLogger("freehand.documents")
 
@@ -190,12 +190,182 @@ def _no_alt(text: str) -> bool:
 
 
 def _docx_pictures(doc) -> List[dict]:
-    """Each picture in a Word document: its number, alt text, and where."""
+    """Each picture in a Word document: its number, alt text, and the
+    paragraph it's in (when it's in the main text, not a table)."""
+    index = _paragraph_index(doc)
     out = []
     for i, docpr in enumerate(doc.element.body.iter(f"{{{WP}}}docPr"), 1):
-        out.append({"picture": i, "alt_text": docpr.get("descr", "") or "",
-                    "decorative": "decorative" in (docpr.get("descr", "") or "").lower()})
+        item = {"picture": i, "alt_text": docpr.get("descr", "") or "",
+                "decorative": "decorative" in (docpr.get("descr", "") or "").lower()}
+        el = docpr.getparent()
+        while el is not None and el.tag != _w("p"):
+            el = el.getparent()
+        if el is not None and el in index:
+            item["p"] = index[el]
+        out.append(item)
     return out
+
+
+# ── Lists: real bullets and numbers ────────────────────────────────────
+
+TYPED_BULLET = re.compile(r"^\s*(?:[\u2022\u25cf\u25e6\u25aa\u25ab\u2023\u2043\u2219\u00b7\u25a0\u25a1\u2013\u2014*-]|o(?=\s))\s+")
+
+
+def _num_id(p):
+    """The numbering a paragraph uses, set on it or by its style, or None."""
+    ppr = p._p.pPr
+    if ppr is not None and ppr.numPr is not None and ppr.numPr.numId is not None:
+        return ppr.numPr.numId.val
+    style = p.style
+    while style is not None:
+        sppr = style.element.pPr
+        if sppr is not None and sppr.numPr is not None and sppr.numPr.numId is not None:
+            return sppr.numPr.numId.val
+        style = style.base_style
+    return None
+
+
+def _list_kind(doc, p) -> Optional[str]:
+    """"bullet" or "number" if the paragraph is a real list item, else None."""
+    num = _num_id(p)
+    if not num:  # 0 means "no numbering"
+        return None
+    try:
+        numbering = doc.part.numbering_part.element
+    except (KeyError, NotImplementedError):
+        return "bullet"
+    for n in numbering.findall(_w("num")):
+        if n.get(_w("numId")) == str(num):
+            ref = n.find(_w("abstractNumId"))
+            abstract = ref.get(_w("val")) if ref is not None else None
+            for a in numbering.findall(_w("abstractNum")):
+                if a.get(_w("abstractNumId")) == abstract:
+                    fmt = a.find(_w("lvl") + "/" + _w("numFmt"))
+                    if fmt is not None and fmt.get(_w("val")) not in ("bullet", "none"):
+                        return "number"
+    return "bullet"
+
+
+def _numbering(doc):
+    """The document's numbering definitions, made if it has none."""
+    try:
+        return doc.part.numbering_part.element
+    except (KeyError, NotImplementedError):
+        pass
+    from docx.opc.constants import CONTENT_TYPE as CT, RELATIONSHIP_TYPE as RT
+    from docx.opc.packuri import PackURI
+    from docx.oxml import parse_xml
+    from docx.parts.numbering import NumberingPart
+    part = NumberingPart(PackURI("/word/numbering.xml"), CT.WML_NUMBERING,
+                         parse_xml(f'<w:numbering xmlns:w="{W}"/>'), doc.part.package)
+    doc.part.relate_to(part, RT.NUMBERING)
+    return part.element
+
+
+def _new_list(doc, kind: str) -> int:
+    """A new bullet or number list definition; returns its numId."""
+    from docx.oxml import parse_xml
+    numbering = _numbering(doc)
+    abstract_ids = [int(a.get(_w("abstractNumId"))) for a in numbering.findall(_w("abstractNum"))]
+    num_ids = [int(n.get(_w("numId"))) for n in numbering.findall(_w("num"))]
+    abstract_id = max(abstract_ids, default=-1) + 1
+    num_id = max(num_ids, default=0) + 1
+    if kind == "number":
+        fmt, text = "decimal", "%1."
+    else:
+        fmt, text = "bullet", "\u2022"
+    abstract = parse_xml(
+        f'<w:abstractNum xmlns:w="{W}" w:abstractNumId="{abstract_id}">'
+        f'<w:multiLevelType w:val="singleLevel"/>'
+        f'<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/>'
+        f'<w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>'
+        f'</w:abstractNum>')
+    first_num = numbering.find(_w("num"))
+    if first_num is not None:
+        first_num.addprevious(abstract)  # Word wants every abstractNum before the nums
+    else:
+        numbering.append(abstract)
+    numbering.append(parse_xml(f'<w:num xmlns:w="{W}" w:numId="{num_id}"><w:abstractNumId w:val="{abstract_id}"/></w:num>'))
+    return num_id
+
+
+def _strip_typed_bullet(p) -> None:
+    for run in p.runs:
+        if not run.text:
+            continue
+        if not run.text.strip():
+            run.text = ""
+            continue
+        run.text = TYPED_BULLET.sub("", run.text, count=1)
+        return
+
+
+def _paragraph_numbers(c) -> List[int]:
+    """From {"paragraphs": [18, 19] or "18-22"} or {"paragraph": 18}."""
+    given = c.get("paragraphs", c.get("paragraph"))
+    if isinstance(given, (int, float)):
+        return [int(given)]
+    if isinstance(given, str):
+        out = []
+        for part in re.split(r"\s*,\s*", given.strip()):
+            m = re.fullmatch(r"(\d+)\s*(?:-|to)\s*(\d+)", part)
+            if m:
+                out.extend(range(int(m.group(1)), int(m.group(2)) + 1))
+            elif part.isdigit():
+                out.append(int(part))
+            else:
+                raise ValueError(part)
+        return out
+    if isinstance(given, list):
+        return [int(n) for n in given]
+    raise ValueError(given)
+
+
+def _make_list(doc, paragraphs, numbers: List[int], kind: str) -> str:
+    kind = str(kind).lower()
+    if kind in ("bullet", "bullets", "true", "yes"):
+        kind = "bullet"
+    elif kind in ("number", "numbers", "numbered"):
+        kind = "number"
+    elif kind not in ("none", "false", "no", "off"):
+        raise ValueError(kind)
+    if any(n < 0 or n >= len(paragraphs) for n in numbers):
+        raise IndexError
+    if kind not in ("bullet", "number"):
+        for n in numbers:
+            ppr = paragraphs[n]._p.pPr
+            if ppr is not None and ppr.numPr is not None:
+                ppr.remove(ppr.numPr)
+            if paragraphs[n].style is not None and "list" in paragraphs[n].style.name.lower():
+                paragraphs[n].style = doc.styles["Normal"]
+        span = f"paragraph {numbers[0]} is" if len(numbers) == 1 else f"paragraphs {numbers[0]} to {numbers[-1]} are"
+        return f"{span} no longer a list"
+    num_id = _new_list(doc, kind)
+    try:
+        list_style = doc.styles["List Paragraph"]
+    except KeyError:
+        list_style = None
+    for n in numbers:
+        p = paragraphs[n]
+        _strip_typed_bullet(p)
+        if list_style is not None and (p.style is None or p.style.name in ("Normal", "Body Text")):
+            p.style = list_style
+        num_pr = p._p.get_or_add_pPr().get_or_add_numPr()
+        num_pr.get_or_add_ilvl().val = 0
+        num_pr.get_or_add_numId().val = num_id
+    word = "bullets" if kind == "bullet" else "a numbered list"
+    span = f"paragraph {numbers[0]} is" if len(numbers) == 1 else f"paragraphs {numbers[0]} to {numbers[-1]} are"
+    return f"{span} now {word} (real Word list items)"
+
+
+def _remove_pictures(p) -> int:
+    """Take the pictures out of a paragraph; the number removed."""
+    gone = 0
+    for tag in (_w("drawing"), _w("pict")):
+        for el in list(p._p.iter(tag)):
+            el.getparent().remove(el)
+            gone += 1
+    return gone
 
 
 def _tracked(body) -> dict:
@@ -245,18 +415,27 @@ def _docx_outline(path: Path, start: int = 0) -> dict:
     for i in range(start, len(all_paragraphs)):
         p = all_paragraphs[i]
         text = p.text
-        if not text.strip():
+        pictures = [d.get("descr", "") or "" for d in p._p.iter(f"{{{WP}}}docPr")]
+        if not text.strip() and not pictures:
             continue
         if used + len(text) > PART_CHARS and paragraphs:
             next_from = i
             break
         used += len(text)
         item = {"p": i, "text": text[:6000]}
+        if pictures:
+            item["picture"] = " | ".join(a or "(no alt text)" for a in pictures)
         level = _heading_level(p.style.name if p.style is not None else "")
         if level is not None:
             item["heading"] = level
         elif p.style is not None and p.style.name not in ("Normal", "Body Text"):
             item["style"] = p.style.name
+        if level is None:
+            kind = _list_kind(doc, p)
+            if kind:
+                item["list"] = kind
+            elif p.style is not None and "list" in p.style.name.lower():
+                item["list"] = "none: a list style, but no bullet or number shows"
         paragraphs.append(item)
     tables = [{"table": i + 1, "rows": len(t.rows), "columns": len(t.columns),
                "header_row": _has_header_row(t),
@@ -617,6 +796,22 @@ def _check_docx(path: Path) -> List[dict]:
                                   f"(paragraphs {fake[:10]}).",
                        "why": "They look like headings but a screen reader can't jump to them.",
                        "fix": "If they're section titles, give them a Heading style (document_edit with style)."})
+    typed = [i for i, p in enumerate(doc.paragraphs) if TYPED_BULLET.match(p.text) and not _num_id(p)]
+    if typed:
+        issues.append({"problem": f"{len(typed)} paragraph(s) start with a typed bullet or dash instead of being "
+                                  f"a real list (paragraphs {typed[:15]}).",
+                       "why": "A screen reader doesn't say it's a list or how many items it has, and reads out "
+                              "the bullet character.",
+                       "fix": "Make them real bullets (document_edit with {paragraphs, list: \"bullet\"}), which "
+                              "also removes the typed bullets."})
+    unmarked = [i for i, p in enumerate(doc.paragraphs) if p.text.strip() and p.style is not None
+                and "list" in p.style.name.lower() and not _num_id(p) and i not in typed]
+    if unmarked:
+        issues.append({"problem": f"{len(unmarked)} paragraph(s) have a list style but no bullet or number "
+                                  f"shows (paragraphs {unmarked[:15]}).",
+                       "why": "They're indented like a list but nothing marks them as one, for sighted or "
+                              "screen reader readers.",
+                       "fix": "Make them real bullets (document_edit with {paragraphs, list: \"bullet\"})."})
     no_header = [i + 1 for i, t in enumerate(doc.tables) if len(t.rows) > 1 and not _has_header_row(t)]
     if no_header:
         issues.append({"problem": f"{len(no_header)} table(s) have no header row (tables {no_header}).",
@@ -786,6 +981,8 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
     {"paragraph": n, "style": "Heading 2"}
     {"paragraph": n, "insert_after": "...", "style": optional}
     {"paragraph": n, "delete": true}
+    {"paragraphs": [n, ...] or "18-22", "list": "bullet" | "number" | "none"}
+    {"paragraph": n, "remove_picture": true}
     Paragraph numbers are the "p" numbers from document_outline."""
     from docx import Document
     path = resolve(name)
@@ -818,6 +1015,14 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
             (done if n else skipped).append(f"comment {c['remove_comment']} removed" if n else
                                             f"there's no comment {c['remove_comment']}")
             continue
+        if "list" in c:
+            try:
+                done.append(_make_list(doc, paragraphs, _paragraph_numbers(c), c["list"]))
+            except (TypeError, ValueError):
+                skipped.append("list needs paragraph numbers and \"bullet\", \"number\" or \"none\"")
+            except IndexError:
+                skipped.append(f"some of paragraphs {c.get('paragraphs', c.get('paragraph'))} don't exist")
+            continue
         if "find" in c:
             n = sum(_replace_in_paragraph(p, str(c["find"]), str(c.get("replace", ""))) for p in _all_paragraphs(doc))
             (done if n else skipped).append(f"\"{str(c['find'])[:40]}\": {n} replaced" if n else
@@ -832,6 +1037,14 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
         if c.get("delete"):
             to_delete.append(p)
             done.append(f"paragraph {n} removed")
+        if c.get("remove_picture"):
+            gone = _remove_pictures(p)
+            if not gone:
+                skipped.append(f"paragraph {n} has no picture")
+            else:
+                if not p.text.strip() and not c.get("delete"):
+                    to_delete.append(p)
+                done.append(f"the picture in paragraph {n} removed")
         if "text" in c:
             runs = p.runs
             if runs:
@@ -1361,8 +1574,46 @@ ALT_PROMPT = (
     "with exactly: DECORATIVE. If you can't see a picture, reply with exactly: NO PICTURE.")
 
 
+MADE_PROMPT = (
+    "An image service made this picture for a document. It was asked for: {request}\n\n"
+    "Describe what is ACTUALLY in the picture, not what was asked for: image services often get things "
+    "wrong. Reply in exactly two parts.\n"
+    "ALT: one or two plain sentences of alt text saying what it shows, as a screen reader user would want "
+    "it; no \"image of\". Count things exactly as they appear. Include any words in it, as they are spelled.\n"
+    "WORDS: if it has words in it, say whether they're all in English and correctly spelled, and list any "
+    "that are garbled, misspelled, in another language or missing compared with the request. If it has no "
+    "words, say: none.")
+
+
+async def check_made(image: bytes, request: str) -> Tuple[Optional[str], str]:
+    """For a picture an image service made: (alt text written from what's
+    really in it, what's wrong with any words in it). (None, "") if the
+    AI couldn't look."""
+    text = await _look(image, MADE_PROMPT.format(request=request[:600]))
+    if text is None:
+        return None, ""
+    alt, words = text, ""
+    m = re.search(r"WORDS:\s*(.*)", text, re.S | re.I)
+    if m:
+        words = m.group(1).strip()
+        alt = text[:m.start()]
+    alt = re.sub(r"^\s*ALT:\s*", "", alt.strip(), flags=re.I).strip().strip('"')
+    if re.fullmatch(r"(?:none|no words?)\.?", words, re.I):
+        words = ""
+    return alt[:500] or None, words[:500]
+
+
 async def describe(image: bytes, context: str = "") -> Optional[str]:
     """Alt text from the AI model, "" for decorative, or None if it couldn't."""
+    text = await _look(image, ALT_PROMPT + (f"\nThe text near it: {context[:500]}" if context else ""))
+    if text is None:
+        return None
+    text = text.strip('"')
+    return "" if text.upper().startswith("DECORATIVE") else text[:500]
+
+
+async def _look(image: bytes, prompt: str) -> Optional[str]:
+    """The AI model's answer about a picture, or None if it couldn't look."""
     import base64
     from core import agent, ai_use
     try:
@@ -1377,18 +1628,17 @@ async def describe(image: bytes, context: str = "") -> Optional[str]:
     if ai_use.refusal():
         return None
     url = "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
-    content = [{"type": "text", "text": ALT_PROMPT + (f"\nThe text near it: {context[:500]}" if context else "")},
-               {"type": "image_url", "image_url": {"url": url}}]
+    content = [{"type": "text", "text": prompt}, {"type": "image_url", "image_url": {"url": url}}]
     reply = await agent.call_llm([{"role": "user", "content": content}])
     if "error" in reply:
         return None
     u = reply.get("_usage") or {}
     ai_use.count({"calls": 1, "prompt_tokens": int(u.get("prompt_tokens") or 0),
                   "completion_tokens": int(u.get("completion_tokens") or 0)})
-    text = agent.strip_reasoning(str(reply.get("content") or "")).strip().strip('"')
-    if not text or text.upper().startswith("NO PICTURE"):
+    text = agent.strip_reasoning(str(reply.get("content") or "")).strip()
+    if not text or text.strip('"').upper().startswith("NO PICTURE"):
         return None
-    return "" if text.upper().startswith("DECORATIVE") else text[:500]
+    return text
 
 
 async def fix(name: str, title: str = "", language: str = "en-ZA", alt_text: bool = True,

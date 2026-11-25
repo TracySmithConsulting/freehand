@@ -35,6 +35,8 @@ FreeHand adds (2), (3) and so on. It never deletes anything.
   - tables without a header row;
   - no title or language;
   - empty paragraphs used for spacing;
+  - lists typed with "•" or "-" instead of real bullets, and list-styled
+    lines with no bullet showing;
   - links that say "click here";
   - comments left in;
   - PDFs that aren't tagged or are only scanned pictures.
@@ -44,6 +46,9 @@ FreeHand adds (2), (3) and so on. It never deletes anything.
   still to do.
 - **"Change every 'client' to 'customer'", "Make paragraph 12 a heading",
   "Give slide 4 the title 'Our results'".** The formatting is kept.
+- **"Make paragraphs 18 to 22 real bullets."** FreeHand makes them real
+  Word bullets, or a numbered list, and takes out any typed "•". A screen
+  reader then says it's a list and how many items it has.
 - **"Clean up Draft.docx."** FreeHand takes out comments, accepts tracked
   changes, and removes editor's notes in square brackets, like "[Editor:
   check this]", "[TK]", "[TODO]" or "[?]". It lists every note it removed,
@@ -66,10 +71,15 @@ FreeHand adds (2), (3) and so on. It never deletes anything.
   FreeHand says whether it has a title and language.
 - **"Make a picture of a cosy reading corner and put it on slide 2"**, or
   **"Put my blanket photo after paragraph 4."** FreeHand makes the picture
-  with your image service, or uses a picture you put in the work folder,
-  and saves it there. Your AI model writes the alt text by looking at the
-  actual picture, unless you give it. Making a picture costs a little, like
-  an AI message.
+  with your image service, or uses a picture you put in the work folder.
+  A made picture is saved beside its document, named after it. Your AI
+  model always writes a made picture's alt text by looking at it, and says
+  if any words in it are garbled, misspelled or in another language. For
+  your own photo, you can give the alt text. Making a picture costs a
+  little, like an AI message.
+- **"Replace the picture in paragraph 24 with a new one"** or **"Take out
+  the picture at the end."** FreeHand swaps or removes it, so you don't end
+  up with two.
 
 ## A big job, like a book
 
@@ -107,3 +117,6 @@ tries the next, and says why if none could.
 - PDF text can come out with odd line breaks, so it may need tidying.
 - Alt text written by AI is a draft: check it says what matters about each
   picture.
+- Image services are bad at drawing words: they come out garbled or in the
+  wrong language. Pictures without words work better, and the words can go
+  in the text or the caption.

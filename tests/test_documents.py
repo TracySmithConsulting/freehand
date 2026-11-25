@@ -168,7 +168,8 @@ def test_word_outline(work):
     sample_docx(work / "r.docx")
     out = d.outline("r.docx")
     assert out["paragraphs"][0] == {"p": 0, "text": "Annual report", "heading": 1}
-    assert out["pictures"] == [{"picture": 1, "alt_text": "", "decorative": False}]
+    assert out["pictures"] == [{"picture": 1, "alt_text": "", "decorative": False, "p": 5}]
+    assert {"p": 5, "text": "", "picture": "(no alt text)"} in out["paragraphs"]  # where it is, in the text
     assert out["tables"][0]["first_row"] == ["Name", "Total"] and not out["tables"][0]["header_row"]
 
 

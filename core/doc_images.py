@@ -176,14 +176,19 @@ def _slug(text: str) -> str:
 
 
 async def add_picture(prompt: str = "", picture: str = "", file: str = "", after_paragraph=None, slide=None,
-                      alt_text: str = "", aspect: str = "16:9", output: str = "") -> dict:
+                      alt_text: str = "", aspect: str = "16:9", output: str = "", replace_paragraph=None) -> dict:
     """Make a picture (or use one from the work folder), save it, and if a
-    document is named, put it into a new copy of that document."""
+    document is named, put it into a new copy of that document: in Word,
+    after a paragraph, or in place of the picture in a paragraph."""
     place = documents.folder()
     documents._owner()
     if not place:
         raise Refused(documents.NO_FOLDER)
-    made_by = ""
+    target = documents.resolve(file) if file else None
+    if target is not None and target.suffix.lower() == ".docx" and after_paragraph is None and replace_paragraph is None:
+        raise Refused("Say where the picture goes in the Word document: after_paragraph (a paragraph number "
+                      "from document_outline), or replace_paragraph to swap the picture in that paragraph.")
+    made_by, words = "", ""
     if picture:
         source = documents.resolve(picture)
         if source.suffix.lower() not in PICTURE_SUFFIXES:
@@ -192,45 +197,73 @@ async def add_picture(prompt: str = "", picture: str = "", file: str = "", after
         saved = source
     elif prompt:
         data, made_by = await make(prompt, aspect)
-        saved = documents.new_path(place / f"{_slug(prompt)}.png")
+        # Beside the document it's for, named after it; else in the work folder.
+        where, stem = (target.parent, f"{target.stem} picture") if target is not None else (place, _slug(prompt))
+        saved = documents.new_path(where / f"{stem}.png")
         saved.write_bytes(data)
     else:
         raise Refused("Say what picture to make, or which picture in the work folder to use.")
-    alt = alt_text.strip()
-    if not alt:
-        described = await documents.describe(data, prompt)
-        alt = described if described is not None else (prompt[:300] if prompt else "")
+    if made_by:
+        # A made picture is always described from what's really in it: image
+        # services get counts and words wrong, so alt text from the request
+        # (or written before seeing it) can describe a different picture.
+        alt, words = await documents.check_made(data, prompt)
+        if alt is None:
+            alt = alt_text.strip()
+            words = ("The AI couldn't look at the picture, so its alt text isn't checked against it, and any "
+                     "words in it aren't either.")
+    else:
+        alt = alt_text.strip()
+        if not alt:
+            described = await documents.describe(data, prompt)
+            alt = described if described is not None else ""
     result = {"picture": documents._rel(saved), "alt_text": alt or "Decorative",
               **({"made_by": made_by} if made_by else {})}
-    if not file:
+    if words:
+        result["words_in_picture"] = words
+        result["warning"] = ("Tell the person exactly what's wrong with the words in the picture. Image services "
+                             "often garble words: a picture without words usually works better.")
+    if target is None:
         return result
-    target = documents.resolve(file)
     if target.suffix.lower() == ".docx":
-        result["saved_as"] = _into_docx(target, data, alt, after_paragraph, output)
+        result["saved_as"] = _into_docx(target, data, alt, after_paragraph, output, replace_paragraph)
     elif target.suffix.lower() == ".pptx":
         result["saved_as"] = _into_pptx(target, data, alt, slide, output)
     else:
         raise Refused("Pictures go into Word documents and PowerPoints.")
     result["original"] = f"\"{documents._rel(target)}\" is unchanged."
-    result["check"] = "Check the alt text says what matters about the picture, and use document_look to see the page."
+    result["check"] = ("The alt text above says what's really in the picture. Read the new copy back with "
+                       "document_outline before telling the person it's done.")
     return result
 
 
-def _into_docx(target: Path, data: bytes, alt: str, after, output: str) -> str:
+def _into_docx(target: Path, data: bytes, alt: str, after, output: str, replace=None) -> str:
     from docx import Document
     from docx.shared import Inches
     doc = Document(str(target))
     section = doc.sections[-1]
     room = (section.page_width - section.left_margin - section.right_margin) if section.page_width else Inches(6)
-    paragraph = doc.add_paragraph()
-    paragraph.add_run().add_picture(io.BytesIO(data), width=min(room, Inches(6)))
-    if after is not None:
-        try:
-            anchor = doc.paragraphs[int(after)]
-        except (ValueError, TypeError, IndexError):
-            raise Refused(f"There's no paragraph {after}.")
+    which = replace if replace is not None else after
+    try:
+        anchor = doc.paragraphs[int(which)]
+        if int(which) < 0:
+            raise IndexError
+    except (ValueError, TypeError, IndexError):
+        raise Refused(f"There's no paragraph {which}.")
+    if replace is not None:
+        if not documents._remove_pictures(anchor):
+            raise Refused(f"Paragraph {replace} has no picture to replace. Use after_paragraph to add one.")
+        if anchor.text.strip():
+            paragraph = anchor  # the picture shares its paragraph with words: keep them
+        else:
+            paragraph = doc.add_paragraph()
+            anchor._p.addnext(paragraph._p)
+            anchor._p.getparent().remove(anchor._p)
+    else:
+        paragraph = doc.add_paragraph()
         anchor._p.addnext(paragraph._p)
-    for docpr in paragraph._p.iter(f"{{{documents.WP}}}docPr"):
+    paragraph.add_run().add_picture(io.BytesIO(data), width=min(room, Inches(6)))
+    for docpr in list(paragraph._p.iter(f"{{{documents.WP}}}docPr"))[-1:]:
         docpr.set("descr", alt or "Decorative")
     out = documents.output_for(target, "with picture", name=output)
     doc.save(str(out))
