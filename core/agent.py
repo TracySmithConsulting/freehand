@@ -343,7 +343,8 @@ async def execute_tool(name: str, args: dict) -> dict:
                 if name == "work_files":
                     result = documents.list_files()
                 elif name == "document_outline":
-                    result = await asyncio.to_thread(documents.outline, str(args.get("file") or ""))
+                    result = await asyncio.to_thread(documents.outline, str(args.get("file") or ""),
+                                                     args.get("from_paragraph") or 0, str(args.get("show") or "text"))
                 elif name == "document_check":
                     result = await asyncio.to_thread(documents.check, str(args.get("file") or ""))
                 elif name == "document_edit":
@@ -928,6 +929,10 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             messages.append({"role": "tool", "tool_call_id": tool_call["id"], "content": note})
             continue
         work_turns += 1
+        if tool_name in WORK_TOOLS:
+            # A long document takes many steps (read a part, edit, check),
+            # so allow up to 15 before stopping to report back.
+            max_turns = max(max_turns, 15)
 
         # ── Detect stuck loops: same tool + same args called repeatedly ──
         call_key = f"{tool_name}|{json.dumps(tool_args, sort_keys=True)}"

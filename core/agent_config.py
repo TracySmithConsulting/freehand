@@ -577,8 +577,13 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "description": ("Read a file in the work folder: a Word document's numbered paragraphs (with headings), "
                         "tables, pictures, comments and tracked changes; a PowerPoint's slides (titles, text, "
                         "pictures, speaker notes); a PDF's text; an Excel file's sheets; Markdown or text. Use the "
-                        "paragraph and slide numbers with document_edit."),
-        "parameters": {"type": "object", "properties": {"file": {"type": "string", "description": "The file's name in the work folder"}}, "required": ["file"]},
+                        "paragraph and slide numbers with document_edit. Long documents come in parts: read on with "
+                        "from_paragraph (\"next_from\"). For Word, show \"comments\" lists the editor's comments "
+                        "(author, text, the words they're on, paragraph) and show \"changes\" lists tracked changes."),
+        "parameters": {"type": "object", "properties": {
+            "file": {"type": "string", "description": "The file's name in the work folder"},
+            "from_paragraph": {"type": "integer", "description": "Where to read on from (Word: paragraph; PDF: page)"},
+            "show": {"type": "string", "enum": ["text", "comments", "changes"]}}, "required": ["file"]},
     },
     "document_check": {
         "description": ("Check a Word, PowerPoint or PDF file in the work folder for accessibility problems "
@@ -589,7 +594,9 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "document_edit": {
         "description": ("Edit a Word or PowerPoint file, keeping its formatting, saved as a new copy. Word "
                         "changes: {find, replace}; {paragraph, text}; {paragraph, style} (e.g. \"Heading 2\"); "
-                        "{paragraph, insert_after, style?}; {paragraph, delete: true}. PowerPoint changes: "
+                        "{paragraph, insert_after, style?}; {paragraph, delete: true}; {accept: [change numbers] or "
+                        "\"all\"}; {reject: [...]}; {remove_comment: number}. Edit a copy once, with all the changes "
+                        "for it, then keep working on that copy. PowerPoint changes: "
                         "{find, replace}; {slide, title}; {slide, notes}; {slide, picture, alt_text}. Numbers "
                         "come from document_outline."),
         "parameters": {"type": "object", "properties": {
