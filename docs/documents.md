@@ -95,6 +95,14 @@ FreeHand adds (2), (3) and so on. It never deletes anything.
   FreeHand reads on until it's done.
 - **More steps:** document work can take up to 15 steps per message
   before FreeHand reports back. A long job may still need "carry on".
+- **It carries on where it stopped.** FreeHand keeps short notes of what
+  it read and saved with each reply, so "Go ahead" or "Make the changes"
+  picks up from there instead of reading everything again. If it runs out
+  of steps, it says exactly which changes are left.
+- **Whole-chapter changes in one go:** "Make paragraphs 26, 32 and 54
+  Heading 2", "Put the section titles in sentence case, keeping
+  DeafBlind", or "Take the full stops off the bullets in 5.2". Sentence
+  case, title case and capitals keep the words you name as written.
 
 **Work chapter by chapter, then combine.** Each step sends the
 conversation so far to your AI model, so smaller pieces cost less and are

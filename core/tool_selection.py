@@ -191,18 +191,20 @@ def load_tools_schema(groups: list[str]) -> dict:
 
 
 def select(all_tools: list[dict], texts: Iterable[str], lean: bool = False,
-           by_topic: bool = False) -> tuple[list[dict], dict]:
+           by_topic: bool = False, also: Iterable[str] = ()) -> tuple[list[dict], dict]:
     """The tools to send now, and a plan for load_tools.
 
     ``lean`` or ``by_topic``: only the core tools always, and the other
     groups when the words call for them (load_tools brings in the rest).
     Otherwise every one of FreeHand's own groups goes every time.
 
+    ``also``: groups to send whatever the words (a job under way).
+
     Returns (tools, state) where state holds every group's tools so
     ``add_group`` can load one later in the same turn.
     """
     texts = list(texts)
-    wanted = wanted_groups(texts)
+    wanted = wanted_groups(texts) | set(also)
     dynamic = _dynamic_groups()
     by_group: dict[str, list[dict]] = {}
     add_on_groups: set[str] = set()
