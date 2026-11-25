@@ -829,12 +829,15 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
 
     work_turns = 0
     loads = 0
+    from core import progress
+    progress.say("Thinking about your message")
     while work_turns < max_turns:
         llm_resp = await call_llm(messages, tools=tools, config=model_cfg)
         count(llm_resp)
         if "_switched" in llm_resp:
             # Keep FreeHand's marker out of what goes back to the model.
             switched = llm_resp.pop("_switched")
+            progress.say("Your main AI model didn't answer, so a backup is answering")
 
         if "error" in llm_resp:
             final_response["error"] = llm_resp["error"]
@@ -857,6 +860,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         # Execute the tool
         tool_name = tool_call["name"]
         tool_args = tool_call["args"]
+        progress.say(progress.describe_tool(tool_name, tool_args))
 
         if tool_name == ask_user.ASK_USER:
             # Not a real tool either: the questions are the reply, and the
@@ -1165,6 +1169,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     out_of_steps = False
     if not final_response["text"] and not final_response["error"] and final_response["tools_used"]:
         out_of_steps = True
+        progress.say("Writing the reply")
         # Every turn went on tool calls (for example several searches), so
         # there was no reply - people got an empty message. Ask once more,
         # without tools, for an answer from what was found.

@@ -215,7 +215,7 @@ def get_or_create_api_key() -> str:
 # this". A list of what's allowed, so a new screen is the owner's until
 # someone decides otherwise (docs/design/people.md, "Who can do what").
 MEMBER_ROUTES = frozenset({
-    ("POST", "/api/agent/command"),
+    ("POST", "/api/agent/command"), ("GET", "/api/agent/progress/{run_id}"),
     ("GET", "/api/tasks"), ("POST", "/api/tasks"), ("GET", "/api/tasks/limits"),
     ("POST", "/api/tasks/{task_id}/pause"), ("DELETE", "/api/tasks/{task_id}"),
     ("GET", "/api/approvals"), ("POST", "/api/approvals/clear"),
@@ -2097,13 +2097,31 @@ async def agent_command(body: dict, request: Request):
         # it that person's.
         source, caller_id = "", ""
 
-    # Records a truncated copy (N3) and runs the agent loop.
+    # Records a truncated copy (N3) and runs the agent loop. With a
+    # progress id, the console can follow the steps (core/progress.py).
+    from core import progress
     from core.agent import run_command
-    if person == people.OWNER_ID and not request.headers.get(SESSION_HEADER):
-        result = await run_command(command, source=source, caller_id=caller_id)
-    else:
-        result = await run_command(command, source=source, caller_id=caller_id, person=person)
+    run_id = body.get("progress_id")
+    token = progress.start(run_id, person) if progress.valid(run_id) else None
+    try:
+        if person == people.OWNER_ID and not request.headers.get(SESSION_HEADER):
+            result = await run_command(command, source=source, caller_id=caller_id)
+        else:
+            result = await run_command(command, source=source, caller_id=caller_id, person=person)
+    finally:
+        if token is not None:
+            progress.finish(token)
     return result
+
+
+@app.get("/api/agent/progress/{run_id}", dependencies=[Depends(require_api_key)])
+async def agent_progress(run_id: str, request: Request):
+    """The steps FreeHand has taken so far on a console message: plain
+    words for the command box while it waits. Only the person who sent it."""
+    from core import progress
+    if not progress.valid(run_id):
+        raise HTTPException(status_code=400, detail="That isn't a progress id.")
+    return progress.get(run_id, _request_person(request))
 
 
 # ── Long-term memory (Hindsight): what FreeHand remembers ──────────────
