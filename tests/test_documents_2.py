@@ -192,16 +192,59 @@ def test_a_made_picture_goes_into_a_word_copy_with_alt_text(work, monkeypatch):
     async def fake_make(prompt, aspect="16:9"):
         return png_bytes(), "Agnes"
 
-    async def fake_describe(image, context=""):
-        return "A blue rectangle."
+    async def fake_check(image, request):
+        return "A blue rectangle.", ""
     monkeypatch.setattr(doc_images, "make", fake_make)
-    monkeypatch.setattr(d, "describe", fake_describe)
-    out = asyncio.run(doc_images.add_picture(prompt="a calm blue banner", file="r.docx", after_paragraph=0))
-    assert out["picture"] == "a calm blue banner.png" and out["made_by"] == "Agnes"
+    monkeypatch.setattr(d, "check_made", fake_check)
+    out = asyncio.run(doc_images.add_picture(prompt="a calm blue banner", file="r.docx", after_paragraph=0,
+                                             alt_text="A calm blue banner."))
+    assert out["picture"] == "r picture.png" and out["made_by"] == "Agnes"  # named after the document
+    # Written from looking at it, not from what was asked for or the alt text given.
     assert out["alt_text"] == "A blue rectangle." and out["saved_as"] == "r (with picture).docx"
+    assert "words_in_picture" not in out
     doc = Document(str(work / out["saved_as"]))
     assert d._docx_pictures(doc)[0]["alt_text"] == "A blue rectangle."  # the new one comes first
     assert doc.paragraphs[1].text == "" and list(doc.paragraphs[1]._p.iter(f"{{{d.WP}}}docPr"))
+
+
+def test_a_made_picture_beside_its_document_says_what_is_wrong_with_its_words(work, monkeypatch):
+    (work / "Manual").mkdir()
+    sample_docx(work / "Manual" / "ch1.docx")
+
+    async def fake_make(prompt, aspect="16:9"):
+        return png_bytes(), "Agnes"
+
+    async def fake_look(image, prompt):
+        assert "five barriers" in prompt
+        return ("ALT: A diagram of four coloured boxes joined by arrows, labelled in Chinese.\n"
+                "WORDS: The labels are in Chinese, not English, and there are four boxes, not five.")
+    monkeypatch.setattr(doc_images, "make", fake_make)
+    monkeypatch.setattr(d, "_look", fake_look)
+    out = asyncio.run(doc_images.add_picture(prompt="a diagram of five barriers", file="Manual/ch1.docx",
+                                             after_paragraph=1))
+    assert Path(out["picture"]) == Path("Manual") / "ch1 picture.png"  # beside the document
+    assert out["alt_text"] == "A diagram of four coloured boxes joined by arrows, labelled in Chinese."
+    assert "Chinese" in out["words_in_picture"] and "garble" in out["warning"]
+
+
+def test_word_needs_to_be_told_where_the_picture_goes(work, monkeypatch):
+    sample_docx(work / "r.docx")
+    (work / "photo.png").write_bytes(png_bytes())
+    with pytest.raises(d.Refused, match="Say where the picture goes"):
+        asyncio.run(doc_images.add_picture(picture="photo.png", file="r.docx", alt_text="A photo."))
+
+
+def test_a_picture_is_replaced_in_place(work):
+    sample_docx(work / "r.docx")  # its picture is paragraph 5
+    (work / "new.png").write_bytes(png_bytes(size=(300, 200)))
+    count = len(Document(str(work / "r.docx")).paragraphs)
+    out = asyncio.run(doc_images.add_picture(picture="new.png", file="r.docx", replace_paragraph=5,
+                                             alt_text="The new picture."))
+    doc = Document(str(work / out["saved_as"]))
+    assert [p["alt_text"] for p in d._docx_pictures(doc)] == ["The new picture."]  # one, not two
+    assert d._docx_pictures(doc)[0]["p"] == 5 and len(doc.paragraphs) == count
+    with pytest.raises(d.Refused, match="has no picture"):
+        asyncio.run(doc_images.add_picture(picture="new.png", file="r.docx", replace_paragraph=0, alt_text="x"))
 
 
 def test_their_own_photo_goes_on_a_new_slide(work):
@@ -255,3 +298,55 @@ def test_new_tools_are_wired():
     assert "work" in tool_selection.wanted_groups(["make a picture for slide 3"])
     said = json.loads(asyncio.run(agent.execute_tool("document_picture", {}))["content"])
     assert "error" in said
+
+# ── Lists: real bullets ────────────────────────────────────────────────
+
+def typed_list_docx(path):
+    doc = Document()
+    doc.add_paragraph("These barriers include:")
+    for item in ("\u2022 Limited access to support", "\u2022\tInaccessible information", "- Exclusion from work"):
+        doc.add_paragraph(item)
+    doc.add_paragraph("Fake list", style="List Paragraph")
+    doc.add_paragraph("After the list.")
+    doc.save(str(path))
+
+
+def test_typed_bullets_are_flagged_and_become_real_ones(work):
+    typed_list_docx(work / "c.docx")
+    found = " | ".join(i["problem"] for i in d.check("c.docx")["problems"])
+    assert "typed bullet or dash instead of being a real list (paragraphs [1, 2, 3])" in found
+    assert "list style but no bullet or number shows (paragraphs [4])" in found
+    assert d.outline("c.docx")["paragraphs"][4]["list"].startswith("none")
+
+    out = d.edit("c.docx", [{"paragraphs": "1-4", "list": "bullet"}])
+    assert out["changes"] == ["paragraphs 1 to 4 are now bullets (real Word list items)"]
+    doc = Document(str(work / out["saved_as"]))
+    assert [p.text for p in doc.paragraphs[1:4]] == ["Limited access to support", "Inaccessible information",
+                                                      "Exclusion from work"]
+    assert all(d._list_kind(doc, p) == "bullet" for p in doc.paragraphs[1:5])
+    assert d._list_kind(doc, doc.paragraphs[5]) is None
+    assert [p["list"] for p in d.outline(out["saved_as"])["paragraphs"][1:5]] == ["bullet"] * 4
+    found = " | ".join(i["problem"] for i in d.check(out["saved_as"])["problems"])
+    assert "list" not in found
+
+
+def test_numbered_lists_and_undoing_a_list(work):
+    typed_list_docx(work / "c.docx")
+    out = d.edit("c.docx", [{"paragraphs": [1, 2], "list": "number"}, {"paragraph": 3, "list": "bullet"}])
+    doc = Document(str(work / out["saved_as"]))
+    assert [d._list_kind(doc, p) for p in doc.paragraphs[1:4]] == ["number", "number", "bullet"]
+    again = d.edit(out["saved_as"], [{"paragraph": 1, "list": "none"}])
+    assert again["changes"] == ["paragraph 1 is no longer a list"]
+    doc = Document(str(work / again["saved_as"]))
+    assert d._list_kind(doc, doc.paragraphs[1]) is None and doc.paragraphs[1].style.name == "Normal"
+    bad = d.edit("c.docx", [{"paragraphs": [1, 99], "list": "bullet"}])
+    assert "don't exist" in bad["error"]
+
+
+def test_a_picture_can_be_removed(work):
+    sample_docx(work / "r.docx")  # its picture is alone in paragraph 5
+    count = len(Document(str(work / "r.docx")).paragraphs)
+    out = d.edit("r.docx", [{"paragraph": 5, "remove_picture": True}])
+    doc = Document(str(work / out["saved_as"]))
+    assert d._docx_pictures(doc) == [] and len(doc.paragraphs) == count - 1
+    assert "has no picture" in d.edit("r.docx", [{"paragraph": 0, "remove_picture": True}])["error"]

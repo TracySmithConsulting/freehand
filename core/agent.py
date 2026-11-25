@@ -376,7 +376,8 @@ async def execute_tool(name: str, args: dict) -> dict:
                     result = await doc_images.add_picture(
                         str(args.get("prompt") or ""), str(args.get("picture") or ""), str(args.get("file") or ""),
                         args.get("after_paragraph"), args.get("slide"), str(args.get("alt_text") or ""),
-                        str(args.get("aspect") or "16:9"), str(args.get("output") or ""))
+                        str(args.get("aspect") or "16:9"), str(args.get("output") or ""),
+                        args.get("replace_paragraph"))
                 else:
                     result = await documents.fix(str(args.get("file") or ""), str(args.get("title") or ""),
                                                  alt_text=args.get("alt_text", True) is not False,

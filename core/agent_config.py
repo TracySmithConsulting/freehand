@@ -594,7 +594,10 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     "document_edit": {
         "description": ("Edit a Word or PowerPoint file, keeping its formatting, saved as a new copy. Word "
                         "changes: {find, replace}; {paragraph, text}; {paragraph, style} (e.g. \"Heading 2\"); "
-                        "{paragraph, insert_after, style?}; {paragraph, delete: true}; {font: \"Verdana\", size: 12} "
+                        "{paragraph, insert_after, style?}; {paragraph, delete: true}; {paragraphs: [18, 19] or "
+                        "\"18-22\", list: \"bullet\" | \"number\" | \"none\"} (real Word bullets or numbers, typed "
+                        "bullets removed: a list style alone shows no bullet); {paragraph, remove_picture: true}; "
+                        "{font: \"Verdana\", size: 12} "
                         "(the whole document's font and body text size); {accept: [change numbers] or "
                         "\"all\"}; {reject: [...]}; {remove_comment: number}. Edit a copy once, with all the changes "
                         "for it, then keep working on that copy. PowerPoint changes: "
@@ -676,17 +679,24 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "document_picture": {
         "description": ("Make a picture from a description (with the person's image service: Agnes, MiniMax or "
-                        "OpenRouter), or use a picture already in the work folder (e.g. their photo), and save it "
-                        "there. Name a Word document or PowerPoint to put it in a new copy of that file, after a "
-                        "paragraph or on a slide (or a new slide). Alt text is written by the AI looking at the "
-                        "actual picture, unless given. Making a picture costs a little, like an AI message."),
+                        "OpenRouter), or use a picture already in the work folder (e.g. their photo). Name a Word "
+                        "document or PowerPoint to put it in a new copy of that file: in Word, after_paragraph, or "
+                        "replace_paragraph to swap the picture in that paragraph (never add a second one); in "
+                        "PowerPoint, on a slide or a new slide. A made picture's alt text is always written by the "
+                        "AI looking at it, and words_in_picture says what's wrong with any words in it: tell the "
+                        "person. Image services garble words, so ask for pictures without words. Making a "
+                        "picture costs a little, like an AI message."),
         "parameters": {"type": "object", "properties": {
             "prompt": {"type": "string", "description": "What the picture should show (to make one)"},
             "picture": {"type": "string", "description": "A picture in the work folder to use instead (optional)"},
             "file": {"type": "string", "description": "A Word document or PowerPoint to put it in (optional)"},
             "after_paragraph": {"type": "integer", "description": "Word: put it after this paragraph number"},
+            "replace_paragraph": {"type": "integer",
+                                  "description": "Word: replace the picture in this paragraph with the new one"},
             "slide": {"type": "integer", "description": "PowerPoint: put it on this slide (default: a new slide)"},
-            "alt_text": {"type": "string", "description": "The alt text (optional: otherwise the AI writes it)"},
+            "alt_text": {"type": "string", "description": "The person's own picture's alt text (optional: otherwise "
+                                                          "the AI writes it). Made pictures are always described "
+                                                          "by looking at them."},
             "aspect": {"type": "string", "enum": ["16:9", "1:1", "4:3", "3:4", "9:16"]},
             "output": {"type": "string", "description": "What to call the new document copy (optional)"}},
             "required": []},
