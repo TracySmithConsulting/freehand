@@ -172,7 +172,17 @@ async def _call_one(messages: List[Dict], tools: Optional[List[Dict]], config: d
                     status = resp.status
                     if resp.status == 200:
                         data = await resp.json()
-                        msg = dict(data.get("choices", [{}])[0].get("message", {}) or {})
+                        choice = (data.get("choices") or [{}])[0] or {}
+                        msg = dict(choice.get("message", {}) or {})
+                        if _cut_off(choice, msg, data.get("usage"), max_tokens):
+                            if max_tokens < LONG_ANSWER_TOKENS:
+                                # The answer didn't fit (a whole chapter's edits
+                                # can need ~5,000 tokens): once more, with room.
+                                longer = dict(config, max_tokens=LONG_ANSWER_TOKENS)
+                                again, again_status, again_timeout = await _call_one(messages, tools, longer, last)
+                                if "error" not in again:
+                                    return again, again_status, again_timeout
+                            msg["_cut_off"] = True
                         # Token counts, for the "this reply used about ..." note.
                         # Removed before the message goes back to the model.
                         usage = data.get("usage")
@@ -206,6 +216,21 @@ async def _call_one(messages: List[Dict], tools: Optional[List[Dict]], config: d
 
     # All retries exhausted
     return {"error": last_error or "LLM request failed after retries"}, status, timed_out
+
+
+LONG_ANSWER_TOKENS = 16384
+
+
+def _cut_off(choice: dict, msg: dict, usage, max_tokens: int) -> bool:
+    """True when the model ran out of room before finishing its answer.
+    Some services say so (finish_reason "length"); others just send back
+    nothing, having used (nearly) all the tokens allowed."""
+    if choice.get("finish_reason") == "length":
+        return True
+    if msg.get("content") or msg.get("tool_calls"):
+        return False
+    written = (usage or {}).get("completion_tokens") if isinstance(usage, dict) else None
+    return isinstance(written, int) and written >= max_tokens * 0.9
 
 
 def parse_tool_call(message: dict) -> Optional[dict]:
@@ -817,6 +842,9 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
     # returning 5000 rows would blow context on the next turn. 8K chars is
     # generous enough for most tool results while keeping context manageable.
     TOOL_RESULT_LLM_CAP = 8000
+    # A part of a document (core/documents.py PART_CHARS) comes whole:
+    # cut at 8,000 it was read again in five pieces, five steps.
+    WORK_RESULT_LLM_CAP = 40000
 
     # N6 fix: source-aware write authorisation. Tools like `write_docx` are
     # dangerous when triggered from a remote gateway. We restrict 'web' and
@@ -829,6 +857,7 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
 
     work_turns = 0
     loads = 0
+    cut_offs = 0
     from core import progress
     progress.say("Thinking about your message")
     while work_turns < max_turns:
@@ -842,6 +871,18 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         if "error" in llm_resp:
             final_response["error"] = llm_resp["error"]
             break
+
+        if llm_resp.pop("_cut_off", False) and cut_offs < 2:
+            # Even with more room the answer didn't fit: ask for it in
+            # smaller pieces rather than taking the empty answer as the end.
+            cut_offs += 1
+            work_turns += 1
+            progress.say("The answer was too long, so FreeHand is doing it in smaller parts")
+            messages.append({"role": "user", "content": (
+                "Your last answer was too long and got cut off, so nothing happened. Do it in smaller "
+                "pieces: for document edits, at most about 15 changes per document_edit call, each on "
+                "the newest saved copy. Don't explain, just carry on.")})
+            continue
 
         tool_call = parse_tool_call(llm_resp)
         if not tool_call:
@@ -1141,10 +1182,11 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
         # kept in tools_used for the API response; only the LLM-bound copy
         # is truncated.
         llm_content = tool_result.get("content", "")
-        if isinstance(llm_content, str) and len(llm_content) > TOOL_RESULT_LLM_CAP:
+        cap = WORK_RESULT_LLM_CAP if tool_name in WORK_TOOLS else TOOL_RESULT_LLM_CAP
+        if isinstance(llm_content, str) and len(llm_content) > cap:
             truncated = (
-                llm_content[:TOOL_RESULT_LLM_CAP]
-                + f"\n\n[... truncated at {TOOL_RESULT_LLM_CAP} chars. "
+                llm_content[:cap]
+                + f"\n\n[... truncated at {cap} chars. "
                 f"Full result available to the user via the tools_used list. ...]"
             )
             messages.append(llm_resp)
