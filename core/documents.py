@@ -35,6 +35,8 @@ import re
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from core import doc_notes as _notes  # footnotes, contents, lists when combining
+
 log = logging.getLogger("freehand.documents")
 
 IN_DOCKER = Path("/host/work")
@@ -525,6 +527,9 @@ def outline(name: str, from_paragraph: int = 0, show: str = "text") -> dict:
             return _docx_comments_view(path)
         if show.startswith("change") or show.startswith("track"):
             return _docx_changes_view(path)
+        if show.startswith("footnote"):
+            from docx import Document
+            return {"file": _rel(path), "footnotes": _notes.list_footnotes(Document(str(path)))}
         return _docx_outline(path, start)
     if kind == ".pptx":
         return _pptx_outline(path)
@@ -557,6 +562,9 @@ def _docx_outline(path: Path, start: int = 0) -> dict:
         item = {"p": i, "text": text[:6000]}
         if pictures:
             item["picture"] = " | ".join(a or "(no alt text)" for a in pictures)
+        marks = len(list(p._p.iter(_w("footnoteReference"))))
+        if marks:
+            item["footnotes"] = marks
         level = _heading_level(p.style.name if p.style is not None else "")
         if level is not None:
             item["heading"] = level
@@ -578,7 +586,8 @@ def _docx_outline(path: Path, start: int = 0) -> dict:
            "tracked_changes": _tracked(doc.element.body)}
     if start == 0:
         out.update({"title": doc.core_properties.title or "", "language": doc.core_properties.language or "",
-                    "tables": tables, "pictures": _docx_pictures(doc)})
+                    "tables": tables, "pictures": _docx_pictures(doc),
+                    "footnotes": len(_notes.list_footnotes(doc))})
     if next_from is not None:
         out["next_from"] = next_from
         out["more"] = (f"This is part of the document (paragraphs {start} to {next_from - 1} of "
@@ -1161,7 +1170,8 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
                 skipped.append(f"some of paragraphs {c.get('paragraphs', c.get('paragraph'))} don't exist")
             continue
         if "find" in c:
-            n = sum(_replace_in_paragraph(p, str(c["find"]), str(c.get("replace", ""))) for p in _all_paragraphs(doc))
+            n = sum(_replace_in_paragraph(p, _notes.as_text(c["find"]), _notes.as_text(c.get("replace", "")))
+                    for p in _all_paragraphs(doc))
             (done if n else skipped).append(f"\"{str(c['find'])[:40]}\": {n} replaced" if n else
                                             f"\"{str(c['find'])[:40]}\" wasn't found")
             continue
@@ -1183,13 +1193,14 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
                     to_delete.append(p)
                 done.append(f"the picture in paragraph {n} removed")
         if "text" in c:
-            runs = p.runs
+            # Footnote marks stay; the words are replaced.
+            runs = [r for r in p.runs if not list(r._r.iter(_w("footnoteReference")))]
             if runs:
-                runs[0].text = str(c["text"])
+                runs[0].text = _notes.as_text(c["text"])
                 for r in runs[1:]:
                     r._r.getparent().remove(r._r)
             else:
-                p.add_run(str(c["text"]))
+                p.add_run(_notes.as_text(c["text"]))
             done.append(f"paragraph {n} rewritten")
         if c.get("style") and "insert_after" not in c:
             try:
@@ -1205,13 +1216,24 @@ def edit_docx(name: str, changes: List[dict], output: str = "") -> dict:
             p._p.addnext(new)
             from docx.text.paragraph import Paragraph
             added = Paragraph(new, p._parent)
-            added.add_run(str(c["insert_after"]))
+            added.add_run(_notes.as_text(c["insert_after"]))
             if c.get("style"):
                 try:
                     added.style = doc.styles[str(c["style"])]
                 except KeyError:
                     skipped.append(f"there's no style called {c['style']}")
             done.append(f"a paragraph added after {n}")
+        if c.get("footnote"):
+            try:
+                done.append(f"paragraph {n}: " + _notes.add_footnote(doc, p, c["footnote"], c.get("after", "")))
+            except ValueError as e:
+                skipped.append(f"paragraph {n}: {e}")
+        if c.get("contents"):
+            try:
+                done.append(_notes.add_contents(doc, p, c.get("levels", 2), _notes.as_text(c.get("heading"))
+                                                or "Contents"))
+            except ValueError as e:
+                skipped.append(str(e))
         if c.get("case"):
             how = str(c["case"]).lower()
             if how not in ("sentence", "title", "upper"):
@@ -1380,11 +1402,14 @@ def _append_docx(target, source_path: Path) -> None:
     source = Document(str(source_path))
     body = target.element.body
     sect = body.find(_w("sectPr"))
+    lists: dict = {}  # this document's list numbers -> the copies in the target
     for el in list(source.element.body):
         if el.tag == _w("sectPr"):
             continue
         new = copy.deepcopy(el)
         _copy_pictures(source, target, new)
+        _notes.copy_lists(source, target, new, lists)
+        _notes.copy_footnotes(source, target, new)
         # Hyperlinks and other relationships can't be carried over safely: keep the text.
         for link in list(new.iter(_w("hyperlink"))):
             link.attrib.pop(f"{{{R}}}id", None)

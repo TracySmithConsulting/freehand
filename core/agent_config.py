@@ -579,11 +579,12 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                         "pictures, speaker notes); a PDF's text; an Excel file's sheets; Markdown or text. Use the "
                         "paragraph and slide numbers with document_edit. Long documents come in parts: read on with "
                         "from_paragraph (\"next_from\"). For Word, show \"comments\" lists the editor's comments "
-                        "(author, text, the words they're on, paragraph) and show \"changes\" lists tracked changes."),
+                        "(author, text, the words they're on, paragraph), show \"changes\" lists tracked changes, "
+                        "and show \"footnotes\" lists the footnotes in order with the paragraph each is in."),
         "parameters": {"type": "object", "properties": {
             "file": {"type": "string", "description": "The file's name in the work folder"},
             "from_paragraph": {"type": "integer", "description": "Where to read on from (Word: paragraph; PDF: page)"},
-            "show": {"type": "string", "enum": ["text", "comments", "changes"]}}, "required": ["file"]},
+            "show": {"type": "string", "enum": ["text", "comments", "changes", "footnotes"]}}, "required": ["file"]},
     },
     "document_check": {
         "description": ("Check a Word, PowerPoint or PDF file in the work folder for accessibility problems "
@@ -599,7 +600,11 @@ TOOL_SCHEMAS: Dict[str, Dict[str, Any]] = {
                         "bullets removed: a list style alone shows no bullet); {paragraph, remove_picture: true}; "
                         "{paragraph, case: \"sentence\" | \"title\" | \"upper\", keep: [\"DeafBlind\", ...]} (keep: "
                         "words to leave as written, like names); {paragraph, drop_full_stop: true}; "
-                        "{font: \"Verdana\", size: 12} "
+                        "{paragraph, footnote: \"Miles & Riggio (1999).\", after: \"the words it follows\"} (a real "
+                        "Word footnote, at the end of the paragraph if no after; ONLY once the person has approved "
+                        "a list of where each footnote goes and what it cites); {paragraph, contents: true, levels: 2} "
+                        "(a Contents heading and a Word contents list after that paragraph, from the headings "
+                        "below it); {font: \"Verdana\", size: 12} "
                         "(the whole document's font and body text size); {accept: [change numbers] or "
                         "\"all\"}; {reject: [...]}; {remove_comment: number}. \"paragraphs\": [25, 53] or \"25-30\" "
                         "instead of \"paragraph\" does style, case, drop_full_stop, delete or remove_picture to many "
