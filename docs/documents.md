@@ -104,6 +104,23 @@ FreeHand adds (2), (3) and so on. It never deletes anything.
   DeafBlind", or "Take the full stops off the bullets in 5.2". Sentence
   case, title case and capitals keep the words you name as written.
 
+## Putting a book together
+
+- **Combine the parts in order:** "Combine the cover, foreword, chapters 1
+  to 8, glossary and references into one document." Each part keeps its
+  formatting, pictures, bullets, numbered lists and footnotes, and the
+  footnotes are numbered through the whole book.
+- **A contents page:** "Add a contents page after the title page."
+  FreeHand adds a Contents heading and a real Word contents list built
+  from the headings. When you open the file in Word, it asks to update the
+  fields: choose Yes to add the page numbers.
+- **Footnotes:** first ask "Suggest footnotes for Chapter 3 from the
+  references". FreeHand lists each sentence it would footnote and the
+  reference it would cite. Only once you've agreed the list does it add
+  them, as real Word footnotes that a screen reader announces. Ask "List
+  the footnotes" to hear them in order. Only footnote a sentence that
+  really comes from a source a reader could find.
+
 **Work chapter by chapter, then combine.** Each step sends the
 conversation so far to your AI model, so smaller pieces cost less and are
 easier to check. A good order for each chapter: read the comments and
@@ -121,7 +138,7 @@ tries the next, and says why if none could.
 ## Good to know
 
 - When combining Word files, the text of links is kept but not their web
-  address, and numbered lists may restart their numbers. Check the result.
+  address. Check the result.
 - PDF text can come out with odd line breaks, so it may need tidying.
 - Alt text written by AI is a draft: check it says what matters about each
   picture.

@@ -87,11 +87,19 @@ def note(log: Iterable[str], out_of_steps: bool) -> str:
     return out
 
 
+def strip(reply: str) -> str:
+    """A reply without any work notes the model copied into it (Nov 2026:
+    it imitated them, and Tracy was shown "[Work notes (for you; ...)]")."""
+    text = reply or ""
+    at = text.find(MARK)
+    return text[:at].rstrip() if at >= 0 else text
+
+
 def as_history(work_note: str) -> str:
     """The note as it's added to the reply in the history sent to the model."""
     if not (work_note or "").strip():
         return ""
-    return f"\n\n{MARK} (for you; the person didn't see these):\n{work_note}]"
+    return f"\n\n{MARK}, private: never write these in a reply:\n{work_note}]"
 
 
 def under_way(history: list) -> bool:

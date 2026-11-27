@@ -1233,8 +1233,9 @@ async def _run_agent(command: str, max_turns: int, source: str, caller_id: str, 
             final_response["text"] = strip_reasoning(last.get("content", "") or "")
 
     note = ""
+    from core import work_notes
+    final_response["text"] = work_notes.strip(final_response["text"])
     if work_log:
-        from core import work_notes
         note = work_notes.note(work_log, out_of_steps)
     if final_response["text"] and not final_response["error"] and not job and not delegated:
         if member:
